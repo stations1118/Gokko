@@ -305,8 +305,9 @@
   // Discord でログイン（Discord のページへ行き、戻ってきたら crewsession.js がこのブラウザに覚える）
   $("discordGo").onclick = async () => {
     $("loginErr").textContent = "";
-    try { await GokkoCrew.discordLogin(); } catch (e) { $("loginErr").textContent = e.message; }
+    try { await GokkoCrew.discordLogin($("loginBox")); } catch (e) { $("loginErr").textContent = e.message; }
   };
+  GokkoCrew.passField($("loginBox"), $("discordGo")); // ログインには参加の合言葉も要る（Discord のボタンの前に欄を足す）
   $("linkGo").onclick = async () => {
     try { await GokkoCrew.discordLink(token); } catch (e) { notice(e.message); }
   };
@@ -321,7 +322,7 @@
     $("loginErr").textContent = "";
     try {
       const res = await fetch("/api/tid/login", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: $("loginId").value.trim(), password: $("loginPw").value }) });
+        body: JSON.stringify({ id: $("loginId").value.trim(), password: $("loginPw").value, passphrase: GokkoCrew.passphrase($("loginBox")) }) });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) { $("loginErr").textContent = j.message || "ログインできませんでした"; return; }
       save(j.id, j.token);

@@ -27,7 +27,7 @@ public static class AdminEndpoints
     public sealed record TurnRequest(string Train, string? Next);
 
     /// <param name="Id">社員番号。</param>
-    public sealed record CrewLoginRequest(string? Id, string? Password);
+    public sealed record CrewLoginRequest(string? Id, string? Password, string? Passphrase = null, bool? Client = null);
 
     /// <param name="Role">役職（司令員・信号扱い）。</param>
     /// <param name="On">出勤なら true（省略も出勤）、退勤なら false。</param>
@@ -315,9 +315,13 @@ public static class AdminEndpoints
             var (id, token) = crew.RedeemHandoff(req.Code);
             return id != null ? Results.Ok(new { id, token }) : Results.Json(new { message = "引き継ぎの札が使えません（30秒で切れ、1回しか使えません）" }, statusCode: 401);
         });
+        // ログインには参加の合言葉も要る（アカウントがあっても、合言葉を知らない人は入れない）。
+        // PC のクライアント（client: true）は合言葉なしで入れるが、仮の合い札になる。合言葉を入れてサーバーに接続したら本物になる
         view.MapPost("/login", (CrewLoginRequest req, CrewRoster crew) =>
         {
-            var (id, token, error) = crew.Login(req.Id, req.Password);
+            var client = req.Client == true;
+            if (!client && !options.PassphraseMatches(req.Passphrase)) return Bad("合言葉が違います");
+            var (id, token, error) = crew.Login(req.Id, req.Password, provisional: client);
             if (error != null) return Bad(error);
             var l = LinkInfo(crew, id!);
             return Results.Ok(new { id, token, discordEnabled = l.Enabled, discordLinked = l.Linked, linkUntil = l.Until });
@@ -325,7 +329,7 @@ public static class AdminEndpoints
         // 合い札がまだ使えるか（クライアントの起動時）。Discord と紐づけているかも返す（紐づけていなければ、画面が紐づけを勧める）
         view.MapGet("/crew/me", (HttpRequest http, CrewRoster crew) =>
         {
-            if (crew.InfoOf(crew.UserOfToken(http.Headers["X-Crew-Token"].ToString())) is not { } u)
+            if (crew.InfoOf(crew.UserOfClientToken(http.Headers["X-Crew-Token"].ToString())) is not { } u) // クライアントの仮の合い札でもよい
                 return Results.Json(new { message = "ログインしてください" }, statusCode: 401);
             var l = LinkInfo(crew, u.Id);
             return Results.Ok(new { id = u.Id, roles = u.Roles, discordEnabled = l.Enabled, discordLinked = l.Linked, linkUntil = l.Until });

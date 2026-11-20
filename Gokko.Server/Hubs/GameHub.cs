@@ -39,8 +39,9 @@ public sealed partial class GameHub(
             return new JoinResult { Message = "合言葉が違います" };
 
         // 乗務員のログインが要る（社員番号とパスワードでログインして受け取った合い札）
-        if (crew.UserOfToken(request.CrewToken) is not { } crewId)
+        if (crew.UserOfClientToken(request.CrewToken) is not { } crewId)
             return new JoinResult { Message = "ログインが切れました。クライアントを起動し直して、社員番号とパスワードでログインしてください" };
+        crew.ConfirmToken(request.CrewToken); // 合言葉が合ったので、クライアントの仮の合い札を本物にする（タブレットなどでも使えるようになる）
 
         // 司令員は在線として数えない（TRAIN CREW なしで参加し、列車無線と区間防護を扱う）。役職がなければ断る
         if (request.Role == CrewRole.Dispatcher)

@@ -18,8 +18,9 @@ public sealed class CrewHub(CrewRelay relay, CrewRoster crew, ServerOptions opti
             return new JoinResult { Message = $"クライアントの版が違います（サーバー: {Protocol.Version}、クライアント: {request.ProtocolVersion}）" };
         if (!PasswordMatches(request.Password)) return new JoinResult { Message = "合言葉が違います" };
         // 社員番号とユーザー名（運転士に「○○さんが乗務します」と出すため）
-        if (crew.InfoOf(crew.UserOfToken(request.CrewToken)) is not { } me)
+        if (crew.InfoOf(crew.UserOfClientToken(request.CrewToken)) is not { } me)
             return new JoinResult { Message = "ログインが切れました。クライアントを起動し直して、社員番号とパスワードでログインしてください" };
+        crew.ConfirmToken(request.CrewToken); // 合言葉が合ったので、クライアントの仮の合い札を本物にする
         Context.Items[JoinedKey] = true;
         var rejected = await relay.JoinAsync(Context.ConnectionId, request, me.Id, me.Name);
         // 入った本人にも今の顔ぶれを返す

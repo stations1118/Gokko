@@ -193,7 +193,7 @@
     $("loginError").textContent = "";
     try {
       const res = await fetch("/api/tid/login", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: $("loginId").value.trim(), password: $("loginPw").value }) });
+        body: JSON.stringify({ id: $("loginId").value.trim(), password: $("loginPw").value, passphrase: GokkoCrew.passphrase($("loginView")) }) });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j.message || "ログインできませんでした");
       setUser(j.id, j.token, "login");

@@ -397,9 +397,13 @@
         <div id="lmsg" class="err">${esc(message || "")}</div></div>
       ${links(`<a href="tablet.html?pick=1" style="color:var(--muted)">ログインしないで列車を選ぶ</a>`, `<a href="menu.html" data-menu-link style="color:var(--muted)">‹ メニューに戻る</a>`)}</div>`;
     const d = document.getElementById("discord");
-    if (d) d.onclick = async () => { try { await GokkoCrew.discordLogin(); } catch (e) { document.getElementById("lmsg").textContent = e.message; } };
+    const pane = app().querySelector(".pane");
+    await GokkoCrew.passField(pane, d || document.getElementById("uid")); // ログインには参加の合言葉も要る
+    const pass = pane.querySelector(".gokko-pass");
+    if (pass) { pass.style.cssText = inputStyle; pass.parentNode.style.cssText = "display:grid;gap:4px;color:var(--muted);font-size:12px"; }
+    if (d) d.onclick = async () => { try { await GokkoCrew.discordLogin(pane); } catch (e) { document.getElementById("lmsg").textContent = e.message; } };
     bindSubmit(async () => {
-      const j = await post("/login", { id: document.getElementById("uid").value.trim(), password: document.getElementById("upass").value });
+      const j = await post("/login", { id: document.getElementById("uid").value.trim(), password: document.getElementById("upass").value, passphrase: GokkoCrew.passphrase(pane) });
       setUser(j.id, j.token, "login");
       if (j.discordEnabled && !j.discordLinked) linkScreen(j.linkUntil); else afterLogin();
     });

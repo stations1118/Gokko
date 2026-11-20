@@ -455,7 +455,7 @@
     loginMsg.textContent = '';
     const id = document.getElementById('loginId').value.trim(), password = document.getElementById('loginPw').value;
     try {
-      const res = await fetch('/api/tid/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, password }) });
+      const res = await fetch('/api/tid/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, password, passphrase: GokkoCrew.passphrase(login) }) });
       const j = await res.json();
       if (!res.ok) { loginMsg.textContent = j.message || 'ログインできません'; return; }
       crew = { id: j.id, token: j.token }; GokkoCrew.login(j.id, j.token); showWho();

@@ -3,8 +3,13 @@ namespace Gokko.Server;
 /// <summary>appsettings.json の "Gokko" の設定。環境変数（Gokko__AdminKey など）でも上書きできる。</summary>
 public sealed class ServerOptions
 {
-    /// <summary>参加の合言葉。空なら誰でも参加できる。</summary>
+    /// <summary>参加の合言葉。空なら誰でも参加できる。乗務員のログイン（パスワード・Discord）にも、この合言葉が要る。</summary>
     public string Password { get; set; } = "";
+
+    /// <summary>参加の合言葉が合っているか（合言葉が空なら、いつも合う）。</summary>
+    public bool PassphraseMatches(string? given) =>
+        string.IsNullOrEmpty(Password) || System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
+            System.Text.Encoding.UTF8.GetBytes(given ?? ""), System.Text.Encoding.UTF8.GetBytes(Password));
 
     /// <summary>管理画面の鍵。空なら管理機能は無効（安全のため）。</summary>
     public string AdminKey { get; set; } = "";

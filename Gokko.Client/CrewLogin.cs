@@ -225,7 +225,7 @@ internal sealed class LoginDialog : CrewDialogBase
             JsonNode j;
             try
             {
-                j = await CrewApi.SendAsync(HttpMethod.Post, "/login", new { id = _id.Text.Trim(), password });
+                j = await CrewApi.SendAsync(HttpMethod.Post, "/login", new { id = _id.Text.Trim(), password, client = true }); // 合言葉は接続のときに確かめる（それまでは仮の合い札）
             }
             catch (InvalidOperationException ex) when (_savedPassword.Length > 0 && password == _savedPassword && ex.Message.Contains("ちがいます"))
             {

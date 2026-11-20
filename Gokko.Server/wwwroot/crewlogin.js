@@ -37,7 +37,7 @@
       $("loginMsg").textContent = "";
       try {
         const res = await fetch("/api/tid/login", { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: $("loginId").value.trim(), password: $("loginPw").value }) });
+          body: JSON.stringify({ id: $("loginId").value.trim(), password: $("loginPw").value, passphrase: GokkoCrew.passphrase(panel) }) });
         const j = await res.json().catch(() => ({}));
         if (!res.ok) { $("loginMsg").textContent = j.message || "ログインできません"; return; }
         GokkoCrew.login(j.id, j.token);

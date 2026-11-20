@@ -75,6 +75,12 @@ public sealed class CrewRoster
         /// <summary>紐づけた Discord のユーザー ID の HMAC（DiscordAuth.HashId）。紐づけていなければ空。</summary>
         public string DiscordHash { get; set; } = "";
         public List<string> TokenHashes { get; set; } = new();
+
+        /// <summary>
+        /// 仮の合い札（TokenHashes のうち、PC のクライアントで合言葉なしにログインしたもの）。
+        /// クライアントが合言葉を入れてサーバーに接続したら本物になる（ConfirmToken）。それまでは画面（タブレットなど）では使えない。
+        /// </summary>
+        public List<string> PendingTokenHashes { get; set; } = new();
         public DateTime CreatedUtc { get; set; }
     }
 
@@ -305,14 +311,18 @@ public sealed class CrewRoster
         u.Salt = Convert.ToBase64String(RandomNumberGenerator.GetBytes(16));
         u.PasswordHash = Hash(pw.Replace("-", ""), u.Salt);
         u.TokenHashes.Clear();
+        u.PendingTokenHashes.Clear();
         return pw;
     }
 
-    private static string IssueToken(CrewUser u)
+    /// <param name="provisional">仮の合い札にする（PC のクライアントで、合言葉なしにログインしたとき）</param>
+    private static string IssueToken(CrewUser u, bool provisional = false)
     {
         var t = NewToken();
         u.TokenHashes.Add(TokenHash(t));
+        if (provisional) u.PendingTokenHashes.Add(TokenHash(t));
         while (u.TokenHashes.Count > 5) u.TokenHashes.RemoveAt(0); // 5台まで
+        u.PendingTokenHashes.RemoveAll(h => !u.TokenHashes.Contains(h));
         return t;
     }
 
@@ -374,7 +384,8 @@ public sealed class CrewRoster
     }
 
     /// <summary>ログイン（社員番号とパスワード。移行のあいだだけ）。社員番号と合い札を返す。</summary>
-    public (string? Id, string? Token, string? Error) Login(string? id, string? password)
+    /// <param name="provisional">仮の合い札にする（PC のクライアントから。合言葉を入れて接続したら本物になる）</param>
+    public (string? Id, string? Token, string? Error) Login(string? id, string? password, bool provisional = false)
     {
         if (PasswordClosed) return (null, null, "パスワードでのログインは終わりました。Discord でログインしてください");
         lock (_lock)
@@ -390,7 +401,7 @@ public sealed class CrewRoster
             }
 
             _failures.Remove(key);
-            var token = IssueToken(u);
+            var token = IssueToken(u, provisional);
             Save();
             return (u.Id, token, null);
         }
@@ -405,12 +416,12 @@ public sealed class CrewRoster
     }
 
     /// <summary>Discord でログインする（紐づけてある人）。合い札を返す。</summary>
-    public (string? Id, string? Token) LoginByDiscord(string hash)
+    public (string? Id, string? Token) LoginByDiscord(string hash, bool provisional = false)
     {
         lock (_lock)
         {
             if (hash.Length == 0 || _users.FirstOrDefault(u => u.DiscordHash == hash) is not { } u) return (null, null);
-            var token = IssueToken(u);
+            var token = IssueToken(u, provisional);
             Save();
             return (u.Id, token);
         }
@@ -444,6 +455,7 @@ public sealed class CrewRoster
             if (Find(id) is not { } u) return "その人はいません";
             u.DiscordHash = "";
             u.TokenHashes.Clear();
+            u.PendingTokenHashes.Clear();
             Save();
             return null;
         }
@@ -603,12 +615,36 @@ public sealed class CrewRoster
         return UserOfToken(h.Token) is { } id ? (id, h.Token) : (null, null);
     }
 
-    /// <summary>合い札から、ログインしている人の社員番号。使えない合い札なら null。</summary>
+    /// <summary>合い札から、ログインしている人の社員番号。使えない合い札・仮の合い札なら null。</summary>
     public string? UserOfToken(string? token)
     {
         if (string.IsNullOrEmpty(token)) return null;
         var h = TokenHash(token);
+        lock (_lock) return _users.FirstOrDefault(u => u.TokenHashes.Contains(h) && !u.PendingTokenHashes.Contains(h))?.Id;
+    }
+
+    /// <summary>
+    /// PC のクライアントの合い札から、社員番号（仮の合い札でもよい）。クライアントの起動時（/crew/me）と、
+    /// 合言葉を確かめたあとの参加（GameHub・CrewHub の Join）だけで使う。
+    /// </summary>
+    public string? UserOfClientToken(string? token)
+    {
+        if (string.IsNullOrEmpty(token)) return null;
+        var h = TokenHash(token);
         lock (_lock) return _users.FirstOrDefault(u => u.TokenHashes.Contains(h))?.Id;
+    }
+
+    /// <summary>仮の合い札を本物にする（クライアントが合言葉を入れて参加できたとき）。</summary>
+    public void ConfirmToken(string? token)
+    {
+        if (string.IsNullOrEmpty(token)) return;
+        var h = TokenHash(token);
+        lock (_lock)
+        {
+            var changed = false;
+            foreach (var u in _users) changed |= u.PendingTokenHashes.Remove(h);
+            if (changed) Save();
+        }
     }
 
     /// <summary>ログアウト（その合い札を捨てる）。</summary>
@@ -618,7 +654,7 @@ public sealed class CrewRoster
         var h = TokenHash(token);
         lock (_lock)
         {
-            foreach (var u in _users.Where(u => u.TokenHashes.Remove(h))) { }
+            foreach (var u in _users.Where(u => u.TokenHashes.Remove(h))) u.PendingTokenHashes.Remove(h);
             Save();
         }
     }

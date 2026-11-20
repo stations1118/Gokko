@@ -12,7 +12,7 @@ namespace Gokko.Server;
 /// </summary>
 public static class DiscordEndpoints
 {
-    public sealed record BeginRequest(string? Mode, string? ReturnTo, bool? Poll);
+    public sealed record BeginRequest(string? Mode, string? ReturnTo, bool? Poll, string? Passphrase = null);
     public sealed record PollRequest(string? Code);
     public sealed record LinkRequest(string? Ticket, string? Id, string? Password);
     public sealed record ApplyRequest(string? Ticket, string? Name, int? JoinYear, string? Depot, string? ExistingId);
@@ -34,17 +34,23 @@ public static class DiscordEndpoints
 
         g.MapGet("", (CrewRoster crew) => Results.Ok(new
         {
-            enabled = options.Discord.Enabled, passwordUntil = options.Discord.PasswordUntil, passwordClosed = crew.PasswordClosed
+            enabled = options.Discord.Enabled, passwordUntil = options.Discord.PasswordUntil, passwordClosed = crew.PasswordClosed,
+            passphrase = !string.IsNullOrEmpty(options.Password), // ログインに参加の合言葉が要るか
         }));
 
         g.MapPost("/begin", (HttpRequest http, BeginRequest req, DiscordAuth discord, CrewRoster crew) =>
         {
             if (!discord.Enabled) return Off();
             var link = req.Mode == "link";
+            // ログインには参加の合言葉も要る（紐づけは、もうログインしている本人なので要らない）。
+            // PC のクライアント（poll）は合言葉なしで入れるが、仮の合い札になる（合言葉を入れてサーバーに接続したら本物になる）
+            if (!link && req.Poll != true && !options.PassphraseMatches(req.Passphrase)) return Results.BadRequest(new { message = "合言葉が違います" });
             string? user = null;
             if (link)
             {
-                if (crew.UserOfToken(http.Headers["X-Crew-Token"].ToString()) is not { } id) return Results.Json(new { message = "ログインしてください" }, statusCode: 401);
+                var given = http.Headers["X-Crew-Token"].ToString();
+                // クライアント（poll）は、パスワードでログインした直後（仮の合い札）にも紐づけを勧める
+                if ((req.Poll == true ? crew.UserOfClientToken(given) : crew.UserOfToken(given)) is not { } id) return Results.Json(new { message = "ログインしてください" }, statusCode: 401);
                 if (crew.InfoOf(id)?.Discord == true) return Results.BadRequest(new { message = "もう Discord と紐づけてあります" });
                 user = id;
             }
@@ -93,7 +99,7 @@ public static class DiscordEndpoints
                 return Results.Redirect(Done("linked", p.LinkUser, message: $"ID:{p.LinkUser} を Discord と紐づけました") ?? p.ReturnTo + "#discordLinked=1");
             }
 
-            var (uid, token) = crew.LoginByDiscord(hash);
+            var (uid, token) = crew.LoginByDiscord(hash, provisional: p.Poll != null);
             if (uid != null)
             {
                 if (Done("ok", uid, token, $"ID:{uid} でログインしました") is { } page) return Results.Redirect(page);
@@ -143,7 +149,7 @@ public static class DiscordEndpoints
         g.MapPost("/apply/link", (LinkRequest req, DiscordAuth discord, CrewRoster crew, ILogger<DiscordAuth> log) =>
         {
             if (discord.PeekTicket(req.Ticket) is not { } t) return Expired();
-            var (id, token, error) = crew.Login(req.Id, req.Password);
+            var (id, token, error) = crew.Login(req.Id, req.Password, provisional: t.Poll != null); // クライアントから来た人は仮の合い札
             if (error != null) return Results.BadRequest(new { message = error });
             if (crew.LinkDiscord(id!, t.Hash) is { } err)
             {
