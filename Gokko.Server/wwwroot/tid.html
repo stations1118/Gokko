@@ -398,6 +398,23 @@
     return result;
   }
 
+  // 進路の線。進路の回路に、列車が通らない回路（鎖錠のためだけに入っている回路。水越の 12R の 21ロT）があって一筆で引けないときは、
+  // 実際の通り道（tid-paths.json）で、進路の回路がいちばん多く続けて並ぶ道（同じなら known の回路＝列車の位置・行き先の番線を多く通る道）の回路だけで引く。
+  // 引かないと、通らない回路へ向けて渡り線の回路を本線側に引いてしまい、列車も本線側に塗られる
+  function routePath(circuits, known) {
+    const cs = [...new Set(circuits)].filter((c) => graphs[c]);
+    const full = smoothPath(cs, known);
+    if (full.size >= cs.length || paths.length === 0) return full;
+    let best = null;
+    for (const p of paths) {
+      const idx = cs.map((c) => p.indexOf(c)).filter((i) => i >= 0);
+      if (idx.length < 2 || Math.max(...idx) - Math.min(...idx) + 1 !== idx.length) continue;
+      const score = idx.length * 100 + [...new Set(known)].filter((k) => p.includes(k)).length;
+      if (!best || score > best.score) best = { score, keep: cs.filter((c) => p.includes(c)) };
+    }
+    return best ? smoothPath(best.keep, known) : full;
+  }
+
   // 列車の名札を置く位置: 列車を描いた線の、中ほどの点
   function trainAnchor(lines) {
     const all = [];
@@ -585,12 +602,12 @@
       // 行き先の番線の回路（dest）も入れる。回路の並びが同じで行き先だけ違う進路（新野崎の 10LC・10LD）を、行き先の枝へ引くため
       const known = [...(s.tid.trains.find((t) => t.train === r.train)?.circuits || []), ...(r.approach || []), ...(r.dest ? [r.dest] : []),
         ...s.tid.routes.filter((x) => x.train === r.train && x !== r).flatMap((x) => x.circuits)];
-      return { r, map: smoothPath(r.circuits, known) };
+      return { r, map: routePath(r.circuits, known) };
     });
     // 信号制御盤で取った進路（駅扱い）も同じ色で出す。列車の名前はないので、接近区間と、進路の回路全部（all。行き先の番線も）で枝を選ぶ。
     // 列車が入ると circuits は鎖錠中の区分（6LT・24T など）だけになり、行き先が分からないと長いほうの渡り線を選んでしまう
     for (const pn of s.panels || []) for (const r of pn.routes)
-      routeMaps.push({ r: { ...r, train: null }, map: smoothPath(r.circuits.filter((c) => graphs[c]), [...(r.approach || []), ...(r.all || [])]) });
+      routeMaps.push({ r: { ...r, train: null }, map: routePath(r.circuits, [...(r.approach || []), ...(r.all || [])]) });
     for (const { r, map } of routeMaps) for (const lines of map.values()) p.push(poly(r.open ? "route" : "wait", lines));
 
     // 在線: その列車の進路が通る回路は、進路の枝で塗る。そうでない回路は、列車がいる回路どうしをつなぐ枝で塗る。
