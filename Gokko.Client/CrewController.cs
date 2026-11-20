@@ -180,6 +180,7 @@ public sealed class CrewController
         _keyBuzzer = false;
         _buzzerDown.Clear();
         await _crew.StopAsync();
+        SetAiDriving(false);
         ReleaseControl();
         ClosePanel();
         CloseLog();
@@ -262,6 +263,7 @@ public sealed class CrewController
         _timer.Stop();
         _keyHook?.Dispose();
         _keyHook = null;
+        SetAiDriving(false);
         ReleaseControl();
         ClosePanel();
         CloseLog();
@@ -367,6 +369,47 @@ public sealed class CrewController
     /// <summary>車両ごとの乗車率（ゲームの値のまま）。</summary>
     public IReadOnlyList<float> CarOccupancy { get; private set; } = [];
 
+    // ---- AI 運転士（試し。運転士のクライアントで、自分のゲームを AI が運転する。車掌はドアとブザー） ----
+
+    private AiDriver? _ai;
+    private bool _aiBuzzer; // 発車の合図（ブザー）が鳴っていたか（鳴り始めを見る）
+
+    /// <summary>AI 運転士が運転しているか。</summary>
+    public bool AiDriving => _ai != null;
+
+    /// <summary>
+    /// AI 運転士を入れる・切る（運転士だけ）。入れると車掌用操作盤を出し、自分のゲームのドア・ブザーを扱えるようにする
+    /// （ほかの人が車掌で乗っていれば、その人のブザーでも発車する）。切ると、ノッチを中立・常用最大ブレーキに戻して操作盤を閉じる。
+    /// </summary>
+    public void SetAiDriving(bool on)
+    {
+        if (_role != CrewRole.Driver) return;
+        if (on && _ai == null)
+        {
+            _ai = new AiDriver();
+            _aiBuzzer = true; // 入れた瞬間に鳴っていたブザーでは発車しない
+            ShowPanel();
+        }
+        else if (!on && _ai != null)
+        {
+            _ai = null;
+            _tci.SetNotch(0, ServiceMaxBrake, force: true);
+            ClosePanel();
+        }
+    }
+
+    private void AiTick(TciState? s)
+    {
+        if (_ai == null) return;
+        var buzzer = _buzzer || _appliedBuzzer;
+        var departSignal = buzzer && !_aiBuzzer;
+        _aiBuzzer = buzzer;
+        if (s is not { InGame: true } || _tci.LastRaw is not { } raw) return;
+        var (power, brake) = _ai.Step(s, raw, _tci.Signals(), departSignal, _emergency || _appliedEmergency, Environment.TickCount64);
+        _tci.SetReverser(1);
+        _tci.SetNotch(power, brake);
+    }
+
     private void Tick()
     {
         var s = _tci.Read();
@@ -375,7 +418,11 @@ public sealed class CrewController
             CarModels = s.CarModels ?? [];
             CarOccupancy = s.CarOccupancy ?? [];
         }
-        if (_role == CrewRole.Driver) DriverTick(s);
+        if (_role == CrewRole.Driver)
+        {
+            AiTick(s);
+            DriverTick(s);
+        }
         else ConductorTick(s);
         var now = Environment.TickCount64;
         if (now - _lastViewMs < 100) return;
@@ -699,6 +746,7 @@ public sealed class CrewController
 
     private void SendConductor(string action, bool? allClose = null)
     {
+        if (_role != CrewRole.Conductor) return; // AI 運転士のときに運転士のクライアントで出す操作盤は、自分のゲームだけを扱う
         _crew.SendConductorInput(new ConductorInput
         {
             Action = action, AllClose = allClose ?? _ownAllClose ?? true, Emergency = _emergency, ReOpen = _reOpen, Joukou = _joukou,
@@ -759,6 +807,11 @@ public sealed class CrewController
             Summary = _crew.Message.Length > 0 ? $"　乗務: {_crew.Message}"
                 : !joined ? ""
                 : (st!.Conductors > 0 ? "　車掌 乗車中" : "") + (st.Riders > 0 ? $"　添乗 {st.Riders}人" : "");
+            if (_ai != null)
+            {
+                Summary += $"　AI運転: {_ai.Note}";
+                _panel?.SetLink(joined ? $"列番 {st!.TrainNumber}" : "列番 ―", $"AI運転士: {_ai.Note}", s is { IsDriver: true });
+            }
             return;
         }
 

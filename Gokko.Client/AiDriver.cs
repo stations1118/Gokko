@@ -1,0 +1,335 @@
+using System.Globalization;
+using TrainCrew;
+
+namespace Gokko.Client;
+
+/// <summary>
+/// AI 運転士（試し）。自分のゲーム（運転士モード）の値を読んで、ノッチを決める。車掌はドアとブザーを扱う。
+/// ・停止位置: ゲームの「次の駅までの残り」（停車駅の TotalLength）。シナリオと違う番線に入ると、ずれることがある（未対策）
+/// ・発車: ドアが閉まっていて、車掌のブザー（発車の合図）が鳴ったら。運転停車（ドアを開けない停車）は発車時刻に出る
+/// ・走り方: 次の停車駅までの残り距離と残り時分から、間に合う平均の速さを出し、それより少し速い速度まで力行して惰行する。
+///   遅れていれば制限速度いっぱいまで出す
+/// ・守るもの: 制限速度・先の制限（減速しきれる速度）・ATS の速度と「接近」・前方の停止信号（届いていれば）
+/// ・止まり方: 停止位置までに止まるのに要る減速度を出し、自分の減速度（実測）がそれに合うように、ブレーキの段を少しずつ動かす
+/// ブレーキの段と減速度の関係は列車で違うので、決め打ちせず実測で合わせる（最初の段だけ、運転の記録からの目安で選ぶ）。
+/// </summary>
+public sealed class AiDriver
+{
+    private const int MaxBrake = 7;           // 常用最大（B8 は直通非常なので使わない）
+    private const int HoldBrake = 4;          // 止まっている間のブレーキ
+    private const int MaxPower = 5;           // 力行の一番強い段の見込み（ゲームが受け付けなければ、ゲームの段まで）
+    private const double LimitMargin = 2;     // 制限速度・ATS の速度より、これだけ下を上限にする（km/h）
+    private const double PlanDecel = 2.0;     // 先の制限・停止信号まで減速しきれるかを見るときの減速度（km/h/s）
+    private const double PlanMargin = 20;     // 同じく、減速しきるのに要る距離に足す余裕（m）
+    private const double StartDecel = 2.0;    // 停止位置まで、この減速度が要るようになったらブレーキを始める（km/h/s）
+    private const double BrakeLag = 0.8;      // ブレーキが効き始めるまでの遅れ（秒）。この間に進む分を、残り距離から引いて見る
+    private const int StepMs = 700;           // ブレーキの段を変えたら、これだけ待つ（効くまでの遅れより長く。短いと段を上げすぎる）
+    private const double DecelTolerance = 0.2; // 要る減速度との差がこれより小さければ、段を変えない（km/h/s）
+    private const double SignalMargin = 15;   // 停止信号の、これだけ手前に止まる（m）
+    private const double CoastBand = 8;       // 惰行で、目指す速度よりこれだけ下がったら、また力行する（km/h）
+    private const double ScheduleFactor = 1.25; // 間に合う平均の速さに掛ける（加速・減速の分、巡航は平均より速くする）
+    private const double MinCruise = 35;      // 目指す速度の下限（km/h）
+    private const double StopBias = 0.4;      // 停止位置より、これだけ先をめがける（実機の試験で、どの駅も 0.3〜1.0m 手前に止まったため。m）
+    private const double YellowSpeed = 45;    // 注意（Y）の信号機を過ぎるときの速度（その先の信号機が停止かもしれない。km/h）
+    private const double DoubleYellowSpeed = 25; // 警戒（YY）の信号機を過ぎるときの速度（km/h）
+    private const double YellowGreenSpeed = 60; // 減速（YG）の信号機を過ぎるときの速度（その先が Y・YY のことがある。km/h）
+
+    private int _lastStopIndex = -2;          // 最後に止まった（発車を待っている）停車駅の番号。-2 はまだ決めていない
+    private bool _departOk;                   // 発車してよい（ブザーが鳴った・運転停車の発車時刻）
+    private bool _powering;
+    private double _signalCap = double.PositiveInfinity; // 注意・警戒の信号機を過ぎてから、次の信号機が見えるまでの速度の上限
+    private bool _stopping;
+    private int _brake;
+    private long _brakeMs;
+    private readonly Queue<(long Ms, float Speed)> _speeds = new();
+
+    /// <summary>今していること（操作盤・画面に出す）。</summary>
+    public string Note { get; private set; } = "";
+
+    /// <summary>
+    /// 1周期ぶん。返すのは力行・ブレーキの段（どちらかは 0）。
+    /// departSignal: 車掌のブザーが今鳴り始めた。emergency: 車掌の非常ブレーキが入っている。
+    /// </summary>
+    public (int Power, int Brake) Step(TciState s, TrainState raw, IReadOnlyList<SignalInfo> signals, bool departSignal, bool emergency, long now)
+    {
+        var accel = Accel(now, s.Speed); // km/h/s（減速はマイナス）
+        var stations = raw.stationList ?? [];
+        var pos = raw.TotalLength;
+        if (stations.Count == 0) return Hold("停車駅の一覧を待っています", MaxBrake); // 届くまでは走らない（止まる駅が分からない）
+
+        if (_lastStopIndex == -2)
+        {
+            // 始めたとき: 止まっていて、近くに停車駅があれば、その駅で発車を待っているものとする
+            _lastStopIndex = -1;
+            if (s.Speed < 0.5f)
+                for (var i = 0; i < stations.Count; i++)
+                    if (stations[i].stopType != StopType.Passing && Math.Abs(stations[i].TotalLength - pos) < 30) _lastStopIndex = i;
+        }
+
+        if (emergency) return Hold("車掌の非常ブレーキ", MaxBrake);
+
+        // 次の停車駅
+        var target = -1;
+        for (var i = Math.Max(0, _lastStopIndex + 1); i < stations.Count; i++)
+        {
+            if (stations[i].stopType == StopType.Passing) continue;
+            if (_lastStopIndex < 0 && stations[i].TotalLength < pos - 15) continue;
+            target = i;
+            break;
+        }
+
+        double dStop = double.PositiveInfinity;
+        var targetName = "";
+        if (target >= 0)
+        {
+            var st = stations[target];
+            targetName = st.Name ?? "";
+            dStop = (s.NextStation == targetName ? s.NextStationDistance : st.TotalLength - pos) + StopBias;
+        }
+
+        // 止まっている
+        if (s.Speed < 0.3f && !_powering)
+        {
+            // 停止位置に着いた
+            if (target >= 0 && dStop < 15)
+            {
+                _lastStopIndex = target;
+                _departOk = false;
+                _stopping = false;
+                return Hold($"{targetName} に停車（残り {dStop:0.0}m）", HoldBrake);
+            }
+
+            if (target < 0) return Hold("終点", HoldBrake);
+
+            // 発車を待つ
+            if (_lastStopIndex >= 0 && !_departOk)
+            {
+                var here = stations[_lastStopIndex];
+                if (departSignal && s.AllClose) _departOk = true;
+                else if (here.stopType == StopType.StopForOperation && s.AllClose && Seconds(here.DepTime - raw.NowTime) <= 0) _departOk = true;
+                if (!_departOk)
+                {
+                    var wait = Seconds(here.DepTime - raw.NowTime);
+                    var dep = wait > 0 ? $"発車まで {wait:0}秒" : "発車時刻を過ぎています";
+                    return Hold(!s.AllClose ? $"ドアが開いています（{dep}）" : $"発車の合図（ブザー）を待っています（{dep}）", HoldBrake);
+                }
+            }
+        }
+
+        if (!s.AllClose) return Hold("ドアが開いています", MaxBrake);
+
+        // 前方の停止信号（届いていれば）
+        var dSignal = double.PositiveInfinity;
+        var signalName = "";
+        signals = OnRoute(signals);
+        foreach (var sig in signals)
+        {
+            if (!IsStop(sig.phase) || sig.distance < 0) continue;
+            if (sig.distance - SignalMargin < dSignal)
+            {
+                dSignal = sig.distance - SignalMargin;
+                signalName = sig.name ?? "";
+            }
+        }
+
+        // 注意（Y）・警戒（YY）の信号機: その先の信号機は停止かもしれない（信号機は手前 200〜350m からしか見えない。
+        // 実機で、Y の場内の先の R が 340m で見えて、80km/h から常用最大でも止まりきれないところだった）。
+        // Y・YY の信号機までに決めた速度まで落とし、過ぎたら次の信号機が見えるまでその速度を超えない
+        var first = signals.Where(x => x.distance >= 0).OrderBy(x => x.distance).FirstOrDefault();
+        var vSignal = double.PositiveInfinity;
+        if (first != null)
+        {
+            var cap = Caution(first.phase);
+            if (double.IsInfinity(cap)) _signalCap = double.PositiveInfinity; // 次の信号機が進行
+            else
+            {
+                vSignal = Math.Sqrt(cap * cap + 7.2 * PlanDecel * Math.Max(0, first.distance - 10));
+                if (first.distance < 30) _signalCap = cap;
+            }
+        }
+        vSignal = Math.Min(vSignal, _signalCap);
+
+        // 今出してよい速度（制限速度・ATS・先の制限）
+        var limit = s.SpeedLimit > 0 ? s.SpeedLimit : 120f;
+        if (s.AtsSpeed > 0) limit = Math.Min(limit, s.AtsSpeed);
+        var vAllow = limit - LimitMargin;
+        if (s.NextSpeedLimit >= 0 && s.NextSpeedLimitDistance >= 0)
+        {
+            var vn = Math.Max(0, s.NextSpeedLimit - LimitMargin);
+            vAllow = Math.Min(vAllow, Math.Sqrt(vn * vn + 7.2 * PlanDecel * Math.Max(0, s.NextSpeedLimitDistance - PlanMargin)));
+        }
+        vAllow = Math.Min(vAllow, vSignal);
+        var atsWarning = s.AtsBrake || s.AtsState.Contains("接近");
+        // ATS のパターン（P・停P・終端P）が出ている間は力行しない（実機で、YY の場内の手前を 44km/h で惰行していて「接近」になった）
+        var atsPattern = !atsWarning && s.AtsState.Length > 0 && s.AtsState != "無表示";
+
+        // 止まる位置（停車駅か停止信号の近い方）
+        var dTarget = Math.Min(dStop, dSignal);
+        var what = dSignal < dStop ? $"{signalName} の手前" : targetName;
+        var dEff = dTarget - s.Speed / 3.6 * BrakeLag;
+        var need = dEff > 0.3 ? s.Speed * s.Speed / (7.2 * dEff) : (s.Speed > 0.5f ? 99 : 0); // 止まるのに要る減速度（km/h/s）
+        // 止まる間際: 要る減速度が小さすぎると、ブレーキをゆるめすぎて 1〜2km/h でのろのろ進む（実機で8秒ほど）。
+        // 3km/h 以下では少し強めに見て、残り 0.8m を切ったら止める
+        if (_stopping && s.Speed < 3) need = Math.Max(need, dTarget < 0.8 ? 3 : 0.8);
+
+        // 停止位置を行き過ぎた
+        if (dTarget < -1 && s.Speed > 0.5f) return Hold($"{what}を行き過ぎました", MaxBrake);
+
+        if (!_stopping && need >= StartDecel && !double.IsInfinity(dTarget))
+        {
+            _stopping = true;
+            _brake = FirstBrake(need);
+            _brakeMs = now;
+        }
+
+        // 止まる先が遠のいた（停止信号が進行に変わったなど）: ブレーキをやめる
+        if (_stopping && need < StartDecel / 2 && s.Speed > 10) _stopping = false;
+
+        if (_stopping)
+        {
+            _powering = false;
+            if (s.Speed < 0.3f)
+            {
+                _stopping = false;
+                return Hold($"{what}に停車（残り {dTarget:0.0}m）", HoldBrake);
+            }
+
+            // 実測の減速度を、要る減速度に合わせる。止まる間際（5km/h 以下）は、ゆるめて衝動を小さくする
+            if (now - _brakeMs >= StepMs && !double.IsNaN(accel))
+            {
+                var err = -accel - need; // プラスなら効きすぎ
+                var before = _brake;
+                if (err < -DecelTolerance) _brake++;
+                else if (err > DecelTolerance) _brake--;
+                if (s.Speed < 5 && dTarget > 0.5) _brake = Math.Min(_brake, 3);
+                _brake = Math.Clamp(_brake, 1, MaxBrake);
+                if (_brake != before) _brakeMs = now;
+            }
+
+            if (atsWarning) _brake = Math.Max(_brake, 3);
+            Note = string.Create(CultureInfo.InvariantCulture, $"{what}に止まります（残り {dTarget:0}m、要る減速度 {need:0.0}）");
+            return (0, _brake);
+        }
+
+        // 間に合う平均の速さから、目指す速度を決める
+        var cruise = vAllow;
+        var late = "";
+        if (target >= 0 && !double.IsInfinity(dStop))
+        {
+            var left = Seconds(stations[target].ArvTime - raw.NowTime);
+            if (left > 5)
+            {
+                var vNeed = dStop / left * 3.6 * ScheduleFactor;
+                cruise = Math.Min(vAllow, Math.Max(MinCruise, vNeed));
+                late = $"着まで {left:0}秒";
+            }
+            else
+            {
+                late = "遅れ";
+            }
+        }
+
+        // 止まる位置（停車駅・停止信号）の手前で減速しきれる速度
+        if (!double.IsInfinity(dSignal)) cruise = Math.Min(cruise, Math.Sqrt(7.2 * PlanDecel * Math.Max(0, dSignal - PlanMargin)));
+        if (!double.IsInfinity(dStop)) cruise = Math.Min(cruise, Math.Max(10, Math.Sqrt(7.2 * StartDecel * Math.Max(0, dStop)) - 5));
+        if (s.Speed < 0.5f && cruise < 5) return Hold(dSignal < dStop ? $"{signalName} の信号待ち" : "停止位置の手前で止まっています", HoldBrake);
+
+        if (atsWarning || s.Speed > vAllow + 1)
+        {
+            // 少し超えただけなら B1（下り坂で、B2 と惰行を行ったり来たりしないように）
+            _powering = false;
+            var over = s.Speed - vAllow;
+            // 大きく超えたら強く（実機で、YY の場内が 208m で見えて B3 では落としきれず、ATS が動いた）
+            var b = atsWarning ? 4 : over > 15 ? 6 : over > 8 ? 5 : over > 5 ? 4 : over > 2.5 ? 2 : 1;
+            Note = atsWarning ? "ATS で減速" : "制限速度で減速";
+            return (0, b);
+        }
+
+        if (atsPattern && s.Speed > 15) cruise = Math.Min(cruise, s.Speed - 1); // 止まっているときは、パターンが出ていても発車する
+        if (_powering && s.Speed >= cruise) _powering = false;
+        else if (!_powering && s.Speed <= cruise - CoastBand) _powering = true;
+        else if (!_powering && s.Speed < 3 && cruise > 5) _powering = true; // 発車
+
+        if (_powering)
+        {
+            var p = s.Speed < cruise - 10 ? MaxPower : 3;
+            Note = string.Create(CultureInfo.InvariantCulture, $"力行 → {cruise:0}km/h（{targetName}　{late}）");
+            return (p, 0);
+        }
+
+        Note = string.Create(CultureInfo.InvariantCulture, $"惰行（{targetName}　{late}）");
+        return (0, 0);
+    }
+
+    /// <summary>止める・止めたままにする。</summary>
+    private (int, int) Hold(string note, int brake)
+    {
+        _powering = false;
+        Note = note;
+        return (0, brake);
+    }
+
+    /// <summary>ブレーキを始めるときの段（運転の記録からの目安。あとは実測で合わせる）。</summary>
+    private static int FirstBrake(double need) =>
+        need <= 1.0 ? 2 : need <= 1.65 ? 3 : need <= 2.3 ? 4 : need <= 2.8 ? 5 : need <= 3.3 ? 6 : MaxBrake;
+
+    /// <summary>停止の現示か（R・停止）。</summary>
+    private static bool IsStop(string? phase) =>
+        phase is { Length: > 0 } p && (p == "R" || p.StartsWith("R", StringComparison.OrdinalIgnoreCase) || p.Contains("停止") || p.Equals("Stop", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// 並んで建っている信号機（同じ場所の場内 14L・15L など、番線ごとの信号機）のうち、自分の進路のものだけを残す。
+    /// ゲームは並んでいる信号機をすべて返す（実機で確認: 高見沢 1番に入るのに、14L＝Y と 15L＝R が同じ距離で並んで届き、
+    /// 15L の手前で止まってしまった）。進路が開いているのは自分の行き先の信号機だけなので、同じ距離（±10m）の中で一番進める現示を取る。
+    /// どれも停止なら停止。
+    /// </summary>
+    private static List<SignalInfo> OnRoute(IReadOnlyList<SignalInfo> signals)
+    {
+        var result = new List<SignalInfo>();
+        foreach (var sig in signals.Where(x => x.distance >= 0).OrderBy(x => x.distance))
+        {
+            var same = result.FindIndex(x => Math.Abs(x.distance - sig.distance) < 10);
+            if (same < 0) result.Add(sig);
+            else if (Rank(sig.phase) > Rank(result[same].phase)) result[same] = sig;
+        }
+        return result;
+    }
+
+    /// <summary>現示の進める順（停止 0 ＜ 警戒 ＜ 注意 ＜ 減速 ＜ 進行）。</summary>
+    private static int Rank(string? phase) => phase switch
+    {
+        "YY" => 1,
+        "Y" => 2,
+        "YG" => 3,
+        "G" => 4,
+        _ => IsStop(phase) ? 0 : 2
+    };
+
+    /// <summary>注意・警戒の現示なら、その信号機を過ぎるときの速度（それ以外は上限なし）。</summary>
+    private static double Caution(string? phase) => phase switch
+    {
+        "Y" => YellowSpeed,
+        "YY" => DoubleYellowSpeed,
+        "YG" => YellowGreenSpeed,
+        _ => double.PositiveInfinity
+    };
+
+    /// <summary>時刻の差（秒）。日付をまたいだら、近い方に直す。</summary>
+    private static double Seconds(TimeSpan diff)
+    {
+        var s = diff.TotalSeconds;
+        if (s < -12 * 3600) s += 24 * 3600;
+        else if (s > 12 * 3600) s -= 24 * 3600;
+        return s;
+    }
+
+    /// <summary>0.6秒ほど前からの加速度（km/h/s）。記録が短すぎれば NaN。</summary>
+    private double Accel(long now, float speed)
+    {
+        _speeds.Enqueue((now, speed));
+        while (_speeds.Count > 2 && now - _speeds.Peek().Ms > 600) _speeds.Dequeue();
+        var (ms, v) = _speeds.Peek();
+        var dt = (now - ms) / 1000.0;
+        return dt < 0.25 ? double.NaN : (speed - v) / dt;
+    }
+}

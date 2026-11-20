@@ -46,6 +46,36 @@ public sealed class TciLink : IDisposable
 
     public bool Ready => _ready;
 
+    /// <summary>最後に <see cref="Read"/> で読んだゲームの値そのもの（AI 運転士が、TciState にない停車駅の並び・時刻を使う）。</summary>
+    public TrainState? LastRaw { get; private set; }
+
+    private long _lastSignalRequestMs = -10_000;
+    private long _lastStaRequestMs = -10_000;
+
+    /// <summary>
+    /// 前方の信号機（名前・現示・距離）。信号機の情報は頼まないと届かないので、届いていなければ5秒ごとに頼み直す。
+    /// 届かなければ空（AI 運転士は、制限速度と ATS だけを見る）。
+    /// </summary>
+    public IReadOnlyList<SignalInfo> Signals()
+    {
+        if (!_ready) return [];
+        try
+        {
+            var list = TrainCrewInput.signals?.ToList() ?? [];
+            var now = Environment.TickCount64;
+            if (list.Count == 0 && now - _lastSignalRequestMs > 5000)
+            {
+                _lastSignalRequestMs = now;
+                TrainCrewInput.RequestData(DataRequest.Signal);
+            }
+            return list;
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
     public void Start()
     {
         if (_ready) return;
@@ -68,7 +98,14 @@ public sealed class TciLink : IDisposable
         {
             var gs = TrainCrewInput.gameState;
             var s = TrainCrewInput.GetTrainState();
+            LastRaw = s;
             if (s == null) return null;
+            // 停車駅の一覧は頼まないと届かない（実機で確認: 頼むまで stationList が空）。空なら3秒ごとに頼む
+            if ((s.stationList == null || s.stationList.Count == 0) && Environment.TickCount64 - _lastStaRequestMs > 3000)
+            {
+                _lastStaRequestMs = Environment.TickCount64;
+                TrainCrewInput.RequestStaData();
+            }
             var inGame = gs.gameScreen is GameScreen.MainGame or GameScreen.MainGame_Pause;
             var sw = TrainCrewInput.trainSwitch;
             var buzzer = sw != null && (sw.buzzerM || sw.buzzerC);

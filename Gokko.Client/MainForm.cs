@@ -215,6 +215,7 @@ public sealed partial class MainForm : Form
         _tabletButton.Size = new Size(110, 30);
         _tabletButton.Margin = new Padding(8, 3, 0, 3);
         buttons.Controls.AddRange([_connectButton, _gameButton, _tabletButton]);
+        CheckBox? aiButton = null;
         // 運転士（在線共有）: ゲームで使っているキー（ブザー・勾配起動など）。押すと、乗っている車掌のゲームでも同じボタンを押す
         if (_crewPanel != null && _role == CrewRole.Driver)
         {
@@ -227,6 +228,19 @@ public sealed partial class MainForm : Form
                 ShowMessage("運転士のキーを保存しました（押すと、乗っている車掌のゲームでも同じボタンを押します）");
             };
             buttons.Controls.Add(driverKeys);
+
+            // AI 運転士（試し）: 自分のゲームを AI が運転する。車掌用操作盤が出るので、ドアとブザー（発車の合図）は自分で扱う
+            var ai = new CheckBox { Size = new Size(90, 30), Margin = new Padding(10, 3, 0, 3), Text = "AI運転", Appearance = Appearance.Button, TextAlign = ContentAlignment.MiddleCenter };
+            ai.CheckedChanged += (_, _) =>
+            {
+                ai.BackColor = ai.Checked ? Color.RoyalBlue : SystemColors.Control;
+                ai.ForeColor = ai.Checked ? Color.White : SystemColors.ControlText;
+                _crewPanel.SetAiDriving(ai.Checked);
+                ShowMessage(ai.Checked
+                    ? "AI運転: AI がノッチを扱います。ドアは車掌用操作盤で扱い、閉めたらブザーで発車の合図をしてください（サーバーに接続している間だけ）"
+                    : "AI運転を切りました（ノッチを中立・常用最大ブレーキに戻しました）");
+            };
+            aiButton = ai;
         }
 
         AddWide(buttons, SizeType.Absolute, 40);
@@ -241,6 +255,7 @@ public sealed partial class MainForm : Form
         _linkButton.Margin = new Padding(8, 3, 0, 3);
         _linkButton.ForeColor = Ng;
         modeRow.Controls.AddRange([_modeLabel, _backButton, _linkButton]);
+        if (aiButton != null) modeRow.Controls.Add(aiButton);
         AddWide(modeRow, SizeType.Absolute, 38);
 
         foreach (var l in new[] { _serverLabel, _gameLabel, _infoLabel, _messageLabel })
