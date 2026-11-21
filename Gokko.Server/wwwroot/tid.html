@@ -494,7 +494,8 @@
   function stationBox(b, o) {
     const px = X(b.x), py = Y(b.y);
     const time = (t) => (t ? Date.parse(t) : Infinity);
-    const trains = o ? o.trains.filter((t) => t.direction === b.dir) : [];
+    // planned: ダイヤ運転中、まだ走っていない後運用の列車（折り返す前から出す）
+    const trains = o ? [...o.trains, ...(o.planned || [])].filter((t) => t.direction === b.dir) : [];
     // 並びはサーバーが決めた「実際に進路を取る順」（departRank・arriveRank）。古いサーバーなら見込み時刻
     const rank = (t, key, fallback) => (t[key] ?? fallback);
     const rows = b.what === "到着"

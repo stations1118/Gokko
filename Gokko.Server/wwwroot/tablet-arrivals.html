@@ -109,7 +109,7 @@
     if (!s) return `<div class="stage empty${first}"><div class="ord">${ORD[i] || ""}</div><div></div><div></div><div></div></div>`;
     const stCls = s.status === "到着" ? "arrived" : s.status === "通過中" ? "passing" : "";
     const kindBg = typeColor[s.kind] || "#607089";
-    const label = s.stage === "通過" ? "通過" : s.stage === "終着" ? "当駅止" : s.stage === "発" && s.status !== "始発" ? "待避後発" : s.status === "始発" ? "当駅始発" : "";
+    const label = s.stage === "通過" ? "通過" : s.stage === "終着" ? "当駅止" : s.status === "折返" ? "当駅始発" : s.stage === "発" && s.status !== "始発" ? "待避後発" : s.status === "始発" ? "当駅始発" : "";
     return `<div class="stage${first}">
       <div class="ord">${ORD[i] || ""}<br><span class="st ${stCls}">${esc(s.status)}</span></div>
       <div><div class="num">${esc(s.train)}</div>
