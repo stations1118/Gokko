@@ -403,14 +403,16 @@ public static class AdminEndpoints
             running = clock.IsRunning
         }));
 
-        view.MapGet("/state", (RouteEngine engine, GameClock clock, RelayPanels panels) => Results.Ok(new
+        // 在線位置は全員に同じ中身なので、0.5秒のあいだ使い回す（何人が1秒ごとに読みに来ても、作るのは1秒に2回まで。SharedJsonCache）
+        var tidState = new SharedJsonCache();
+        view.MapGet("/state", (RouteEngine engine, GameClock clock, RelayPanels panels) => Results.Bytes(tidState.Get(TimeSpan.FromMilliseconds(500), () => new
         {
             gameTime = clock.NowText,
             tid = engine.TidView(),
             panels = panels.TidView(),   // 信号制御盤: 盤で扱っている駅と、盤で取っている進路
             orders = engine.OrdersView(),
             sections = engine.SectionsView()
-        }));
+        }), "application/json; charset=utf-8"));
 
         // ---- 勤怠管理（kintai.html）: 乗務員（社員番号）と、行路への割り当て ----
         // /api/kintai はヘッダー X-Kintai-Key に、管理キーか勤怠管理の鍵（KintaiKey。公開する用）を付けて呼ぶ。

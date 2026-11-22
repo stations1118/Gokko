@@ -766,8 +766,17 @@
     }
   }
 
-  refresh();
-  setInterval(refresh, 1000);
+  // 前の読み込みが終わっていなければ重ねて投げない（サーバーが遅いとき、要求が積み重なって配信まで詰まるため）。
+  // タブを裏に回している間は読まない（表に戻すと、すぐ読み直す）
+  let polling = false;
+  const poll = async () => {
+    if (polling || document.hidden) return;
+    polling = true;
+    try { await refresh(); } finally { polling = false; }
+  };
+  document.addEventListener("visibilitychange", poll);
+  poll();
+  setInterval(poll, 1000);
 })();
 </script>
 </body>
