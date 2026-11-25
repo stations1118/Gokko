@@ -374,11 +374,11 @@
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const short = (t) => (t ? String(t).replace(/:00$/, "") : "");
-  async function api(method, body) {
+  async function api(method, body, path) {
     let key = "";
     try { key = localStorage.getItem("gokkoDiaKey") || ""; } catch (e) {}
     const token = GokkoCrew.token();
-    const res = await fetch("/api/dia/temptrains", {
+    const res = await fetch("/api/dia/temptrains" + (path || ""), {
       method, headers: { "X-Dia-Key": key, ...(token ? { "X-Crew-Token": token } : {}), "Content-Type": "application/json" },
       body: body ? JSON.stringify(body) : undefined, cache: "no-store"
     });
@@ -396,13 +396,36 @@
             <div class="row" style="margin-bottom:4px"><b>${esc(g.name)}</b> <span class="muted">${g.trains.length}本・作成 ${esc(g.owner)}・承認 ID:${esc(g.approvedBy)}</span>
               ${g.applied ? `<b class="ok">適用中</b> <button data-tt="${esc(g.id)}" data-tt-act="cancel" class="danger">取消</button>`
                           : `<button data-tt="${esc(g.id)}" data-tt-act="apply" class="primary">適用</button>`}</div>
-            <table style="font-size:12px">${g.trains.map((t) => `<tr><td class="muted">運行${esc(t.unyo)}</td><td><b>${esc(t.number)}</b></td><td>${esc(t.type)}</td>
-              <td>${esc(t.from)} ${esc(short(t.dep))}発</td><td>→ ${esc(t.to)} ${esc(short(t.arr))}着</td><td class="muted">${esc(t.dest)}行</td></tr>`).join("")}</table></div>`).join("")
-          + `<div class="muted">適用すると、所定の時刻表に重ねてダイヤグラムに出し、自動運転の列車として走らせます（ユーザーが乗る列車は出しません）。取消で外し、走っている自動運転の列車も消します。</div>`;
+            <table style="font-size:12px">${unyoGroups(g).map(([u, ts]) => {
+              const on = !(g.off || []).includes(u);
+              return ts.map((t, i) => `<tr style="${on ? "" : "opacity:.45"}">${i === 0 ? `<td rowspan="${ts.length}" style="vertical-align:top;white-space:nowrap">
+                  <label title="外すと、この運行番号の列車は走らせません（適用中なら、走っている自動運転の列車も消します）"><input type="checkbox" data-tu="${esc(g.id)}" data-tu-unyo="${esc(u)}" ${on ? "checked" : ""}> 運行${esc(u)}</label></td>` : ""}
+                <td><b>${esc(t.number)}</b></td><td>${esc(t.type)}</td>
+                <td>${esc(t.from)} ${esc(short(t.dep))}${t.dep ? "発" : ""}</td><td>→ ${esc(t.to)} ${esc(short(t.arr))}着</td><td class="muted">${t.dest ? esc(t.dest) + "行" : ""}</td></tr>`).join("");
+            }).join("")}</table></div>`).join("")
+          + `<div class="muted">適用すると、所定の時刻表に重ねてダイヤグラムに出し、自動運転の列車として走らせます（ユーザーが乗る列車は出しません）。取消で外し、走っている自動運転の列車も消します。<br>
+              運行番号のチェックを外すと、その運行番号の列車だけ走らせません（ほかの運行番号はそのまま。適用中でも切り替えられます）。</div>`;
       if (html !== last) { $("tempTrains").innerHTML = html; last = html; }
       $("tempTrains").className = "";
     } catch (e) { $("tempTrains").textContent = e.message; $("tempTrains").className = "muted"; last = ""; }
   }
+  // 運行番号ごとにまとめる（運行番号の順）
+  function unyoGroups(g) {
+    const m = new Map();
+    for (const t of g.trains) { if (!m.has(t.unyo)) m.set(t.unyo, []); m.get(t.unyo).push(t); }
+    const num = (u) => parseInt(u, 10) || 0;
+    return [...m.entries()].sort((a, b) => num(a[0]) - num(b[0]) || String(a[0]).localeCompare(String(b[0])));
+  }
+  $("tempTrains").addEventListener("change", async (ev) => {
+    const c = ev.target.closest("input[data-tu]");
+    if (!c) return;
+    const on = c.checked, u = c.dataset.tuUnyo;
+    if (!on && !confirm(`運行${u} の列車を走らせないようにしますか？（適用中なら、走っている自動運転の列車も消します）`)) { c.checked = true; return; }
+    c.disabled = true;
+    try { await api("POST", { id: c.dataset.tu, unyo: u, on }, "/unyo"); } catch (e) { alert(e.message); }
+    last = "";
+    await load();
+  });
   $("tempTrains").addEventListener("click", async (ev) => {
     const b = ev.target.closest("button[data-tt]");
     if (!b) return;

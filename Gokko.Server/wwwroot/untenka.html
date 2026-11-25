@@ -141,6 +141,7 @@
         <div class="row" id="trainBtns">
           <button id="addTrain">列車を追加</button>
           <button id="addSplit" title="走っている列車（このグループの列車か所定の列車）から、途中の停車駅や終点で車両を切り離して、別の列車として走らせます">切り離しを追加</button>
+          <button id="addYard" title="選んでいる列車の終点の駅の中で、番線から番線へ入換を続けます（江ノ原信号場 10番線 → 13番線 → 11番線 など）。入換1回ごとに、その駅だけの回送を作ってつなぎます">構内入換を追加</button>
           <button id="dupTrain">複製</button>
           <button id="delTrain">列車を削除</button>
           <button id="check">確認</button>
@@ -153,6 +154,15 @@
           <button id="sMake">作る</button>
           <button id="sCancel">やめる</button>
           <div class="note" id="sNote">切り離した車両は「解＋元の列番」の回送になります。作ったあと、終点を選んで［駅を並べる］で行き先までの時刻を入れます（後運用も選べます）。</div>
+        </div>
+        <div class="row" id="yardBox" hidden>
+          <span id="yHead"></span><span id="ySteps"></span>
+          <button id="yAdd" class="small" title="もう1回入換する">番線を足す</button>
+          <button id="yDel" class="small" title="最後の入換をやめる">1つ戻す</button>
+          後運用: <select id="yNext"></select>
+          <button id="yMake">作る</button>
+          <button id="yCancel">やめる</button>
+          <div class="note" id="yNote">入換1回ごとに、その駅だけの回送（入換で入った番線に、その時刻に着く列車）を作り、前の列車の終点のあとを「入換」にしてつなぎます。列番は運行番号と時刻から入ります（入換の向きで奇数・偶数が決まります）。後運用を選ぶと、最後の入換はその列車の始発の入換になり、その列車の発車の番線を最後の番線にします。</div>
         </div>
       </fieldset>
 
@@ -260,6 +270,11 @@
   function dirOf(t) {
     if (!t.stops.length || base.downIncreasing == null) return null;
     const z0 = stById[t.stops[0].st]?.zone, z1 = stById[t.stops[t.stops.length - 1].st]?.zone;
+    // 1駅だけの列車（構内入換・増結車）は、列番の数字の最後（奇数＝下り、偶数＝上り。「#2」などの呼び分けは除く）
+    if (t.stops.length === 1) {
+      const m = /(\d)[A-Z]*$/.exec(String(t.number || "").replace(/#\d+$/, ""));
+      return m ? (+m[1] % 2 ? "下り" : "上り") : null;
+    }
     if (z0 == null || z1 == null || z0 === z1) return null;
     return (z1 > z0) === base.downIncreasing ? "下り" : "上り";
   }
@@ -320,7 +335,7 @@
     $("withdraw").disabled = !cur.id || cur.applied || !(cur.status === "申請中" || cur.status === "承認") || !(mine || base.me.approver);
     $("remove").disabled = !cur.id || cur.applied || cur.status === "承認" || !(mine || base.me.approver);
     $("approveBox").hidden = !(base.me.approver && cur.status === "申請中");
-    for (const id of ["addTrain", "addSplit", "dupTrain", "delTrain", "dgDraw"]) $(id).disabled = !ed;
+    for (const id of ["addTrain", "addSplit", "addYard", "dupTrain", "delTrain", "dgDraw"]) $(id).disabled = !ed;
     if (!ed && drawing) { drawing = null; $("dgDraw").classList.remove("on"); }
     $("dupTrain").disabled = $("delTrain").disabled = !ed || curTrain < 0;
     drawTrains();
@@ -334,16 +349,19 @@
   const unyoCmp = (a, b) => { const x = unyoKey(a), y = unyoKey(b); return (x[0] - y[0]) || (x[1] < y[1] ? -1 : x[1] > y[1] ? 1 : 0); };
 
   function drawTrains() {
-    const list = cur.trains.map((t, i) => ({ t, i })).sort((a, b) => unyoCmp(a.t.unyo, b.t.unyo) || ((sec(a.t.stops[0]?.dep) || 0) - (sec(b.t.stops[0]?.dep) || 0)));
+    const t0 = (t) => sec(t.stops[0]?.dep || t.stops[0]?.arr) || 0;
+    const list = cur.trains.map((t, i) => ({ t, i })).sort((a, b) => unyoCmp(a.t.unyo, b.t.unyo) || (t0(a.t) - t0(b.t)));
     let lastUnyo = null;
     const rows = list.map(({ t, i }) => {
       const f = t.stops[0], l = t.stops[t.stops.length - 1];
+      const yardRow = t.stops.length === 1 && t.turnHow !== "連結";
       const head = t.unyo !== lastUnyo ? `<tr><td colspan="6" style="background:#e3e8f4;color:#0046d5;font-weight:bold">運行 ${esc(t.unyo || "？")}</td></tr>` : "";
       lastUnyo = t.unyo;
       return head + `<tr class="pick ${i === curTrain ? "sel" : ""}" data-t="${i}">
         <td class="mono"><b>${esc(t.number || "（列番なし）")}</b></td><td>${esc(t.type)}</td>
-        <td>${esc(f ? stById[f.st]?.name : "")} <span class="mono">${esc(short(f?.dep))}</span></td><td>→</td>
-        <td>${esc(l ? stById[l.st]?.name : "")} <span class="mono">${esc(short(l?.arr || l?.dep))}</span></td><td class="muted">${esc(t.dest)}行 ${esc(dirOf(t) || "")}</td></tr>`;
+        ${yardRow ? `<td colspan="3">${esc(stById[f.st]?.name || "")} 構内入換 <span class="mono">${esc(short(f.arr || f.dep))}</span> ${f.track != null ? `${f.track}番線へ` : ""}</td><td class="muted">${esc(dirOf(t) || "")}</td></tr>`
+          : `<td>${esc(f ? stById[f.st]?.name : "")} <span class="mono">${esc(short(f?.dep))}</span></td><td>→</td>
+        <td>${esc(l ? stById[l.st]?.name : "")} <span class="mono">${esc(short(l?.arr || l?.dep))}</span></td><td class="muted">${esc(t.dest)}行 ${esc(dirOf(t) || "")}</td></tr>`}`;
     }).join("");
     $("trains").innerHTML = cur.trains.length ? `<table><thead><tr><th>列番</th><th>種別</th><th>発</th><th></th><th>着</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
       : `<div class="note" style="padding:4px">列車がありません。${editable() ? "［列車を追加］で入れます。" : ""}</div>`;
@@ -404,6 +422,107 @@
     drawEditor();
     if ($("tTo")) $("tTo").focus();
   };
+  // ---- 構内入換: 選んでいる列車の終点の番線から、駅の中で番線を移っていく（入換1回が、その駅だけの回送1本） ----
+  let yard = null; // { t: 元の列車, st: 駅, from: 着いた番線, arr: 着いた時刻, steps: [{ track, time }] }
+  // その駅で from 番線から入換で入れる番線（下り・上りの始発の入換）と、その向き
+  function yardMoves(st, from) {
+    const rules = stById[st]?.rules || {}, out = [];
+    for (const d of ["下り", "上り"])
+      for (const sh of (rules[d] ? rules[d].shunts : []))
+        if (sh.from === `${from}番線` && !out.some((o) => o.to === sh.to)) out.push({ to: sh.to, dir: d });
+    return out.sort((a, b) => a.to - b.to);
+  }
+  $("addYard").onclick = () => {
+    const t = cur.trains[curTrain], end = t && t.stops[t.stops.length - 1];
+    if (!t || !end) { alert("先に、入換する列車（終点の番線まで入れたもの）を選んでください"); return; }
+    if (end.track == null) { alert(`${t.number || "この列車"}: 終点の番線を入れてください`); return; }
+    if (!yardMoves(end.st, end.track).length) { alert(`${stById[end.st]?.name || end.st} ${end.track}番線からは、入換で入れる番線がありません`); return; }
+    yard = { t, st: end.st, from: end.track, arr: sec(end.arr || end.dep) ?? 0, steps: [] };
+    yardStep();
+    $("yNext").innerHTML = "";
+    drawYard();
+    $("yardBox").hidden = false;
+  };
+  function yardStep() {
+    const last = yard.steps[yard.steps.length - 1], from = last ? last.track : yard.from;
+    const moves = yardMoves(yard.st, from);
+    if (!moves.length) return false;
+    // 前の番線へすぐ戻らないものを先に
+    const prev = yard.steps.length >= 2 ? yard.steps[yard.steps.length - 2].track : yard.from;
+    const pick = moves.find((m) => m.to !== prev) || moves[0];
+    yard.steps.push({ track: pick.to, time: (last ? last.time : yard.arr) + 300 });
+    return true;
+  }
+  function drawYard() {
+    const t = yard.t;
+    $("yHead").textContent = `${t.number || "（列番なし）"} ${stById[yard.st]?.name || yard.st} ${yard.from}番線（${short(fmt(yard.arr))}着）`;
+    $("ySteps").innerHTML = yard.steps.map((s, i) => {
+      const from = i ? yard.steps[i - 1].track : yard.from, moves = yardMoves(yard.st, from);
+      return ` → <select data-y="${i}">${moves.map((m) => `<option value="${m.to}" ${m.to === s.track ? "selected" : ""}>${m.to}番線（${m.dir}の入換）</option>`).join("")}</select>`
+        + ` <input data-yt="${i}" type="text" size="5" value="${esc(short(fmt(s.time)))}" title="この入換の時刻">`;
+    }).join("");
+    $("yDel").disabled = yard.steps.length <= 1;
+    // 後運用: この駅から出る、このグループの列車（着いたあとに出るもの）
+    const lastT = yard.steps[yard.steps.length - 1].time;
+    const cands = cur.trains.filter((x) => x !== t && x.number && x.stops.length >= 2 && x.stops[0].st === yard.st && (sec(x.stops[0].dep) ?? 0) >= yard.arr)
+      .sort((a, b) => (sec(a.stops[0].dep) ?? 0) - (sec(b.stops[0].dep) ?? 0));
+    const keep = $("yNext").value;
+    $("yNext").innerHTML = `<option value="">（なし。最後の番線で止めておく）</option>` + cands.map((x) =>
+      `<option value="${esc(x.number)}" ${x.number === keep ? "selected" : ""}>${esc(x.number)} ${short(x.stops[0].dep)}発 ${esc(x.dest || stById[x.stops[x.stops.length - 1].st]?.name || "")}行${(sec(x.stops[0].dep) ?? 0) < lastT ? "（入換より前に出る）" : ""}</option>`).join("");
+  }
+  $("ySteps").onchange = (ev) => {
+    const i = ev.target.dataset.y, it = ev.target.dataset.yt;
+    if (i != null) {
+      yard.steps[+i].track = +ev.target.value;
+      // 先の入換は、変えた番線から続けて入れるものだけ残す
+      const keep = [];
+      for (const [k, s] of yard.steps.entries()) {
+        if (k > +i && !yardMoves(yard.st, keep[k - 1].track).some((m) => m.to === s.track)) break;
+        keep.push(s);
+      }
+      yard.steps = keep;
+    }
+    if (it != null) {
+      const v = sec(ev.target.value.trim());
+      if (v == null) alert("時刻の形が違います（例 10:05）");
+      else yard.steps[+it].time = v;
+    }
+    drawYard();
+  };
+  $("yAdd").onclick = () => { if (!yardStep()) alert("最後の番線からは、入換で入れる番線がありません"); drawYard(); };
+  $("yDel").onclick = () => { if (yard.steps.length > 1) yard.steps.pop(); drawYard(); };
+  $("yCancel").onclick = () => { $("yardBox").hidden = true; yard = null; };
+  $("yMake").onclick = () => {
+    const t = yard.t, nx = cur.trains.find((x) => x.number && x.number === $("yNext").value) || null;
+    for (let i = 1; i < yard.steps.length; i++)
+      if (yard.steps[i].time < yard.steps[i - 1].time) { alert("入換の時刻が、前の入換より早くなっています"); return; }
+    if (yard.steps[0].time < yard.arr) { alert(`最初の入換の時刻が、${t.number || "列車"} が着くより前です`); return; }
+    if (t.turnHow && t.turnHow !== "なし" && !confirm(`${t.number || "この列車"} の終点のあと（${t.turnHow}${t.turnNext ? " " + t.turnNext : ""}）を、構内入換に変えますか？`)) return;
+    // 後運用を選んだら、最後の入換はその列車の始発の入換（その列車の発車の番線を最後の番線にする）。それ以外の入換は1本ずつ回送を作る
+    const make = nx ? yard.steps.slice(0, -1) : yard.steps;
+    const used = new Set([...cur.trains.map((x) => x.number), ...basePartners().map((x) => x.number)]);
+    let from = yard.from;
+    const made = [];
+    for (const s of make) {
+      const dir = (yardMoves(yard.st, from).find((m) => m.to === s.track) || {}).dir;
+      let number = makeNumber({ unyo: t.unyo, type: "回送", stops: [] }, dir, s.time) || "";
+      if (number) { const b = number; for (let k = 2; used.has(number); k++) number = `${b}#${k}`; used.add(number); }
+      made.push({ unyo: t.unyo, number, type: "回送", label: "", dest: "", cars: t.cars || 0, turnHow: "なし", turnNext: "", turnVia: "", turnTime: null,
+        stops: [{ st: yard.st, stop: "停", arr: fmt(s.time), dep: null, track: s.track }] });
+      from = s.track;
+    }
+    // つなぐ: 元の列車 → 構内入換の回送 → … → 後運用。入換の時刻は、その入換（次の番線に入る）の時刻
+    const chain = [t, ...made, ...(nx ? [nx] : [])];
+    for (let i = 0; i + 1 < chain.length; i++)
+      Object.assign(chain[i], { turnHow: "入換", turnNext: chain[i + 1].number, turnVia: "", turnTime: fmt(yard.steps[i].time) });
+    if (nx) nx.stops[0].track = yard.steps[yard.steps.length - 1].track;
+    cur.trains.push(...made);
+    if (made.some((x) => !x.number)) alert("運行番号が偶数でないので、構内入換の列番を自動で入れられませんでした。列番を手で入れてください（下りの入換は奇数、上りの入換は偶数）");
+    dirty = true;
+    $("yardBox").hidden = true;
+    yard = null;
+    drawEditor();
+  };
   $("dupTrain").onclick = () => {
     const t = JSON.parse(JSON.stringify(cur.trains[curTrain]));
     t.number = "";
@@ -460,9 +579,11 @@
       return [...mineC, ...baseC, ...(keep ? [keep] : [])];
     }
     const arr = sec(end.arr || end.dep), d = dirOf(t), same = t.turnHow === "種別変更";
-    return cur.trains.filter((x) => x !== t && x.stops[0] && x.stops[0].st === end.st && (arr == null || (sec(x.stops[0].dep) ?? 0) >= arr)
+    // 構内入換（1駅だけで発の時刻がない列車）は、着の時刻（入換で番線に入る時刻）で比べる
+    const dep0 = (x) => sec(x.stops[0].dep || (x.stops.length === 1 ? x.stops[0].arr : null)) ?? 0;
+    return cur.trains.filter((x) => x !== t && x.stops[0] && x.stops[0].st === end.st && (arr == null || dep0(x) >= arr)
         && (!d || !dirOf(x) || t.turnHow === "入換" || (dirOf(x) === d) === same))
-      .sort((a, b) => (sec(a.stops[0].dep) ?? 0) - (sec(b.stops[0].dep) ?? 0));
+      .sort((a, b) => dep0(a) - dep0(b));
   }
   // 所定の列車を、連結・切り離しの相手として（列番・種別・駅の停車と時刻・番線）。試運転は出さない
   function basePartners() {
@@ -517,7 +638,7 @@
       const x = cands.find((y) => y.number === n);
       const endSt = t.stops[t.stops.length - 1]?.st, xs = x && x.stops.find((s) => s.st === endSt);
       const info = !x ? (how === "連結" ? "（この駅に止まらない列車）" : "（終点から出ない列車）")
-        : how === "連結" ? ` ${short(xs?.arr || xs?.dep)}着 ${xs?.track != null ? xs.track + "番線" : ""}${x.base ? "（所定）" : ""}` : ` ${short(x.stops[0]?.dep)}発 ${esc(x.dest || "")}行`;
+        : how === "連結" ? ` ${short(xs?.arr || xs?.dep)}着 ${xs?.track != null ? xs.track + "番線" : ""}${x.base ? "（所定）" : ""}` : x.stops.length === 1 ? ` ${short(x.stops[0].arr)} 構内入換で${x.stops[0].track ?? ""}番線へ` : ` ${short(x.stops[0]?.dep)}発 ${esc(x.dest || "")}行`;
       return `<option value="${esc(n)}" ${n === t.turnNext ? "selected" : ""}>${esc(n)}${info}</option>`;
     }).join("") + (cands.some((x) => !x.number) ? `<option value="" disabled>（列番を入れていない列車は選べません）</option>` : "");
     const outs = shuntOutsOf(t);
@@ -570,10 +691,10 @@
   // 列番 = 頭の字（回送は「回」、それ以外は「臨」）＋ 始発の時 ＋ 運行番号の下2桁（下りは＋1）＋ 運行番号の S・T ＋ 種別の記号。
   // 運行番号が100番台なら数字に＋3000、200番台なら＋6000、300番台なら＋9000（時は1の位だけ）。手で列番を直したら、それ以後は自動では変えない
   const autoNums = new WeakMap(); // 列車 → 自動で入れた列番
-  function makeNumber(t) {
+  function makeNumber(t, dirOverride, timeOverride) {
     if (t.turnHow === "連結") return null; // 増結車は「連＋連結する列車の列番」
     const m = /^(\d+)([A-Z]*)$/.exec(t.unyo || "");
-    const dep = sec(t.stops[0] && t.stops[0].dep), d = dirOf(t);
+    const dep = timeOverride ?? sec(t.stops[0] && t.stops[0].dep), d = dirOverride || dirOf(t);
     if (!m || dep == null || !d) return null;
     const u = +m[1];
     if (u % 2 === 1) return null; // 運行番号は偶数（下りは＋1した奇数、上りは偶数の列番になる）
@@ -947,7 +1068,7 @@
     const mine = cur.trains.map((t, i) => ({
       i, t, name: t.number || "（列番なし）", type: t.type, unyo: t.unyo,
       sh: shape(t.stops.filter((s) => zoneOf(s.st) != null).map((s) => ({ y: zoneOf(s.st), stop: s.stop, arr: s.arr, dep: s.dep, track: s.track })))
-    })).filter((m) => m.sh.pts.length >= 2 || (m.t.turnHow === "連結" && m.sh.pts.length >= 1)); // 増結車は待つ駅の1点だけでもよい
+    })).filter((m) => m.sh.pts.length >= 2 || (m.t.stops.length === 1 && m.sh.pts.length >= 1)); // 増結車・構内入換は、その駅の1点だけでもよい
     const shownPlan = plan.filter((p) => dv.trial || !p.trial); // 試運転は「試運転を表示」のときだけ
     // 関係する列車（このグループのほかの列車も相手にする）
     const rel = new Set(); const lines = [];

@@ -58,7 +58,12 @@ public sealed class TempTrains
         public DateTime UpdatedUtc { get; set; }
         /// <summary>司令用管理画面で適用しているか。</summary>
         public bool Applied { get; set; }
+        /// <summary>司令用管理画面で「走らせない」にした運行番号（適用しても、この運行番号の列車は出さない）。</summary>
+        public List<string> OffUnyo { get; set; } = new();
         public List<TrainSpec> Trains { get; set; } = new();
+
+        /// <summary>走らせる列車（走らせないにした運行番号の列車を除く）。</summary>
+        public IEnumerable<TrainSpec> Running() => Trains.Where(t => !OffUnyo.Contains(t.Unyo));
     }
 
     public sealed class TrainSpec
@@ -273,8 +278,8 @@ public sealed class TempTrains
             if (on)
             {
                 // ほかの適用中のグループ・所定のダイヤと列番がかぶらないか
-                var used = _groups.Where(x => x.Applied).SelectMany(x => x.Trains).Select(t => t.Number).ToHashSet();
-                var dup = g.Trains.Select(t => t.Number).Where(n => used.Contains(n) || _rail.BaseDia.ContainsKey(n)).ToList();
+                var used = _groups.Where(x => x.Applied).SelectMany(x => x.Running()).Select(t => t.Number).ToHashSet();
+                var dup = g.Running().Select(t => t.Number).Where(n => used.Contains(n) || _rail.BaseDia.ContainsKey(n)).ToList();
                 if (dup.Count > 0) return $"列番がほかの列車とかぶっています: {string.Join("、", dup)}";
             }
             g.Applied = on;
@@ -287,12 +292,46 @@ public sealed class TempTrains
         return null;
     }
 
-    /// <summary>適用中のグループの列車を、所定のダイヤに重ねる（_lock の中）。うまくいかなければ理由を返す。</summary>
+    /// <summary>
+    /// グループの運行番号ごとに、走らせるか（on）・走らせないかを決める（適用の前でも後でもよい）。
+    /// 適用中なら、すぐダイヤに重ね直す（走らせないにした運行番号の、走っている自動運転の列車は消す）。うまくいかなければ理由を返す。
+    /// </summary>
+    public string? SetUnyo(string? id, string? unyo, bool on)
+    {
+        List<string> removed;
+        lock (_lock)
+        {
+            var g = _groups.FirstOrDefault(x => x.Id == id);
+            if (g == null) return "そのグループはありません";
+            var u = (unyo ?? "").Trim();
+            if (!g.Trains.Any(t => t.Unyo == u)) return $"このグループに運行番号 {u} の列車はありません";
+            if (g.OffUnyo.Contains(u) != on) return null;
+            if (on && g.Applied)
+            {
+                var used = _groups.Where(x => x.Applied).SelectMany(x => x.Running()).Select(t => t.Number).ToHashSet();
+                var dup = g.Trains.Where(t => t.Unyo == u).Select(t => t.Number).Where(n => used.Contains(n) || _rail.BaseDia.ContainsKey(n)).ToList();
+                if (dup.Count > 0) return $"列番がほかの列車とかぶっています: {string.Join("、", dup)}";
+            }
+            if (on) g.OffUnyo.Remove(u); else g.OffUnyo.Add(u);
+            removed = !on && g.Applied ? g.Trains.Where(t => t.Unyo == u).Select(t => t.Number).ToList() : new();
+            if (g.Applied && ApplyLayer() is { } msg)
+            {
+                if (on) g.OffUnyo.Add(u); else g.OffUnyo.Remove(u);
+                ApplyLayer();
+                return msg;
+            }
+            Save();
+        }
+        if (removed.Count > 0) Removed?.Invoke(removed);
+        return null;
+    }
+
+    /// <summary>適用中のグループの列車を、所定のダイヤに重ねる（_lock の中）。うまくいかなければ理由を返す。走らせないにした運行番号の列車は除く。</summary>
     private string? ApplyLayer()
     {
         var extra = new List<DiaTrain>();
         foreach (var g in _groups.Where(g => g.Applied))
-            extra.AddRange(Build(g.Trains));
+            extra.AddRange(Build(g.Running().ToList()));
         var skipped = _rail.SetExtraTrains("催物", extra);
         return skipped.Count > 0 ? $"所定のダイヤにある列番は足せませんでした: {string.Join("、", skipped)}" : null;
     }
@@ -393,7 +432,7 @@ public sealed class TempTrains
     /// <summary>適用中の列番（司令用管理画面の一覧）。</summary>
     public HashSet<string> AppliedNumbers()
     {
-        lock (_lock) return _groups.Where(g => g.Applied).SelectMany(g => g.Trains).Select(t => t.Number).ToHashSet();
+        lock (_lock) return _groups.Where(g => g.Applied).SelectMany(g => g.Running()).Select(t => t.Number).ToHashSet();
     }
 
     // =========================================================================================
@@ -461,6 +500,14 @@ public sealed class TempTrains
         };
     }
 
+    /// <summary>
+    /// 構内入換: 1駅だけの列車で、このグループの列車の終点のあと「入換」の後運用になっているもの（その列車の終点と同じ駅）。
+    /// 江ノ原信号場の 10番線 → 13番線 → 11番線 のように、駅の中で番線を移るのに使う（入換1回が1列車）。
+    /// </summary>
+    private static bool IsYardShunt(TrainSpec t, List<TrainSpec> trains) =>
+        t.Stops.Count == 1 && t.Number.Length > 0
+        && trains.Any(p => p != t && p.TurnHow == "入換" && p.TurnNext == t.Number && p.Stops.Count > 0 && p.Stops[^1].St == t.Stops[0].St);
+
     /// <summary>種別に合う列番の形か（末尾の文字・回送の「回」）。</summary>
     private static string? NumberTypeError(TrainSpec t)
     {
@@ -492,15 +539,23 @@ public sealed class TempTrains
             if (t.Unyo.Length == 0) errors.Add($"{n}: 運行番号を入れてください（24・24S など）");
             if (!types.Contains(t.Type)) { errors.Add($"{n}: 種別を選んでください"); continue; }
             if (NumberTypeError(t) is { } te) errors.Add(te);
-            // 増結車（連結）は、待つ駅の1駅だけでよい
-            if (t.Stops.Count < (t.TurnHow == "連結" ? 1 : 2)) { errors.Add($"{n}: 駅を{(t.TurnHow == "連結" ? 1 : 2)}つ以上入れてください"); continue; }
+            // 増結車（連結）と構内入換（前の列車の終点のあと「入換」の後運用で、その駅の1駅だけ）は、1駅だけでよい
+            var yard = IsYardShunt(t, trains);
+            if (t.Stops.Count < (t.TurnHow == "連結" || yard ? 1 : 2))
+            {
+                errors.Add(t.Stops.Count == 1
+                    ? $"{n}: 駅を2つ以上入れてください（駅の中だけで入換する列車なら、前の列車の終点のあとを「入換」にして、この列車を後運用に選んでください）"
+                    : $"{n}: 駅を{(t.TurnHow == "連結" ? 1 : 2)}つ以上入れてください");
+                continue;
+            }
 
             // 駅は路線の駅で、向きに沿って並んでいること
             var zs0 = t.Stops.Select(s => ZoneOf(s.St)).ToList();
             if (zs0.Any(z => z == null)) { errors.Add($"{n}: 路線にない駅があります"); continue; }
             var zones = zs0.Select(z => z!.Value).ToList();
             var inc = zones[^1] > zones[0];
-            Dir? trainDir = downUp is { } du0 ? (inc == du0 ? Dir.Down : Dir.Up) : null;
+            // 1駅だけの列車（構内入換・増結車）は、列番の数字の最後（奇数＝下り、偶数＝上り）で向きを決める
+            Dir? trainDir = zones.Count < 2 ? RouteEngine.TrainInfo(n)?.Dir : downUp is { } du0 ? (inc == du0 ? Dir.Down : Dir.Up) : null;
             for (var i = 1; i < zones.Count; i++)
                 if ((zones[i] > zones[i - 1]) != inc || zones[i] == zones[i - 1]) { errors.Add($"{n}: 駅の並びが逆になっている所があります"); break; }
             if (zones.Count >= 2 && RouteEngine.TrainInfo(n) is { } info && downUp is { } du && (info.Dir == Dir.Down) != (inc == du))
@@ -603,7 +658,8 @@ public sealed class TempTrains
                 {
                     if (trains.Count(x => x != t && x.TurnHow is "発" or "入換" or "種別変更" && x.TurnNext == next.Number) > 0)
                         errors.Add($"{n}: 後運用 {next.Number} は、ほかの列車の後運用にもなっています");
-                    double? arr = DaySec(end.Arr ?? end.Dep), dep = DaySec(next.Stops[0].Dep);
+                    // 構内入換（1駅だけの列車）は、着の時刻（入換で番線に入る時刻）を発車の代わりにする
+                    double? arr = DaySec(end.Arr ?? end.Dep), dep = DaySec(next.Stops[0].Dep ?? (next.Stops.Count == 1 ? next.Stops[0].Arr : null));
                     if (arr != null && dep != null && dep < arr) errors.Add($"{n}: 後運用 {next.Number} の発車が、{endName}に着くより前です");
                     if (t.TurnHow == "種別変更")
                     {
@@ -624,14 +680,26 @@ public sealed class TempTrains
                             // 引上線がなければ、着いた番線から後運用の発車の番線へ、そのまま入換で移る（駒野 1番線 → 5番線など。後運用の始発の入換）
                             // 後運用の向き（入換は折り返しに限らない。駒野の下りで1番線に着き、5番線へ移って下りで出ることもある）
                             var nzs = next.Stops.Select(s => ZoneOf(s.St)).Where(z => z != null).Select(z => z!.Value).ToList();
-                            var nd = nzs.Count >= 2 && downUp is { } du3 ? ((nzs[^1] > nzs[0]) == du3 ? Dir.Down : Dir.Up) : td2 == Dir.Down ? Dir.Up : Dir.Down;
+                            // 後運用が1駅だけ（構内入換）なら、後運用の列番の向き
+                            var nd = nzs.Count >= 2 && downUp is { } du3 ? ((nzs[^1] > nzs[0]) == du3 ? Dir.Down : Dir.Up)
+                                : nzs.Count < 2 && RouteEngine.TrainInfo(next.Number) is { } ninfo ? ninfo.Dir
+                                : td2 == Dir.Down ? Dir.Up : Dir.Down;
                             var moves = es.Routes[nd].Shunts.Where(s => s.From == end.Track).Select(s => s.To).Distinct().Order().ToList();
+                            var odd = nd == Dir.Down ? Dir.Up : Dir.Down;
                             if (outs.Count == 0)
                             {
-                                if (moves.Count == 0) errors.Add($"{n}: {endName} {end.Track}番線から入換できる線・番線がありません");
+                                if (next.Stops.Count == 1 && next.Stops[0].Track is { } yt && !moves.Contains(yt)
+                                    && es.Routes[odd].Shunts.Any(s => s.From == end.Track && s.To == yt))
+                                    errors.Add($"{next.Number}: {endName} {end.Track}番線から{yt}番線への入換は{(odd == Dir.Down ? "下り" : "上り")}の入換です。列番の数字の最後を{(odd == Dir.Down ? "奇数" : "偶数")}にしてください");
+                                else if (moves.Count == 0 && !es.Routes[odd].Shunts.Any(s => s.From == end.Track)) errors.Add($"{n}: {endName} {end.Track}番線から入換できる線・番線がありません");
                                 else if (t.TurnVia.Length > 0) errors.Add($"{n}: {endName} {end.Track}番線からは「{t.TurnVia}」へ入換できません");
                                 else if (next.Stops[0].Track is not { } mt || !moves.Contains(mt))
-                                    errors.Add($"{n}: {endName} {end.Track}番線からは {string.Join("・", moves.Select(x => x + "番線"))}へ入換できます。{next.Number} の発車の番線をそのどれかにしてください");
+                                {
+                                    var all = es.Routes[Dir.Down].Shunts.Concat(es.Routes[Dir.Up].Shunts).Where(s => s.From == end.Track).Select(s => s.To).Distinct().Order().ToList();
+                                    errors.Add(moves.Count > 0
+                                        ? $"{n}: {endName} {end.Track}番線からは {string.Join("・", moves.Select(x => x + "番線"))}へ入換できます。{next.Number} の発車の番線をそのどれかにしてください"
+                                        : $"{n}: {endName} {end.Track}番線から{(nd == Dir.Down ? "下り" : "上り")}で入換できる番線がありません（{string.Join("・", all.Select(x => x + "番線"))}へは構内入換で移れます）");
+                                }
                             }
                             else if (t.TurnVia.Length > 0 && !outs.Contains(t.TurnVia)) errors.Add($"{n}: {endName} {end.Track}番線からは「{t.TurnVia}」へ入換できません");
                             // 入換した線から、後運用の発車の番線へ入れるか（知らせるだけ）
@@ -685,7 +753,9 @@ public sealed class TempTrains
         if (t.TurnHow is not ("発" or "入換") || trains.FirstOrDefault(x => x.Number == t.TurnNext) is not { } next || next.Stops.Count == 0) return null;
         var dep = NormTime(next.Stops[0].Dep);
         if (t.TurnHow == "発") return new DiaTurn("折返", next.Number, dep, "発");
-        var time = NormTime(t.TurnTime) ?? (DaySec(dep) is { } ds ? NormTime(TimeOfDay(ds - 120)) : null);
+        // 構内入換（後運用が1駅だけで発の時刻がない）: 入換の時刻が空なら、後運用の着の時刻（入換で番線に入る時刻）
+        var yardArr = dep == null && next.Stops.Count == 1 ? NormTime(next.Stops[0].Arr) : null;
+        var time = NormTime(t.TurnTime) ?? yardArr ?? (DaySec(dep) is { } ds ? NormTime(TimeOfDay(ds - 120)) : null);
         return new DiaTurn("折返", next.Number, time, "入換", t.TurnVia.Length > 0 ? t.TurnVia : null);
     }
 
@@ -701,7 +771,7 @@ public sealed class TempTrains
         var byUnyo = trains.Where(t => t.Unyo.Length > 0).GroupBy(t => t.Unyo).ToList();
         foreach (var g in byUnyo)
         {
-            var ordered = g.OrderBy(t => DaySec(t.Stops.FirstOrDefault()?.Dep) ?? 0).ToList();
+            var ordered = g.OrderBy(t => DaySec(t.Stops.FirstOrDefault()?.Dep ?? t.Stops.FirstOrDefault()?.Arr) ?? 0).ToList();
             for (var i = 0; i < ordered.Count; i++)
             {
                 var t = ordered[i];
