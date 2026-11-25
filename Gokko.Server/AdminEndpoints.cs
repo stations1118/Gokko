@@ -319,11 +319,6 @@ public static class AdminEndpoints
         (bool Enabled, bool Linked, DateTimeOffset? Until) LinkInfo(CrewRoster crew, string id) =>
             (options.Discord.Enabled, crew.InfoOf(id)?.Discord == true, options.Discord.PasswordUntil);
 
-        // Discord で申請するときに選ぶもの（所属・入社年度の範囲）
-        view.MapGet("/crew/options", () => Results.Ok(new
-        {
-            depots = CrewRoster.Depots, joinYearFrom = CrewRoster.JoinYears.From, joinYearTo = CrewRoster.JoinYears.To
-        }));
         // スマホでログインする QR コード（ログインしている本人に出す。中身は {origin}/menu.html#qr=使い捨ての番号）
         view.MapPost("/crew/qr", (HttpRequest http, CrewQrRequest req, CrewRoster crew) =>
         {
@@ -548,7 +543,7 @@ public static class AdminEndpoints
         admin.MapPost("/duties/delete", (DutyFileRequest req, DutyRosters rosters) =>
             rosters.Delete(req.File) is { } err ? Results.BadRequest(new { message = err }) : Results.Ok(new { ok = true }));
 
-        MapAdminRest(app, admin);
+        MapAdminRest(admin);
     }
 
     private const string KintaiFull = "kintaiFull";
@@ -654,7 +649,7 @@ public static class AdminEndpoints
     }
 
     /// <summary>管理画面の残り（状態・乗務の試験など）。</summary>
-    private static void MapAdminRest(WebApplication app, RouteGroupBuilder admin)
+    private static void MapAdminRest(RouteGroupBuilder admin)
     {
 
         admin.MapGet("/state", (GameData data, IncidentManager incidents, PlayerRegistry players, GameClock clock, RandomOptions random, ProtectionRadio radio, DispatcherProtection dispatcherProtection, TrainRadio trainRadio) =>
@@ -876,14 +871,6 @@ public static class AdminEndpoints
             else central.SetCentral(req.Station, req.Central);
             return Results.Ok(new { ok = true });
         });
-
-        // 接続待ちの組の一覧（ダイヤの「(接)」から作ったもの全部。確かめる用）
-        g.MapGet("/route/connections", (ConnectionTable connections) => Results.Ok(connections.All.Select(c => new
-        {
-            key = c.Key, station = c.StationName, waiter = c.Waiter, waiterTrack = c.WaiterTrack, waiterDep = Hms(c.WaiterDep),
-            feeder = c.Feeder, feederTrack = c.FeederTrack, feederArr = Hms(c.FeederArr), cut = connections.IsCut(c)
-        })));
-        static string Hms(double s) => $"{(int)s / 3600:00}:{(int)s / 60 % 60:00}:{(int)s % 60:00}";
 
         // 接続待ちの組を切る・戻す（切った組は待たずに発車する。再起動で戻る）
         g.MapPost("/route/connection", (ConnectionCutRequest req, ConnectionTable connections, IncidentManager incidents) =>

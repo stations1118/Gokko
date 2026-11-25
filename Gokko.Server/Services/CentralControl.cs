@@ -298,14 +298,6 @@ public sealed class CentralControl(GameClock clock)
         lock (_lock) return _centralStations.Contains(station) ? "central" : _localStations.Contains(station) ? "local" : "train";
     }
 
-    public IReadOnlyCollection<string> CentralStations
-    {
-        get
-        {
-            lock (_lock) return _centralStations.ToList();
-        }
-    }
-
     public void SetTrack(string train, string station, int? track)
     {
         lock (_lock)
@@ -426,18 +418,4 @@ public sealed class CentralControl(GameClock clock)
         }
     }
 
-    /// <summary>列車がいなくなったとき（列番が変わった・退出した）に、その列車の指示を消す。</summary>
-    public void ForgetTrain(string train)
-    {
-        lock (_lock)
-        {
-            foreach (var k in _tracks.Keys.Where(k => k.Train == train).ToList()) _tracks.Remove(k);
-            foreach (var k in _holds.Keys.Where(k => k.Train == train).ToList()) _holds.Remove(k);
-            _forces.RemoveWhere(k => k.Train == train);
-            _cancels.RemoveWhere(k => k.Train == train);
-            foreach (var k in _manual.Keys.Where(k => k.Train == train).ToList()) _manual.Remove(k);
-            foreach (var k in _openAt.Keys.Where(k => k.Train == train).ToList()) _openAt.Remove(k);
-            foreach (var k in _stops.Keys.Where(k => k.Train == train).ToList()) _stops.Remove(k);
-        }
-    }
 }

@@ -619,7 +619,8 @@ public sealed partial class RouteEngine
         bool CanRequestDeparture,
         string DepartureLabel,
         string? Message,
-        List<RouteKey>? ConductorDeletes = null);
+        List<RouteKey>? ConductorDeletes = null,
+        string? PlanDetail = null);
 
     private readonly Dictionary<string, Output> _outputs = new();
 
@@ -2665,7 +2666,7 @@ public sealed partial class RouteEngine
                     : central ? "集中扱い（開通指示待ち）"
                     : timeWait ?? SingleEntryHold(run, st) ?? PrevDepartHold(run, st) ?? (approachWait = ApproachHold(run, st)) ?? (st.Track == null ? DepartTimeHold(run, st, now) : null)
                       ?? DiaStartFirstHold(run, st)
-                      ?? (conflict = Conflict(run, st, CoupleArrivePath(run, st), occupied, departure: false));
+                      ?? (conflict = Conflict(run, st, CoupleArrivePath(st), occupied, departure: false));
             if (arriveWait == null && !st.ForceArrive && st.CoupleWaiting is { } cw) arriveWait = $"増結車（{cw}）が番線に入るまで";
             st.ArriveBlocked = arriveWait != null && ReferenceEquals(arriveWait, conflict);
             // 第2場内の取り始め待ちだけなら、第1場内を先に開ける駅では第1場内だけ開ける
@@ -2698,7 +2699,7 @@ public sealed partial class RouteEngine
                         ?? DepartStopHold(run, st, needArrive)
                         ?? LoopDwellHold(run, st, now)
                         ?? (NeedsLoopDepartRequest(run, st) ? "出発要求待ち" : null)
-                        ?? SingleTrackHold(run, st, now)
+                        ?? SingleTrackHold(run, st)
                         ?? TrackDelayHold(run, st, now)
                         ?? DepartTimeHold(run, st, now)
                         ?? DiaDepartHold(run, st)
@@ -2720,7 +2721,7 @@ public sealed partial class RouteEngine
         {
             if (arriveWait == null)
             {
-                Request(run, st, CoupleArrivePath(run, st), departure: false, now);
+                Request(run, st, CoupleArrivePath(st), departure: false, now);
                 if (st.ForceArrive) (st.ForceArrive, st.ManualUsed) = (false, true);
             }
             else (st.Arrive, st.ArriveWait) = (GroupState.Waiting, arriveWait);
@@ -2791,7 +2792,7 @@ public sealed partial class RouteEngine
         && path.Count >= 2 && ParallelShuntOf(data, path[^1]) != null;
 
     /// <summary>場内で取る進路。増結車が番線にいれば、最後の進路（第二場内）を除く（入換信号機はあとで開ける）。</summary>
-    private List<RouteDef> CoupleArrivePath(TrainRun run, StationRun st)
+    private List<RouteDef> CoupleArrivePath(StationRun st)
     {
         if (st.CouplePartner == null || st.ArrivePath.Count < 2 || ParallelShunt(st.ArrivePath[^1]) is not { } shunt) return st.ArrivePath;
         st.CoupleShunt = shunt;
@@ -3199,7 +3200,7 @@ public sealed partial class RouteEngine
     /// ・単線区間の駅は2線あるので、対向列車はもう片方の番線に入れる（AvoidTakenTrack）
     /// ・相手の駅で自分が入る番線を対向列車がふさいでいる・ふさぎに来ているなら、走行順で先でも待つ（NextTrackBlocker）
     /// </summary>
-    private string? SingleTrackHold(TrainRun run, StationRun st, DateTime now)
+    private string? SingleTrackHold(TrainRun run, StationRun st)
     {
         var step = run.Dir.Step();
         var next = NextControlStation(run, st);
@@ -3499,9 +3500,11 @@ public sealed partial class RouteEngine
                 CanPass = s.St.Routes[run.Dir].Through.Count > 0 && !s.Terminal && !s.IsStart,
                 TrackSource = s.TrackSource,
                 Locked = s.Locked,
-                Status = ClientStatus(run, s), // 運転士には3段階だけ
-                Detail = Status(run, s)        // 詳しい状態（画面には出さない）
+                Status = ClientStatus(run, s) // 運転士には3段階だけ（詳しい状態は配信にのせない）
             }).ToList();
+            // 詳しい状態（進路待ちの理由など）は、自動運転の列車だけが「止まっている理由」に使う。この先の最初の駅の分だけ作る
+            var planDetail = run.ConnId.StartsWith(PlayerRegistry.AiPrefix) && run.Stations.FirstOrDefault(s => !s.Done) is { } ds
+                ? $"{ds.St.Name}: {Status(run, ds)}" : null;
 
             var start = run.Stations.FirstOrDefault(s => s.IsStart && !s.Done);
             var shunting = start?.ShuntFrom != null;
@@ -3519,7 +3522,7 @@ public sealed partial class RouteEngine
             // 後ろを走る車掌がまだ使う進路を消して、運転士が抜けたあとの赤い信号に車掌を引っかけてしまうため）
             var conductorDeletes = run.Requests.Where(r => !r.Released && r.CancelledUtc != null)
                 .Select(r => new RouteKey { Interlocking = r.Def.Interlock, RouteName = r.Def.Name }).ToList();
-            _outputs[run.ConnId] = new Output(routes, deletes, plan, canDepart, label, message, conductorDeletes);
+            _outputs[run.ConnId] = new Output(routes, deletes, plan, canDepart, label, message, conductorDeletes, planDetail);
         }
 
         foreach (var (conn, a) in _appear)

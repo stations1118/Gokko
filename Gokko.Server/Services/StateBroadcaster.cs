@@ -169,7 +169,6 @@ public sealed class StateBroadcaster : BackgroundService
 
         var active = _incidents.Snapshot();
         var activeNames = active.Select(i => i.Crossing).ToList();
-        var now = DateTimeOffset.UtcNow;
         var gameTime = _clock.NowText;
         var shared = players.Where(p => p.Mode == ShareMode.Shared && p.InGame).ToList();
         var leverStops = _routes.LeverStopSignals().Concat(_routes.ClearTimeStopSignals()).ToList(); // 方向てこの向きと、現示時素（踏切）で停止にする信号機
@@ -196,7 +195,6 @@ public sealed class StateBroadcaster : BackgroundService
             var ai = p.ConnectionId.StartsWith(PlayerRegistry.AiPrefix);
             var state = new ClientState
             {
-                ServerTime = now,
                 DiaMode = _central.DiaMode,
                 ProtectionRadioReceiving = radioReceivers.Contains(p.ConnectionId),
                 ProtectionRadioSending = radioSenders.Contains(p.ConnectionId),
@@ -256,7 +254,7 @@ public sealed class StateBroadcaster : BackgroundService
             if (ai)
             {
                 var aiStarted = System.Diagnostics.Stopwatch.GetTimestamp();
-                _ai.Receive(p.ConnectionId, state);
+                _ai.Receive(p.ConnectionId, state, p.Mode == ShareMode.Shared ? _routes.GetOutput(p.ConnectionId)?.PlanDetail : null);
                 aiMs += Ms(aiStarted);
                 continue;
             }
@@ -283,7 +281,6 @@ public sealed class StateBroadcaster : BackgroundService
                 // 丸ごと複製する（あとで配信の項目が増えても、車掌に同じものが届くように）。運転士だけのものは消す。
                 // 浅い複製なので、一覧の中身は書き換えず、プロパティごと差し替える（以前は JSON に書いて読み直していて、車掌の人数だけ重かった）
                 state = d.Clone();
-                state.DriverPresent = true;
                 state.ProtectionRadioSending = false;
                 state.CanRequestDeparture = false;
                 state.DeleteRoutes = conductorDeletes.GetValueOrDefault(c.TrainNumber) ?? new List<RouteKey>();
@@ -292,7 +289,7 @@ public sealed class StateBroadcaster : BackgroundService
             {
                 state = new ClientState
                 {
-                    ServerTime = now, DiaMode = _central.DiaMode, GameTime = gameTime, ActiveCrossings = activeNames, PlayerCount = playerCount,
+                    DiaMode = _central.DiaMode, GameTime = gameTime, ActiveCrossings = activeNames, PlayerCount = playerCount,
                     RouteMessage = c.TrainNumber.Length == 0 ? "列車番号を入れてください" : $"列番 {c.TrainNumber} の運転士がいません"
                 };
             }
@@ -312,7 +309,7 @@ public sealed class StateBroadcaster : BackgroundService
             foreach (var id in dispatchers.Keys)
                 Send(id, new ClientState
                 {
-                    ServerTime = now, DiaMode = _central.DiaMode, GameTime = gameTime, ActiveCrossings = activeNames, PlayerCount = playerCount,
+                    DiaMode = _central.DiaMode, GameTime = gameTime, ActiveCrossings = activeNames, PlayerCount = playerCount,
                     TrainRadio = radioViews.GetValueOrDefault(id), DispatcherProtection = protection, ProtectionSources = sources
                 });
         }
