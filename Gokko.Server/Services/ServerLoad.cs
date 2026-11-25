@@ -13,12 +13,18 @@ namespace Gokko.Server.Services;
 /// 種類ごとの回数と時間を数える（どこが重いかを見るため。直近1分の多い順を画面に、1分ごとに上位12（配信の内訳の5つが入っても、画面の API が押し出されないように）をファイルに）。
 /// 直近1時間ぶんを画面用に持ち、1分ごとにまとめた1行（平均と最大）をファイルに書く。1行 300 バイトほどで、1日で 400KB くらい。
 /// </summary>
-public sealed class ServerLoad(PlayerRegistry players) : BackgroundService
+public sealed class ServerLoad(PlayerRegistry players, ILogger<ServerLoad>? logger = null) : BackgroundService
 {
     private static readonly TimeSpan SampleInterval = TimeSpan.FromSeconds(5);
     private const int HistoryCount = 720; // 5秒 × 720 = 1時間
     private const int WorkHistoryCount = 12; // 5秒 × 12 = 1分
     private const long MaxBytesPerDay = 10L * 1024 * 1024;
+
+    /// <summary>
+    /// 1分の平均がこれを超えたら、サーバーの記録（journal）に警告を出す（ふだんは配信 10〜20ms・進路の処理 3〜6ms）。
+    /// 負荷の記録（logs/load-*.log）を見に行かないと、重くなっていることに気づけなかったため。
+    /// </summary>
+    private const double SlowBroadcastMs = 100, SlowTickMs = 30;
 
     public sealed record Sample(
         DateTime Utc, double CpuPercent, double ProcessMb, double GcHeapMb, int Threads,
@@ -239,6 +245,12 @@ public sealed class ServerLoad(PlayerRegistry players) : BackgroundService
                 $"bc {bcAvg:0.0}/{m.Max(x => x.BroadcastMaxMs):0.0} players {m.Max(x => x.Players)} ai {m.Max(x => x.AiTrains)} " +
                 $"tick {PerBroadcast(x => x.TickAvgMs):0.0} send {PerBroadcast(x => x.SendAvgMs):0.0} work {m.Sum(x => x.WorkCount)}/{m.Sum(x => x.WorkMs):0} " +
                 $"top {top}{Environment.NewLine}");
+            // 重い1分は、サーバーの記録にも警告を出す（時間を使っている上位3つつき）
+            var tickAvg = PerBroadcast(x => x.TickAvgMs);
+            if (bcAvg >= SlowBroadcastMs || tickAvg >= SlowTickMs)
+                logger?.LogWarning("配信が遅れています: 配信1回 平均 {Broadcast:0}ms（最大 {Max:0}ms）・進路の処理 平均 {Tick:0}ms。時間を使っているもの: {Top}",
+                    bcAvg, m.Max(x => x.BroadcastMaxMs), tickAvg,
+                    string.Join("、", Top(work, 3).Select(w => $"{w.Name} {w.Count}回 計{w.TotalMs:0}ms")));
             if (_fileBytes > MaxBytesPerDay)
             {
                 _full = true;

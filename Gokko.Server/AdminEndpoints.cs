@@ -124,6 +124,9 @@ public static class AdminEndpoints
         t.Stops.Count > 0 && t.Stops[^1].StationId is { } sid && rail.Line.ZoneOfStation(sid) >= 0
         && rail.Dia.TryGetValue(next, out var n) && n.Stops.Count > 0 && n.Stops[0].StationId == sid;
 
+    /// <summary>画面向けの JSON の設定（camelCase）。要求のたびに作ると、そのたびに型の調べ直しが走るので、1つを使い回す。</summary>
+    private static readonly System.Text.Json.JsonSerializerOptions WebJson = new(System.Text.Json.JsonSerializerDefaults.Web);
+
     private static bool SameKey(string given, string expected) =>
         CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(given), Encoding.UTF8.GetBytes(expected));
 
@@ -234,21 +237,22 @@ public static class AdminEndpoints
             var id = crew.UserOfToken(token);
             if (token.Length > 0 && id == null) return Results.Json(new { message = "ログインが切れました。もう一度ログインしてください", logout = true }, statusCode: 401);
             // ゲームで運転している列車の列番が、自分の行路にないものに変わったら、その列車の行路に切り替える（重なってもよい）
-            if (id != null && players.Snapshot().FirstOrDefault(p => p.CrewId == id && p.InGame && p.TrainNumber.Length > 0) is { } me)
-                crew.FollowTrain(id, me.TrainNumber, roster);
+            // 自分が運転している列車（参加者の一覧を丸ごと複製しない。1回の読み込みで2回複製していた）
+            var mine = id == null ? new List<string>() : players.CrewTrains().Where(x => x.CrewId == id).Select(x => x.Train).ToList();
+            if (mine.Count > 0) crew.FollowTrain(id!, mine[0], roster);
             var duties = id == null ? null : crew.DutiesOf(id).Select(roster.DutyById).OfType<Duty>().ToList();
             var t = string.IsNullOrEmpty(train) && duties != null ? engine.CurrentTrainOf(duties) : train;
             // 運転している列車が特発臨（行路にない列番）なら、その列車を出す
-            if (string.IsNullOrEmpty(train) && id != null && players.Snapshot().FirstOrDefault(p => p.CrewId == id && p.InGame && rinji.IsRinji(p.TrainNumber)) is { } rp)
-                t = rp.TrainNumber;
+            if (string.IsNullOrEmpty(train) && mine.FirstOrDefault(rinji.IsRinji) is { } rp)
+                t = rp;
             if (string.IsNullOrEmpty(t)) return Results.NotFound(new { message = id != null ? $"ID:{id} には、まだ行路が割り当てられていません" : "列車番号がありません" });
             if (id != null) crew.Seen(id, t);
             if (engine.TabletView(t, roster, duties, id) is not { } v) return Results.NotFound(new { message = $"{t} のダイヤはありません" });
             // 臨変で持っている行路（タブレットの行路の欄に「臨変」と出す）と、出勤しているか
-            var node = System.Text.Json.JsonSerializer.SerializeToNode(v, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web))!;
+            var node = System.Text.Json.JsonSerializer.SerializeToNode(v, WebJson)!;
             node["extras"] = System.Text.Json.JsonSerializer.SerializeToNode(id == null ? new List<string>() : crew.ExtrasOf(id));
             node["attended"] = id != null && crew.AttendedAt(id) != null;
-            node["rinji"] = System.Text.Json.JsonSerializer.SerializeToNode(rinji.TabletNotice(t), new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)); // この列車から立てた特発臨（列番を入れ直してもらう）
+            node["rinji"] = System.Text.Json.JsonSerializer.SerializeToNode(rinji.TabletNotice(t), WebJson); // この列車から立てた特発臨（列番を入れ直してもらう）
             return Results.Ok(node);
         });
         // 出勤（タブレットの［出勤］）: 行路がなければ、空いている行路をランダムに1つ割り当てる（所属を見る。前回と同じ行路は避ける）
@@ -389,24 +393,26 @@ public static class AdminEndpoints
         // ・運転士: その行路の担当者（勤怠管理・出勤で割り当てた人）と、臨変で持っている人。いまゲームでその行路の列車を運転しているかも付ける
         // ・車掌: その行路のいま乗る列車に、運転士の許可を得て車掌として乗っている人
         // 名前（ユーザー名）だけを出す（社員番号は出さない。この一覧はログインしなくても見られる）
-        view.MapGet("/duties", (DutyRosters rosters, CrewRoster crew, CrewRelay relay, PlayerRegistry players, RouteEngine engine) =>
+        // 全員に同じ答えなので、2秒は使い回す（タブレット・出勤簿が5秒ごとに読む。出勤・割り当てなどの操作のあとは ResponseCache.Clear で作り直す）
+        view.MapGet("/duties", (DutyRosters rosters, CrewRoster crew, CrewRelay relay, PlayerRegistry players, RouteEngine engine, ResponseCache cache) => cache.Get("tid-duties", TimeSpan.FromSeconds(2), () =>
         {
             var roster = rosters.Current;
             string NameOf(string id, string name = "") => name.Length > 0 ? name : crew.InfoOf(id)?.Name is { Length: > 0 } n ? n : "（名前なし）";
             var assigned = crew.Assignments().ToDictionary(x => x.Duty, x => x.User);
             var extras = crew.Extras().ToLookup(x => x.Duty, x => x.User);
-            var driving = players.Snapshot().Where(p => p.CrewId.Length > 0 && p.InGame && p.TrainNumber.Length > 0)
-                .GroupBy(p => p.CrewId).ToDictionary(g => g.Key, g => g.Select(p => RailData.NormalizeTrain(p.TrainNumber)).ToHashSet());
+            var driving = players.CrewTrains()
+                .GroupBy(p => p.CrewId).ToDictionary(g => g.Key, g => g.Select(p => RailData.NormalizeTrain(p.Train)).ToHashSet());
             var conductors = relay.ApprovedConductors().ToLookup(x => RailData.NormalizeTrain(x.Train));
             // 乗務の出勤（タブレットの［出勤］）。出勤簿で、出勤しているか・出勤していて行路のない人を出す
-            var attended = crew.Users().Select(u => (u.Id, At: crew.AttendedAt(u.Id))).Where(x => x.At != null).ToDictionary(x => x.Id, x => x.At!.Value);
-            return Results.Ok(new
+            var attended = crew.Attended();
+            var currents = engine.CurrentTrainsOf(roster.Duties); // 行路1本ずつではなく、1回のロックでまとめて
+            return new
             {
                 file = roster.File,
-                duties = roster.Duties.Select(d =>
+                duties = roster.Duties.Select((d, di) =>
                 {
                     var trains = d.Items.Where(x => x.Kind != "休憩").Select(x => x.Train).ToList();
-                    var current = engine.CurrentTrainOf([d]);
+                    var current = currents[di];
                     object Driver(string id, bool extra) => new { name = NameOf(id), extra, attended = attended.ContainsKey(id), onTrain = driving.TryGetValue(id, out var t) && trains.Any(t.Contains) };
                     var drivers = new List<object>();
                     if (assigned.TryGetValue(d.Id, out var a)) drivers.Add(Driver(a, false));
@@ -417,8 +423,8 @@ public static class AdminEndpoints
                 waiting = attended.Where(x => !crew.DutiesOf(x.Key).Any(d => roster.DutyById(d) != null)).OrderBy(x => x.Value)
                     .Select(x => new { name = NameOf(x.Key), since = x.Value }),
                 problems = roster.Problems
-            });
-        });
+            };
+        }));
 
         view.MapGet("/timetable", (string? train, RouteEngine engine, GameClock clock) =>
             engine.Timetable(train ?? "", clock.Now) is { } t ? Results.Ok(t) : Results.NotFound(new { message = "この列車の時刻表はありません" }));

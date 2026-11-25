@@ -178,6 +178,25 @@ public sealed class PlayerRegistry(GameData data, CentralControl central)
         return list;
     }
 
+    /// <summary>
+    /// ログインしている乗務員が、運転画面で運転している列車（社員番号, 入力している列番）。継続乗務で残した在線も含む。
+    /// 並びは <see cref="Snapshot"/> と同じ。画面の API が、これだけのために全員ぶんの複製（Snapshot）を作らないようにする。
+    /// </summary>
+    public List<(string CrewId, string Train)> CrewTrains()
+    {
+        var list = new List<(string, string)>();
+        foreach (var p in _players.Values)
+            lock (p)
+                if (p.CrewId.Length > 0 && p.InGame && p.TrainNumber.Length > 0) list.Add((p.CrewId, p.TrainNumber));
+        lock (_ghosts)
+        {
+            ExpireGhosts();
+            foreach (var g in _ghosts.Values)
+                if (g.Info.CrewId.Length > 0 && g.Info.InGame && g.Info.TrainNumber.Length > 0) list.Add((g.Info.CrewId, g.Info.TrainNumber));
+        }
+        return list;
+    }
+
     // ---- にぎやかしの列車（AiTrains。接続IDが AiPrefix で始まる） ----
 
     public const string AiPrefix = "AI/";
