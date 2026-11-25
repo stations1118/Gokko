@@ -1645,7 +1645,8 @@ public sealed class AiTrains : BackgroundService
     {
         if (!_central.DiaMode) return;
         var now = DateTime.UtcNow;
-        foreach (var g in _players.Ghosts().Where(g => now - g.SinceUtc >= GhostTakeOverAfter))
+        // 入換で動かすために残した在線（X線入換など）は引き継がない（ユーザーがゲームの中だけで動かしている間）
+        foreach (var g in _players.Ghosts().Where(g => g.Info.ShuntMove != ShuntMoveState.Parked && now - g.SinceUtc >= GhostTakeOverAfter))
         {
             if (_players.TakeGhost(g.Id) is not { } taken) continue;
             var (ok, message) = TakeOver(taken);

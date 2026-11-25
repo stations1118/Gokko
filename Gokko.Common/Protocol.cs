@@ -26,6 +26,9 @@ public static class Protocol
     /// <summary>出発要求ボタン（在線共有モード）。駅に止まっている自列車の出発進路を要求する。戻り値 string（結果のお知らせ）。</summary>
     public const string RequestDeparture = "RequestDeparture";
 
+    /// <summary>入換で動かすボタン（X線入換・X線停車中。在線共有モード）。戻り値 string（結果のお知らせ）。</summary>
+    public const string ShuntMove = "ShuntMove";
+
     /// <summary>TRAIN CREW の SetRoute の結果を知らせる（在線共有モード）。引数 string（"連動装置_進路 is OK" など）。</summary>
     public const string RouteResult = "RouteResult";
 

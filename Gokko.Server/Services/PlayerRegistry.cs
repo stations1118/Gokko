@@ -74,6 +74,20 @@ public sealed class PlayerInfo
     /// <summary>この列車が引き継いだ在線の接続ID（継続乗務の在線を自動運転の列車が引き継いだとき）。進路・駅の状態をそこから移す。</summary>
     public string? TakesOver { get; set; }
 
+    // ---- 入換で動かす（X線入換など） ----
+
+    /// <summary>入換で動かす状態（<see cref="ShuntMoveState"/>）。</summary>
+    public ShuntMoveState ShuntMove { get; set; }
+
+    /// <summary>入換で動かす場所の名前（"X線" など。<see cref="PlayerRegistry.ShuntSpots"/>）。</summary>
+    public string? ShuntSpot { get; set; }
+
+    /// <summary>
+    /// 残した在線につなぎ直したあと、この時刻まで、ゲームの中だけで動かすのに使った進路（大道寺13LD など）がゲームに残っていれば消す
+    /// （残すと、そこから出る入換の進路が競合で開通しない）。
+    /// </summary>
+    public DateTime ShuntCleanupUntilUtc { get; set; }
+
     public PlayerInfo Clone()
     {
         var copy = (PlayerInfo)MemberwiseClone();
@@ -86,6 +100,19 @@ public sealed class PlayerInfo
         return copy;
     }
 }
+
+/// <summary>
+/// 入換で動かす状態。シナリオのない場所（X線など）へは、在線をそこに残したまま、ゲームの中だけで別のシナリオから走って行く。
+/// Leaving（ボタンを押した。運転画面を出ると在線を残す）→ 残した在線は Parked、ゲームの列車は Moving（サーバーの列車にしない・在線を出さない）
+/// → 「X線停車中」を押すと、残した在線につなぎ直す。
+/// </summary>
+public enum ShuntMoveState { None, Leaving, Moving, Parked }
+
+/// <summary>入換で動かす場所。Circuit に止まっている列車がボタンを押せる。Routes は、ゲームの中だけで走るときにこの人のゲームに開通させる進路。</summary>
+public sealed record ShuntSpot(string Name, string Circuit, string Start, (string Interlock, string Route)[] Routes);
+
+/// <summary>入換で動かすボタンの表示。</summary>
+public sealed record ShuntButton(string Label, bool Enabled);
 
 /// <summary>参加中のプレイヤーの一覧。SignalR の接続ごとに1人。</summary>
 public sealed class PlayerRegistry(GameData data, CentralControl central)
@@ -128,9 +155,9 @@ public sealed class PlayerRegistry(GameData data, CentralControl central)
         var kicked = _kicked.TryRemove(connectionId, out _);
         if (!_players.TryRemove(connectionId, out var p)) return;
         lock (p)
-            if (!kicked && (p.ContinueDuty || central.DiaMode) && p.Mode == ShareMode.Shared && p.InGame && p.TrackCircuits.Count > 0 && p.TrainNumber.Length > 0
+            if (!kicked && (p.ContinueDuty || central.DiaMode || p.ShuntMove == ShuntMoveState.Leaving) && p.Mode == ShareMode.Shared && p.InGame && p.TrackCircuits.Count > 0 && p.TrainNumber.Length > 0
                 && p.AppearReason == null && p.CoupledInto == null && !LeavesLine(p))
-                AddGhost(p);
+                AddGhost(p, p.ShuntMove == ShuntMoveState.Leaving ? p.ShuntSpot : null);
     }
 
     /// <summary>連結: 増結車（ユーザーが運転している列車）を、親の列車に連結したことにする（在線を消す）。参加していなければ false。</summary>
@@ -164,7 +191,8 @@ public sealed class PlayerRegistry(GameData data, CentralControl central)
             PlayerInfo c;
             lock (p) c = p.Clone();
             // 連結された増結車は在線を出さない（親の列車の在線だけにする）
-            if (c.CoupledInto != null) (c.TrackCircuits, c.Zones) = (new List<string>(), new List<int>());
+            // 入換で動かしている列車（ゲームの中だけで X線へ走っている）も出さない。サーバーでは X線に残した在線のまま
+            if (c.CoupledInto != null || c.ShuntMove == ShuntMoveState.Moving) (c.TrackCircuits, c.Zones) = (new List<string>(), new List<int>());
             list.Add(c);
         }
 
@@ -239,7 +267,7 @@ public sealed class PlayerRegistry(GameData data, CentralControl central)
     {
         if (central.DiaMode) return; // ダイヤ運転中は時間で消さない（管理画面・ダイヤグラムの設定画面から消す）
         var now = DateTime.UtcNow;
-        foreach (var g in _ghosts.Values.Where(g => g.UntilUtc <= now).ToList())
+        foreach (var g in _ghosts.Values.Where(g => g.UntilUtc <= now && g.Info.ShuntMove != ShuntMoveState.Parked).ToList())
         {
             _ghosts.Remove(g.Id);
             Changed?.Invoke($"継続乗務: {g.Info.TrainNumber} は5分たったので在線を消しました");
@@ -268,7 +296,8 @@ public sealed class PlayerRegistry(GameData data, CentralControl central)
     private const string ExitStation = "TH58";
     private static readonly HashSet<string> ExitTrackCircuits = ["TH58_2RAT", "TH58_2RBT"];
 
-    private void AddGhost(PlayerInfo from)
+    /// <param name="shuntSpot">入換で動かすために残すなら、その場所の名前（X線など）。時間で消さず、自動運転の列車も引き継がない</param>
+    private void AddGhost(PlayerInfo from, string? shuntSpot = null)
     {
         var now = DateTime.UtcNow;
         var id = $"{GhostPrefix}{from.ConnectionId}/{now.Ticks}";
@@ -281,14 +310,132 @@ public sealed class PlayerRegistry(GameData data, CentralControl central)
         info.ContinueDuty = false;
         info.AppearReason = null;
         info.TakesOver = null;
+        info.ShuntMove = shuntSpot != null ? ShuntMoveState.Parked : ShuntMoveState.None;
+        info.ShuntSpot = shuntSpot;
+        info.ShuntCleanupUntilUtc = default;
         lock (_ghosts)
         {
             foreach (var old in _ghosts.Values.Where(g => g.Owner == from.ConnectionId).ToList()) _ghosts.Remove(old.Id);
-            _ghosts[id] = new Ghost(id, from.ConnectionId, info, now, central.DiaMode ? DateTime.MaxValue : now + GhostLife);
+            _ghosts[id] = new Ghost(id, from.ConnectionId, info, now, central.DiaMode || shuntSpot != null ? DateTime.MaxValue : now + GhostLife);
         }
 
-        Changed?.Invoke(central.DiaMode ? $"継続乗務: {info.TrainNumber} の在線を残します（ダイヤ運転中は消すまで残す）" : $"継続乗務: {info.TrainNumber} の在線を5分間残します");
+        Changed?.Invoke(shuntSpot != null ? $"{shuntSpot}入換: {info.TrainNumber} の在線を{shuntSpot}に残します（ゲームの中だけで{shuntSpot}へ動かす間）"
+            : central.DiaMode ? $"継続乗務: {info.TrainNumber} の在線を残します（ダイヤ運転中は消すまで残す）" : $"継続乗務: {info.TrainNumber} の在線を5分間残します");
     }
+
+    // ---- 入換で動かす（X線入換など） ----
+
+    /// <summary>
+    /// 入換で動かす場所。シナリオのない場所へは、在線を残したまま、ほかのシナリオからゲームの中だけで走って行く。
+    /// X線: 藤江2番から下りのシナリオを始め、藤江13L・大道寺13LD を開通させて、X線の入換信号機の手前まで走る
+    /// </summary>
+    public static readonly ShuntSpot[] ShuntSpots =
+    [
+        new("X線", "TH65_XT", "藤江2番から下り", [("藤江連動装置", "13L"), ("大道寺連動装置", "13LD")])
+    ];
+
+    public static ShuntSpot? ShuntSpotOf(string? name) => name == null ? null : ShuntSpots.FirstOrDefault(s => s.Name == name);
+
+    /// <summary>その場所だけに止まっている（踏んでいる軌道回路が全部その場所）なら、その場所。</summary>
+    private static ShuntSpot? ShuntSpotAt(PlayerInfo p) =>
+        p.TrackCircuits.Count == 0 ? null : ShuntSpots.FirstOrDefault(s => p.TrackCircuits.All(c => c == s.Circuit));
+
+    /// <summary>入換で動かすために、この人が残した在線（接続し直していれば、同じ乗務員の在線）。</summary>
+    private Ghost? ShuntGhostOf(PlayerInfo p)
+    {
+        lock (_ghosts)
+            return _ghosts.Values.Where(g => g.Info.ShuntMove == ShuntMoveState.Parked
+                                             && (g.Owner == p.ConnectionId || p.CrewId.Length > 0 && g.Info.CrewId == p.CrewId))
+                .OrderByDescending(g => g.Owner == p.ConnectionId).FirstOrDefault();
+    }
+
+    private static string ShuntMovingReason(ShuntSpot s) =>
+        $"{s.Name}入換中: ゲームの中だけで{s.Name}まで走ります（サーバーでは{s.Name}に止まったまま。ほかの列車の在線は見ません）。"
+        + $"{s.Name}の入換信号機の手前で止まったら「{s.Name}停車中」を押してください";
+
+    /// <summary>入換で動かすボタンの表示（出さなければ null）。</summary>
+    public ShuntButton? ShuntButtonOf(string connectionId)
+    {
+        if (!_players.TryGetValue(connectionId, out var p)) return null;
+        lock (p)
+        {
+            if (p.Mode != ShareMode.Shared) return null;
+            if (p.ShuntMove == ShuntMoveState.Moving && ShuntSpotOf(p.ShuntSpot) is { } moving)
+                return new ShuntButton($"{moving.Name}停車中", p.InGame && p.TrackCircuits.Contains(moving.Circuit));
+            if (p.ShuntMove == ShuntMoveState.Leaving && ShuntSpotOf(p.ShuntSpot) is { } leaving)
+                return new ShuntButton($"{leaving.Name}入換を取消", true);
+            if (p.InGame && p.TrainNumber.Length > 0 && p.AppearReason == null && p.CoupledInto == null && ShuntSpotAt(p) is { } here)
+                return new ShuntButton($"{here.Name}入換", Math.Abs(p.ReportedSpeed) < 1);
+            return null;
+        }
+    }
+
+    /// <summary>入換で動かす状態のお知らせ（進路のお知らせの代わりに出す。なければ null）。</summary>
+    public string? ShuntMessageOf(string connectionId)
+    {
+        if (!_players.TryGetValue(connectionId, out var p)) return null;
+        lock (p)
+            return p.ShuntMove == ShuntMoveState.Leaving && ShuntSpotOf(p.ShuntSpot) is { } s
+                ? $"{s.Name}入換: 運転画面を出て、{s.Start}のシナリオを始めてください（在線は{s.Name}に残します）"
+                : null;
+    }
+
+    /// <summary>
+    /// 入換で動かすボタン。
+    /// ・その場所に止まっている: 押すと、運転画面を出たときに在線をそこに残す（もう一度押すと取り消す）
+    /// ・ゲームの中だけで動かしている: その場所に入っていれば、残した在線につなぎ直す（サーバーの進路で運転を続ける）
+    /// </summary>
+    public string PressShunt(string connectionId)
+    {
+        if (!_players.TryGetValue(connectionId, out var p)) return "参加していません";
+        string? changed = null;
+        string message;
+        lock (p)
+        {
+            if (p.Mode != ShareMode.Shared) return "在線を共有するモードで使えます";
+            if (p.ShuntMove == ShuntMoveState.Leaving)
+            {
+                p.ShuntMove = ShuntMoveState.None;
+                return $"{p.ShuntSpot}入換を取り消しました";
+            }
+
+            if (p.ShuntMove == ShuntMoveState.Moving)
+            {
+                if (ShuntSpotOf(p.ShuntSpot) is not { } s) return "入換で動かす場所が分かりません";
+                var ghost = ShuntGhostOf(p);
+                if (ghost == null)
+                {
+                    p.ShuntMove = ShuntMoveState.None;
+                    return $"{s.Name}に残した在線がありません（消されました）";
+                }
+
+                if (!p.InGame || !p.TrackCircuits.Contains(s.Circuit)) return $"{s.Name}に入ってから押してください";
+                if (p.TrainNumber != ghost.Info.TrainNumber) return $"列車番号を {ghost.Info.TrainNumber} にしてから押してください";
+                lock (_ghosts) _ghosts.Remove(ghost.Id);
+                p.ShuntMove = ShuntMoveState.None;
+                p.AppearReason = null;
+                p.TakesOver = ghost.Id; // 残した在線の列車（進路・駅の状態）を、この人の列車へ戻す（RouteEngine）
+                p.ShuntCleanupUntilUtc = DateTime.UtcNow + ShuntCleanupTime;
+                changed = $"{s.Name}入換: {p.TrainNumber} が{s.Name}の在線につなぎ直しました";
+                message = $"{s.Name}に止まっている {p.TrainNumber} につなぎ直しました。サーバーの進路で運転できます";
+            }
+            else
+            {
+                if (!p.InGame || p.TrainNumber.Length == 0 || p.AppearReason != null || p.CoupledInto != null || ShuntSpotAt(p) is not { } here)
+                    return "入換で動かせる場所（X線）に止まっていません";
+                if (Math.Abs(p.ReportedSpeed) >= 1) return "止まってから押してください";
+                p.ShuntMove = ShuntMoveState.Leaving;
+                p.ShuntSpot = here.Name;
+                message = $"{here.Name}入換: 運転画面を出て、{here.Start}のシナリオを始めてください。在線は{here.Name}に残します";
+            }
+        }
+
+        if (changed != null) Changed?.Invoke(changed);
+        return message;
+    }
+
+    /// <summary>つなぎ直したあと、ゲームの中だけで動かすのに使った進路を消し続ける時間。</summary>
+    private static readonly TimeSpan ShuntCleanupTime = TimeSpan.FromSeconds(60);
 
     /// <summary>
     /// 運転画面に入った列車が、継続乗務の在線を引き継ぐか。同じ番線（踏んでいる軌道回路が重なる）なら、残した在線を消して
@@ -300,7 +447,8 @@ public sealed class PlayerRegistry(GameData data, CentralControl central)
         lock (_ghosts)
         {
             ExpireGhosts();
-            var same = _ghosts.Values.Where(g => g.Info.TrackCircuits.Any(p.TrackCircuits.Contains))
+            // 入換で動かすために残した在線は、ボタンでつなぎ直すまで引き継がない
+            var same = _ghosts.Values.Where(g => g.Info.ShuntMove != ShuntMoveState.Parked && g.Info.TrackCircuits.Any(p.TrackCircuits.Contains))
                 .OrderByDescending(g => g.Owner == p.ConnectionId).FirstOrDefault();
             if (same != null)
             {
@@ -310,7 +458,7 @@ public sealed class PlayerRegistry(GameData data, CentralControl central)
                 return;
             }
 
-            var mine = _ghosts.Values.FirstOrDefault(g => g.Owner == p.ConnectionId);
+            var mine = _ghosts.Values.FirstOrDefault(g => g.Owner == p.ConnectionId && g.Info.ShuntMove != ShuntMoveState.Parked);
             p.AppearReason = mine != null ? $"開始番線が違う（継続乗務 {mine.Info.TrainNumber} の在線が残っています）" : null;
         }
     }
@@ -335,9 +483,13 @@ public sealed class PlayerRegistry(GameData data, CentralControl central)
             var circuitsChanged = !p.TrackCircuits.ToHashSet(StringComparer.Ordinal).SetEquals(circuits);
             var nowIn = report.InGame && circuits.Count > 0;
             // ダイヤ運転中は、継続乗務ボタンによらず残す（出現待ちだった列車は、在線がないので残さない）
-            if (wasIn && !nowIn && p.Mode == ShareMode.Shared && (p.ContinueDuty || report.ContinueDuty || central.DiaMode) && p.TrainNumber.Length > 0
+            // 入換で動かす（X線入換のボタンを押した）: 運転画面を出たら、在線をその場所に残す
+            var leaving = p.ShuntMove == ShuntMoveState.Leaving;
+            if (wasIn && !nowIn && p.Mode == ShareMode.Shared && (leaving || p.ContinueDuty || report.ContinueDuty || central.DiaMode) && p.TrainNumber.Length > 0
                 && p.AppearReason == null && p.CoupledInto == null && !LeavesLine(p))
-                AddGhost(p);
+                AddGhost(p, leaving ? p.ShuntSpot : null);
+            // ボタンを押したあと、運転画面のまま動いてその場所を出たら取り消す
+            if (leaving && nowIn && !circuits.All(c => c == ShuntSpotOf(p.ShuntSpot)?.Circuit)) p.ShuntMove = ShuntMoveState.None;
             p.ContinueDuty = report.ContinueDuty;
             p.TrainNumberTyped = report.TrainNumberTyped;
             var number = Truncate(NormalizeName(report.TrainNumber));
@@ -345,7 +497,29 @@ public sealed class PlayerRegistry(GameData data, CentralControl central)
             if (p.CoupledInto != null && (!nowIn || number != p.TrainNumber)) p.CoupledInto = null;
             // ダイヤ運転中に列車番号を手入力していなければ、出現待ち（残した在線は引き継がず、消しも踏みつぶしもしない）
             var mustType = central.DiaMode && p.Mode == ShareMode.Shared && !report.TrainNumberTyped;
-            if (!nowIn) p.AppearReason = null;
+            if (!nowIn)
+            {
+                p.AppearReason = null;
+                p.TakesOver = null;
+                if (p.ShuntMove is ShuntMoveState.Leaving or ShuntMoveState.Moving) p.ShuntMove = ShuntMoveState.None; // 残した在線はそのまま
+            }
+            // 入換で動かす: 在線を残したあと運転画面に入ったら、ゲームの中だけで走る（サーバーの列車にしない・在線を出さない）。
+            // 残した在線が消されたら、ふつうの列車に戻す
+            else if (p.Mode == ShareMode.Shared && (!wasIn || p.ShuntMove == ShuntMoveState.Moving) && ShuntGhostOf(p) is { } sg
+                     && ShuntSpotOf(sg.Info.ShuntSpot) is { } spot)
+            {
+                if (p.ShuntMove != ShuntMoveState.Moving) Changed?.Invoke($"{spot.Name}入換: {sg.Info.TrainNumber} をゲームの中だけで{spot.Name}へ動かします");
+                p.ShuntMove = ShuntMoveState.Moving;
+                p.ShuntSpot = spot.Name;
+                p.AppearReason = ShuntMovingReason(spot);
+            }
+            else if (p.ShuntMove == ShuntMoveState.Moving)
+            {
+                p.ShuntMove = ShuntMoveState.None;
+                p.AppearReason = mustType ? NeedTypedNumber : null;
+                p.TrackCircuits = circuits;
+                if (!mustType) MatchGhost(p, number);
+            }
             else if (mustType) p.AppearReason = NeedTypedNumber;
             else if (p.Mode == ShareMode.Shared && (!wasIn || p.AppearReason != null))
             {

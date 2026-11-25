@@ -219,14 +219,17 @@ public sealed class StateBroadcaster : BackgroundService
                 // 同じ列番を入力している参加者（同じ列車に乗っている運転士と車掌など）の在線は、互いに見ない。
                 // 2台のゲームは同じ列車を別々に動かしているので位置がずれ（実測で最大 180m）、相手の在線で前の信号が R になって、
                 // 同じ列車に乗っているはずの相手の列車が止められてしまうため
+                // 入換で動かしている列車（ゲームの中だけで X線へ走っている）は、ほかの列車の在線も方向てこも見ない（サーバーでは X線に止まったまま）
+                var shuntMoving = p.ShuntMove == ShuntMoveState.Moving;
                 var others = shared.Where(o => o.ConnectionId != p.ConnectionId && !SameTrain(o, p)).SelectMany(o => o.TrackCircuits).ToHashSet();
+                if (shuntMoving) others.Clear();
                 // 連結する列車には、番線で待っている増結車の在線を見せない（入換信号機で、増結車のいる番線へ入るため）
                 others.ExceptWith(_routes.CouplingIgnored(p.ConnectionId));
                 state.Signals = _signals.Calculate(others, p.GameRoutes);
 
                 // 単線区間の閉塞信号機は、方向てこと逆向きなら停止に固定する。
                 // 取り消した進路の信号機は、ゲームから進路が消えるのを待たずに、すぐ停止にする
-                foreach (var name in leverStops.Concat(_routes.StopSignals(p.ConnectionId)))
+                foreach (var name in (shuntMoving ? [] : leverStops).Concat(_routes.StopSignals(p.ConnectionId)))
                 {
                     state.Signals.RemoveAll(s => s.Name == name);
                     state.Signals.Add(new SignalCommand { Name = name, Phase = "R" });
@@ -249,6 +252,14 @@ public sealed class StateBroadcaster : BackgroundService
                 else
                 {
                     state.RouteMessage = p.TrainNumber.Length == 0 ? "列車番号が分かりません" : "運転画面に入ると、進路の管理が始まります";
+                }
+
+                // 入換で動かすボタン（X線入換・X線停車中）
+                if (!ai && _players.ShuntButtonOf(p.ConnectionId) is { } shunt)
+                {
+                    state.ShuntButtonLabel = shunt.Label;
+                    state.ShuntButtonEnabled = shunt.Enabled;
+                    if (_players.ShuntMessageOf(p.ConnectionId) is { } shuntMessage) state.RouteMessage = shuntMessage;
                 }
             }
 

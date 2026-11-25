@@ -768,7 +768,8 @@ public sealed partial class RouteEngine
             foreach (var g in snapshot.Where(p => p.ConnectionId.StartsWith(PlayerRegistry.GhostPrefix)))
             {
                 var owner = g.ConnectionId[PlayerRegistry.GhostPrefix.Length..g.ConnectionId.LastIndexOf('/')];
-                if (!_runs.ContainsKey(g.ConnectionId) && snapshot.All(p => p.ConnectionId != owner) && _runs.TryGetValue(owner, out var r0)
+                // 入換で動かしている（ゲームの中だけで走っている）持ち主は、いないものとする
+                if (!_runs.ContainsKey(g.ConnectionId) && snapshot.All(p => p.ConnectionId != owner || p.ShuntMove == ShuntMoveState.Moving) && _runs.TryGetValue(owner, out var r0)
                     && r0.Player.TrainNumber == g.TrainNumber)
                     MoveRun(owner, g.ConnectionId, "継続乗務の在線へ移す", now);
             }
@@ -793,9 +794,20 @@ public sealed partial class RouteEngine
             foreach (var id in _renumber.Keys.Where(id => snapshot.All(p => p.ConnectionId != id || p.TrainNumber != _renumber[id].From)).ToList())
                 _renumber.Remove(id);
             _appear.Clear();
+            _shuntMoving.Clear();
             foreach (var id in _assigned.Keys.Where(id => snapshot.All(p => p.ConnectionId != id)).ToList()) _assigned.Remove(id);
             foreach (var p in snapshot)
             {
+                // 入換で動かしている列車（ゲームの中だけで X線へ走っている）: サーバーの列車にしない。
+                // この人のゲームにだけ、走るのに要る進路（藤江13L・大道寺13LD）を送る（BuildOutputs）
+                if (p.ShuntMove == ShuntMoveState.Moving && PlayerRegistry.ShuntSpotOf(p.ShuntSpot) is { } shuntSpot)
+                {
+                    if (_runs.Remove(p.ConnectionId, out var was)) RunLog(now, was, "扱いを外しました（入換で、ゲームの中だけで動かす）");
+                    _assigned.Remove(p.ConnectionId);
+                    _shuntMoving[p.ConnectionId] = (shuntSpot, p.AppearReason ?? "");
+                    continue;
+                }
+
                 // サーバーで使う列番: 読み替えていれば、読み替えた先（ゲームから届く列番は元のまま）。
                 // 同じ列番の列車がほかにいれば、2本目以降に接尾辞 X・Y・Z を付けて呼び分ける
                 var requested = _renumber.TryGetValue(p.ConnectionId, out var rn) ? rn.To : p.TrainNumber;
@@ -964,6 +976,12 @@ public sealed partial class RouteEngine
 
     /// <summary>出現待ちの列車（接続ID → 列番・理由）。毎周期作り直す。</summary>
     private readonly Dictionary<string, (string Train, string Reason)> _appear = new();
+
+    /// <summary>入換で動かしている列車（ゲームの中だけで走っている。接続ID → 場所・お知らせ）。</summary>
+    private readonly Dictionary<string, (ShuntSpot Spot, string Message)> _shuntMoving = new();
+
+    /// <summary>入換で動かしている列車へ送る進路の指示の番号（同じ進路は同じ番号のまま送る）。</summary>
+    private readonly Dictionary<(string Conn, string Interlock, string Route), long> _shuntIds = new();
     private readonly HashSet<(string Conn, string Train)> _appearLogged = new();
 
     /// <summary>出現待ちの列車（管理画面・ダイヤグラムの設定画面用）。</summary>
@@ -3455,6 +3473,13 @@ public sealed partial class RouteEngine
             // （列番の変更・つなぎ直し・サーバーの再起動の前に開通させた進路が残っていると、新しい進路が競合で開通しないため）。
             // 列車がもう入っている進路は消さない
             var wanted = run.Requests.Where(r => !r.Released).Select(r => (r.Def.Interlock, r.Def.Name)).ToHashSet();
+
+            // 入換で動かしたあと、残した在線につなぎ直した列車: ゲームの中だけで走るのに使った進路（大道寺13LD など）が残っていれば消す。
+            // 列車が入っている進路なので、下の「残っていた進路」では消えない。残すと、そこから出る入換の進路が競合で開通しない
+            if (run.Player.ShuntCleanupUntilUtc > now && PlayerRegistry.ShuntSpotOf(run.Player.ShuntSpot) is { } cleanup)
+                foreach (var k in cleanup.Routes.Where(k => run.Player.GameRoutes.Contains(k) && !wanted.Contains(k)))
+                    if (!deletes.Any(d => d.Interlocking == k.Interlock && d.RouteName == k.Route))
+                        deletes.Add(new RouteKey { Interlocking = k.Interlock, RouteName = k.Route });
             var stuck = run.Requests.Where(r => !r.Released && r.CancelledUtc == null && !r.Seen && now - r.RequestedUtc > StuckDelay)
                 .Select(r => r.Def.Interlock).ToHashSet();
             foreach (var g in run.Player.GameRoutes.Where(g => stuck.Contains(g.Interlock) && !wanted.Contains(g)))
@@ -3507,6 +3532,25 @@ public sealed partial class RouteEngine
 
         foreach (var (conn, a) in _appear)
             _outputs[conn] = new Output(new(), new(), new(), false, "出発要求", $"出現待ち: {a.Reason}");
+
+        // 入換で動かしている列車: この人のゲームにだけ、走るのに要る進路を送る（ほかの人のゲームには写さない。ほかの列車の在線は見ない）
+        foreach (var key in _shuntIds.Keys.Where(k => !_shuntMoving.ContainsKey(k.Conn)).ToList()) _shuntIds.Remove(key);
+        foreach (var (conn, m) in _shuntMoving)
+        {
+            var routes = new List<RouteCommand>();
+            foreach (var k in m.Spot.Routes)
+            {
+                if (!_data.Routes.TryGetValue(k, out var def)) continue;
+                if (!_shuntIds.TryGetValue((conn, k.Interlock, k.Route), out var id)) _shuntIds[(conn, k.Interlock, k.Route)] = id = ++_seq;
+                routes.Add(new RouteCommand
+                {
+                    Id = id, Interlocking = def.Interlock, RouteName = def.Name,
+                    Indicator = def.IsDepartureSignal ? "" : def.Indicator, UseTrainType = def.IsDepartureSignal, StopType = "停車"
+                });
+            }
+
+            _outputs[conn] = new Output(routes, new(), new(), false, "出発要求", m.Message);
+        }
         foreach (var (conn, parent) in _couplingDone)
             _outputs[conn] = new Output(new(), new(), new(), false, "出発要求", $"{parent} に連結しました（在線は {parent} として出します）");
 
