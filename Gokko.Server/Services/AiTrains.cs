@@ -235,7 +235,7 @@ public sealed class AiTrains : BackgroundService
     private (bool Ok, string Message) Add(string number, int cars, string? stationName, bool auto, int? forceTrack = null, PlayerInfo? takesOver = null)
     {
         number = RailData.NormalizeTrain(number);
-        if (!auto && UserTrains(_players.Snapshot()).Contains(number)) return (false, $"{number} はユーザーの列車です（出勤した行路の列車・入力された列番）");
+        if (!auto && UserTrains(_players.SnapshotWithoutVirtualTrains()).Contains(number)) return (false, $"{number} はユーザーの列車です（出勤した行路の列車・入力された列番）");
         if (_rail.DiaOf(number) is not { } dia) return (false, $"{number}: ダイヤにない列車です");
         if (!auto && takesOver == null && _rail.IsIdleTrial(dia)) return (false, $"{number} は走らせない試運転です（試運転のプルダウンで運行 {dia.Unyo} を選んでください）");
         var dir = _routes.DirOfTrain(number);
@@ -416,7 +416,8 @@ public sealed class AiTrains : BackgroundService
             try
             {
                 // ユーザーの列車（RouteEngine などのロックの中から呼ばないように、自分のロックの外で集める）
-                var snapshot = _players.Snapshot();
+                // 自動運転の列車（自分の列車）は要らないので、複製しない
+                var snapshot = _players.SnapshotWithoutVirtualTrains();
                 var users = UserTrains(snapshot);
                 var inGame = snapshot.Where(p => !PlayerRegistry.IsVirtual(p.ConnectionId) && p.InGame && p.TrainNumber.Length > 0)
                     .Select(p => RailData.NormalizeTrain(p.TrainNumber)).ToHashSet();
@@ -1617,9 +1618,9 @@ public sealed class AiTrains : BackgroundService
         foreach (var c in _relay.Conductors())
             if (c.TrainNumber.Length > 0) set.Add(RailData.NormalizeTrain(c.TrainNumber));
         var roster = _duties.Current;
-        foreach (var (duty, user) in _crew.Assignments().Concat(_crew.Extras()))
+        foreach (var duty in _crew.AttendedDuties())
         {
-            if (_crew.AttendedAt(user) == null || roster.DutyById(duty) is not { } d) continue;
+            if (roster.DutyById(duty) is not { } d) continue;
             foreach (var item in d.Items)
                 if (item.Train.Length > 0) set.Add(RailData.NormalizeTrain(item.Train));
         }
@@ -1829,21 +1830,17 @@ public sealed class AiTrains : BackgroundService
                 if (_rail.DiaOf("解" + u) is { } usplit && covered.Add(usplit.Number)) Cover(usplit);
 
             var pending = new List<PendingTrain>();
-            foreach (var dia in _rail.Dia.Values)
+            var runningNumbers = _trains.Values.Select(t => t.Number).ToHashSet();
+            foreach (var (dia, number, startDir, cands, firstDep) in SpawnPlans())
             {
-                var number = RailData.NormalizeTrain(dia.Number);
-                if (_spawned.Contains(number) || users.Contains(number) || covered.Contains(number) || _trains.Values.Any(t => t.Number == number)) continue;
+                if (_spawned.Contains(number) || users.Contains(number) || covered.Contains(number) || runningNumbers.Contains(number)) continue;
                 if (Rinji?.IsRinji(number) == true) continue; // 特発臨は出さない（元の列車が発駅で列番を変えて走る）
                 if (_rail.IsIdleTrial(dia)) continue; // 選ばれていない運行番号の試運転は走らない
-                var stops = dia.Stops.Where(s => s.StationId != null && _rail.Stations.TryGetValue(s.StationId, out var sd) && sd.RouteControl).ToList();
-                if (stops.Count < 2) continue;
                 // 出す駅は始発駅（線区の外から来る列車は、線区に入る最初の駅）だけ。終着と、番線を使わずに通過する駅には出さない。
                 // 始発駅で出せなければ、出せるまでそこで待つ（遅れた列車として出す）。先の駅に飛ばして出すと、単線区間を越えて急に現れ、
                 // ほかの列車との順番が崩れて詰まる。
                 // アリにした・ロープレ時刻を飛ばした時刻（_catchUpAt）に、もう始発駅を出ているはずの列車だけは、そのとき走っているはずの所の次の駅を始発駅とみなす
-                var startDir = _routes.DirOfTrain(number);
-                var cands = stops.Take(stops.Count - 1).Where(s => !(startDir is { } sd2 && PassesWithoutTrack(s, sd2))).ToList();
-                if (cands.Count == 0 || Time(cands[0].Dep ?? cands[0].Arr) is not { } firstDep) continue;
+                // （始発駅の候補と最初の発車時刻は、ダイヤが変わるまで変わらないので SpawnPlans で作り置く）
                 var start = _catchUpAt is { } cu && firstDep < cu - TimeSpan.FromSeconds(30)
                     ? cands.FirstOrDefault(s => Time(s.Dep ?? s.Arr) is { } t && t >= cu - TimeSpan.FromSeconds(30))
                     : cands[0];
@@ -1871,6 +1868,30 @@ public sealed class AiTrains : BackgroundService
         }
 
         foreach (var (number, station, track) in todo) Add(number, CarsOf(number), station, true, track);
+    }
+
+    // ダイヤの列車ごとの、出す駅の候補（進路を扱う駅のうち、終着と、番線を使わずに通過する駅を除いたもの）と、最初の候補の発車時刻。
+    // 列番・駅の並び・時刻の文字はダイヤが変わるまで同じなので、2秒ごとに全ダイヤを読み直さないよう、ダイヤ（臨時列車の足し外し）が
+    // 変わったときだけ作り直す。出せない列車（進路を扱う駅が2つない・候補がない・時刻が書かれていない）は入れない
+    private (Dictionary<string, DiaTrain>? Dia, List<(DiaTrain Dia, string Number, Dir? StartDir, List<DiaStop> Cands, TimeSpan FirstDep)> List) _spawnPlans = (null, new());
+
+    private List<(DiaTrain Dia, string Number, Dir? StartDir, List<DiaStop> Cands, TimeSpan FirstDep)> SpawnPlans()
+    {
+        var all = _rail.Dia;
+        if (ReferenceEquals(_spawnPlans.Dia, all)) return _spawnPlans.List;
+        var list = new List<(DiaTrain, string, Dir?, List<DiaStop>, TimeSpan)>();
+        foreach (var dia in all.Values)
+        {
+            var number = RailData.NormalizeTrain(dia.Number);
+            var stops = dia.Stops.Where(s => s.StationId != null && _rail.Stations.TryGetValue(s.StationId, out var sd) && sd.RouteControl).ToList();
+            if (stops.Count < 2) continue;
+            var startDir = RouteEngine.TrainInfo(number)?.Dir; // 列車の向きは列番で決まる（走っている列車の向きも同じ）
+            var cands = stops.Take(stops.Count - 1).Where(s => !(startDir is { } sd2 && PassesWithoutTrack(s, sd2))).ToList();
+            if (cands.Count == 0 || Time(cands[0].Dep ?? cands[0].Arr) is not { } firstDep) continue;
+            list.Add((dia, number, startDir, cands, firstDep));
+        }
+        _spawnPlans = (all, list);
+        return list;
     }
 
     /// <summary>最後尾が抜けた進路は、ゲームと同じく解く（道筋からも外す）。</summary>

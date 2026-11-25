@@ -156,7 +156,15 @@ public sealed class PlayerRegistry(GameData data, CentralControl central)
     }
 
     /// <summary>参加中のプレイヤーと、継続乗務で残している在線（接続IDが <see cref="GhostPrefix"/> で始まる）。</summary>
-    public List<PlayerInfo> Snapshot()
+    public List<PlayerInfo> Snapshot() => Snapshot(virtualTrains: true);
+
+    /// <summary>
+    /// 参加者と、継続乗務で残した在線だけの複製（自動運転の列車は入れない）。
+    /// 自動運転の列車の周期（0.2秒）が、ユーザーの列車を調べるためだけに、自分の列車まで毎回複製しないようにする。
+    /// </summary>
+    public List<PlayerInfo> SnapshotWithoutVirtualTrains() => Snapshot(virtualTrains: false);
+
+    private List<PlayerInfo> Snapshot(bool virtualTrains)
     {
         var list = new List<PlayerInfo>();
         foreach (var p in _players.Values)
@@ -174,7 +182,7 @@ public sealed class PlayerRegistry(GameData data, CentralControl central)
             list.AddRange(_ghosts.Values.Select(g => g.Info.Clone()));
         }
 
-        if (VirtualTrains?.Invoke() is { } ai) list.AddRange(ai);
+        if (virtualTrains && VirtualTrains?.Invoke() is { } ai) list.AddRange(ai);
         return list;
     }
 
