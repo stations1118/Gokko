@@ -934,17 +934,20 @@ public sealed partial class RouteEngine
             // 信号制御盤の方向てこで駅扱いにしている区間: 区間に列車がいなければ、てこの向きにする（区間方向が変わる）。
             // 列車がいる間はその列車の向きのまま。出発進路の要求では向きを変えない（反対向きの出発は方向てこが止める）
             Dir? fixedDir = panel.TryGetValue((a, b), out var pd) || panel.TryGetValue((b, a), out pd) ? pd : null;
-            foreach (var run in _runs.Values.Where(r => r.HasPosition))
-            {
-                if (run.Player.Zones.Any(z => z > lo && z < hi)) { use = run.Dir; break; } // 区間の中にいる
-                if (fixedDir != null) continue;
-                // 区間へ出る出発進路を要求している（自動・駅扱い・手動進路構成のどれでも）
-                var leaving = run.Requests.Where(r => !r.Released && r.CancelledUtc == null)
-                    .Select(r => DepartSection(r.Def, run.Dir)).FirstOrDefault(ds => ds is { } d && d.Section == (a, b));
-                if (leaving is not { } go) continue;
-                use = go.Dir;
-                break;
-            }
+            // 区間の中にいる列車を先に見る。出発を要求している列車（向かいの駅で待っている列車など）より先に決めないと、
+            // 列車を見る順番しだいで、区間を走っている列車と逆向きに倒れ、その列車が閉塞信号機の停止で動けなくなる
+            var inSection = _runs.Values.FirstOrDefault(r => r.HasPosition && r.Player.Zones.Any(z => z > lo && z < hi));
+            if (inSection != null) use = inSection.Dir;
+            else if (fixedDir == null)
+                foreach (var run in _runs.Values.Where(r => r.HasPosition))
+                {
+                    // 区間へ出る出発進路を要求している（自動・駅扱い・手動進路構成のどれでも）
+                    var leaving = run.Requests.Where(r => !r.Released && r.CancelledUtc == null)
+                        .Select(r => DepartSection(r.Def, run.Dir)).FirstOrDefault(ds => ds is { } d && d.Section == (a, b));
+                    if (leaving is not { } go) continue;
+                    use = go.Dir;
+                    break;
+                }
 
             // 信号制御盤で取った出発進路（集中のまま盤で取ったもの）も、自動の出発と同じく区間の向きを倒す。
             // そうしないと、区間の向きが逆のままで、ゲームの出発信号が方向てこで停止に押さえられる
