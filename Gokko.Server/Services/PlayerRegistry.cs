@@ -328,10 +328,12 @@ public sealed class PlayerRegistry(GameData data, CentralControl central)
     /// <summary>
     /// 入換で動かす場所。シナリオのない場所へは、在線を残したまま、ほかのシナリオからゲームの中だけで走って行く。
     /// X線: 藤江2番から下りのシナリオを始め、藤江13L・大道寺13LD を開通させて、X線の入換信号機の手前まで走る
+    /// E線: 入換Y線から始まるシナリオを始め、大道寺32LE（Y線→E線）を開通させて、E線の入換信号機の手前まで走る
     /// </summary>
     public static readonly ShuntSpot[] ShuntSpots =
     [
-        new("X線", "TH65_XT", "藤江2番から下り", [("藤江連動装置", "13L"), ("大道寺連動装置", "13LD")])
+        new("X線", "TH65_XT", "藤江2番から下り", [("藤江連動装置", "13L"), ("大道寺連動装置", "13LD")]),
+        new("E線", "TH65_ET", "入換Y線から", [("大道寺連動装置", "32LE")])
     ];
 
     public static ShuntSpot? ShuntSpotOf(string? name) => name == null ? null : ShuntSpots.FirstOrDefault(s => s.Name == name);
@@ -422,7 +424,7 @@ public sealed class PlayerRegistry(GameData data, CentralControl central)
             else
             {
                 if (!p.InGame || p.TrainNumber.Length == 0 || p.AppearReason != null || p.CoupledInto != null || ShuntSpotAt(p) is not { } here)
-                    return "入換で動かせる場所（X線）に止まっていません";
+                    return $"入換で動かせる場所（{string.Join("・", ShuntSpots.Select(s => s.Name))}）に止まっていません";
                 if (Math.Abs(p.ReportedSpeed) >= 1) return "止まってから押してください";
                 p.ShuntMove = ShuntMoveState.Leaving;
                 p.ShuntSpot = here.Name;

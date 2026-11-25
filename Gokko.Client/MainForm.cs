@@ -77,7 +77,7 @@ public sealed partial class MainForm : Form
     private readonly DataGridView _planGrid = new();
     private readonly Button _departButton = new() { Text = "出発要求" };
 
-    // 入換で動かす（X線入換）: X線に止まっていると「X線入換」、ゲームの中だけで走っている間は「X線停車中」。サーバーが出すときだけ見せる
+    // 入換で動かす（X線入換・E線入換）: X線に止まっていると「X線入換」、ゲームの中だけで走っている間は「X線停車中」（E線も同じ）。サーバーが出すときだけ見せる
     private readonly Button _shuntButton = new() { Text = "X線入換", Visible = false };
 
     // 継続乗務: 押している間に運転画面を出ると、サーバーが最後の在線位置を5分間残す（同じ番線から次のシナリオを始めると、その列番で続ける）
