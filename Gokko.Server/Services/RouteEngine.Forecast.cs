@@ -59,20 +59,41 @@ public sealed partial class RouteEngine
         // 赤山町の下り: まだ走っていない列車を、発車（通過）時刻の順に EdgeScheduled 本まで。
         // もう走った列車・発車時刻を EdgeLateSeconds 過ぎた列車は出さない
         var now = NowSec();
-        var edge = new List<(PlannedTrain P, double T)>();
-        foreach (var dia in _data.Dia.Values)
+        var taken = 0;
+        foreach (var (p, t) in EdgeTrains())
         {
-            if (running.Contains(dia.Number) || list.Any(p => p.Train == dia.Number) || dia.TerminalId == EdgeStation) continue;
+            if (taken >= EdgeScheduled) break;
+            if (t < now - EdgeLateSeconds) continue;
+            if (running.Contains(p.Train) || list.Any(x => x.Train == p.Train)) continue;
+            if (_seenAt.TryGetValue(p.Train, out var seen) && seen <= now + 1 && now - seen < 6 * 3600) continue;
+            list.Add(p);
+            taken++;
+        }
+
+        return list;
+    }
+
+    // 赤山町を通る下りの列車と、その発車（通過）時刻（時刻の順）。ダイヤ（臨時列車の足し外し）が変わったときだけ作り直す。
+    // 出発順序の表を作るたびに全ダイヤを調べ、1本ごとに列番と時刻の文字を読み直していた
+    private (Dictionary<string, DiaTrain>? Dia, List<(PlannedTrain P, double T)> List) _edgeTrains = (null, new());
+
+    private List<(PlannedTrain P, double T)> EdgeTrains()
+    {
+        var all = _data.Dia;
+        if (ReferenceEquals(_edgeTrains.Dia, all)) return _edgeTrains.List;
+        var edge = new List<(PlannedTrain P, double T)>();
+        foreach (var dia in all.Values)
+        {
+            if (dia.TerminalId == EdgeStation) continue;
             if (TrainInfo(dia.Number) is not { Dir: Dir.Down } info) continue;
             var stop = dia.Stops.FirstOrDefault(x => x.StationId == EdgeStation);
-            if (stop == null || stop.Stop == "運停" || DaySec(stop.Dep ?? stop.Arr) is not { } t || t < now - EdgeLateSeconds) continue;
-            if (_seenAt.TryGetValue(dia.Number, out var seen) && seen <= now + 1 && now - seen < 6 * 3600) continue;
+            if (stop == null || stop.Stop == "運停" || DaySec(stop.Dep ?? stop.Arr) is not { } t) continue;
             var start = dia.Stops[0].StationId == EdgeStation ? EdgeStation : "";
             edge.Add((new PlannedTrain(dia.Number, dia, info.Dir, null, start, EdgeStation), t));
         }
-        list.AddRange(edge.OrderBy(x => x.T).Take(EdgeScheduled).Select(x => x.P));
-
-        return list;
+        var sorted = edge.OrderBy(x => x.T).ToList(); // 同じ時刻どうしは、ダイヤに書かれた順のまま
+        _edgeTrains = (all, sorted);
+        return sorted;
     }
 
     /// <summary>後運用の列車の、その駅の手前の進路を扱う駅（ダイヤの並びで、その駅の1つ前）。なければ null。</summary>
