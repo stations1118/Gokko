@@ -1590,7 +1590,7 @@
   // 自動運転列車（にぎやかし。サーバーだけで走る列車）: アリ/ナシの切り替え・手で出す・一覧（管理画面と司令用管理画面で共通）。
   // showSpeed: 走っている速さを出すか（管理画面だけ）。api(method, path, body) はその画面の API（/api/admin か /api/dia）を呼ぶ
   let aiPanelSeq = 0;
-  function aiTrainPanel({ el, api, showSpeed = false, onMessage = () => {} }) {
+  function aiTrainPanel({ el, api, showSpeed = false }) {
     const name = "aiMode" + (++aiPanelSeq);
     el.innerHTML = `<h2>自動運転列車（にぎやかし）</h2>
       <p class="muted">サーバーだけで走る列車です。進路・信号・TID（札の右上に *）・ほかの列車の信号に、ふつうの列車として出ます（ゲームの画面には映りません）。ロープレ時刻が動いている間だけ走ります。</p>
@@ -1605,17 +1605,45 @@
       </div>
       <div data-ai="trial" style="margin:0 0 8px 1.5em"></div>
       <p class="muted">ダイヤ運転中に運転画面を出た列車（継続乗務の在線）は、3分たつと、その場所から自動運転の列車が引き継いで走ります（両数は運行ごとの両数）。自動運転列車アリのときは、継続乗務の在線を消したときも引き継ぎます。</p>
+      <h3 style="margin:12px 0 4px">手で出す</h3>
       <div class="row">
-        <input data-ai="train" placeholder="列番（例: 1651）" size="12">
+        <input data-ai="train" placeholder="列番（例: 1651）" size="12" title="打つと、下の一覧をその列番で絞り込みます">
         <input data-ai="cars" type="number" min="1" max="10" placeholder="運行" title="空なら運行ごとの両数（表にない運行は6両）" style="width:4em"><span>両</span>
         <input data-ai="station" placeholder="出す駅（空なら次に発車する駅）" size="22">
         <button data-ai="add" class="primary">手で出す</button>
         <button data-ai="clear">全部消す</button>
       </div>
+      <div data-ai="msg" style="min-height:1.4em;margin:2px 0 6px;font-weight:bold;white-space:pre-wrap"></div>
+      <div class="muted" data-ai="candsHead"></div>
+      <div data-ai="cands" style="max-height:280px;overflow:auto;margin-bottom:8px"></div>
       <div data-ai="carsProblems" class="muted"></div>
+      <h3 style="margin:12px 0 4px">走っている自動運転列車</h3>
       <div data-ai="list"></div>`;
     const q = (k) => el.querySelector(`[data-ai="${k}"]`);
-    let last = "", lastTrials = "";
+    let last = "", lastTrials = "", lastCands = "", cands = [];
+
+    // 結果の表示: 手入力の欄のすぐ下に、次の操作をするまで出したままにする（すぐ消える通知だと読めないため）
+    function setMsg(text, ok) {
+      const m = q("msg");
+      if (!text) { m.textContent = ""; return; }
+      const d = new Date(), p = (x) => String(x).padStart(2, "0");
+      m.textContent = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}　${text}`;
+      m.style.color = ok ? "var(--ok)" : "var(--danger)";
+    }
+
+    // 手で出せる列車（走っていない、これから発車する列車）の一覧。列番の欄に打った文字で絞り込む
+    function showCands() {
+      const f = q("train").value.trim();
+      const shown = f ? cands.filter((c) => c.train.includes(f)) : cands;
+      q("candsHead").textContent = cands.length === 0 ? "走らせられる列車はありません（ロープレ時刻が止まっている・これから1時間に発車する列車がない）"
+        : `走らせられる列車（走っていない、これから1時間に発車する列車。早い順）${f ? `：「${f}」を含む ${shown.length}本` : `：${cands.length}本`}`;
+      const html = shown.length === 0 ? (cands.length && f ? `<div class="muted">一覧にありません。列番を確かめて［手で出す］を押すと、出せない理由が出ます。</div>` : "")
+        : `<table>${shown.map((c) => `<tr><td><b>${esc(c.train)}</b></td><td class="muted">${esc(c.type)}</td>`
+          + `<td>${esc(c.station)} ${esc(c.dep)}発</td><td class="muted">${esc(c.dest)}行</td><td class="muted">${c.cars}両</td>`
+          + `<td class="muted">${c.pending ? "自動で出る予定" : ""}</td>`
+          + `<td><button class="primary" data-ai-run="${esc(c.train)}" data-ai-station="${esc(c.station)}">走らせる</button></td></tr>`).join("")}</table>`;
+      if (html !== lastCands) { q("cands").innerHTML = html; lastCands = html; }
+    }
 
     // 試運転: 運行番号ごとの印（いくつでも選べる。どれも付いていなければ「なし」）
     let trialBusy = false;
@@ -1642,6 +1670,8 @@
         const probs = d.carsProblems || [];
         q("carsProblems").innerHTML = probs.length ? `<b>両数の表（Data/UnyoCars.csv・TrainCars.csv）のおかしな所:</b> ${probs.map(esc).join("　")}` : "";
         showTrials(d.trials || [], d.trialsOn || []);
+        cands = d.candidates || [];
+        showCands();
         const list = d.trains || [];
         const html = list.length === 0 ? `<div class="muted">走っていません</div>`
           : `<table>${list.map((t) => `<tr><td><b>${esc(t.train)}</b>${t.auto ? ` <span class="muted">自動</span>` : ""}</td><td class="muted">${t.cars}両</td>`
@@ -1651,10 +1681,14 @@
       } catch (e) { /* 接続の失敗は画面の上の表示に出る */ }
     }
 
+    // 送って、結果を手入力の欄の下に出す。うまくいったら true
     async function call(method, path, body) {
-      try { const r = await api(method, path, body); onMessage((r && r.message) || ""); }
-      catch (e) { onMessage(e.message); }
+      setMsg("");
+      let ok = false;
+      try { const r = await api(method, path, body); ok = true; setMsg((r && r.message) || "", true); }
+      catch (e) { setMsg(e.message || "うまくいきませんでした", false); }
       refresh();
+      return ok;
     }
 
     q("trial").addEventListener("change", async () => {
@@ -1669,17 +1703,31 @@
       if (!on && !(await ask("自動運転列車をナシにしますか？", "走っている自動運転の列車は、全部すぐに消えます。"))) { refresh(); return; }
       await call("POST", "/ai-trains/mode", { on });
     });
-    q("add").onclick = async () => {
+    // 列番の欄は、出せたときだけ空にする（出せなかったら、そのまま直して押し直せる）
+    let adding = false;
+    async function addTrain(train, station) {
+      if (adding) return;
+      adding = true;
+      try {
+        if (await call("POST", "/ai-trains/add", { train, cars: Number(q("cars").value) || 0, station })) {
+          if (q("train").value.trim() === train) q("train").value = "";
+          showCands();
+        }
+      } finally { adding = false; }
+    }
+    q("add").onclick = () => {
       const train = q("train").value.trim();
-      if (!train) return;
-      await call("POST", "/ai-trains/add", { train, cars: Number(q("cars").value) || 0, station: q("station").value.trim() || null });
-      q("train").value = "";
+      if (!train) { setMsg("列番を入れてください", false); return; }
+      addTrain(train, q("station").value.trim() || null);
     };
     q("train").addEventListener("keydown", (ev) => { if (ev.key === "Enter") q("add").click(); });
+    q("train").addEventListener("input", showCands);
     q("clear").onclick = async () => {
       if (await ask("自動運転の列車を全部消しますか？", "在線もすぐ消えます（アリのままなら、時刻が来た列車はまた出ます）。")) await call("POST", "/ai-trains/remove", {});
     };
     el.addEventListener("click", async (ev) => {
+      const run = ev.target.closest("button[data-ai-run]");
+      if (run) { addTrain(run.dataset.aiRun, run.dataset.aiStation || null); return; } // 一覧に出ている駅に出す
       const b = ev.target.closest("button[data-ai-remove]");
       if (b) await call("POST", "/ai-trains/remove", { id: b.dataset.aiRemove });
     });
