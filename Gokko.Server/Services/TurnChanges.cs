@@ -45,8 +45,8 @@ public sealed class TurnChanges(RailData rail)
         lock (_lock) return _direct.GetValueOrDefault(RailData.NormalizeTrain(train));
     }
 
-    // 駅 → その駅に止まる列車（途中折返しの候補を探す。ダイヤが変われば作り直す）
-    private Dictionary<string, List<(DiaTrain D, int Index)>>? _byStation;
+    // 駅 → その駅に止まる列車と、その向き・その駅の発時刻（途中折返しの候補を探す。ダイヤが変われば作り直す）
+    private Dictionary<string, List<(DiaTrain D, int Index, Dir? Dir, double? Dep)>>? _byStation;
 
     /// <summary>差し替えるたびに増える（ダイヤグラムの計画の線を読み直す合図）。</summary>
     public int Version { get; private set; }
@@ -133,6 +133,27 @@ public sealed class TurnChanges(RailData rail)
     {
         if (d == null) return null;
         lock (_lock)
+        {
+            // 候補を作るには全ダイヤを調べるので、差し替え・ダイヤが変わる（Version が増える）まで、列車ごとの答えを覚えておく。
+            // ダイヤグラム・列車別設定を作るたびに、走っている列車の数だけ作り直していた
+            if (_viewsVersion != Version)
+            {
+                _views.Clear();
+                _viewsVersion = Version;
+            }
+            if (_views.TryGetValue(d.Number, out var kept) && ReferenceEquals(kept.Dia, d)) return kept.View;
+            var view = BuildView(d);
+            _views[d.Number] = (d, view);
+            return view;
+        }
+    }
+
+    // 列番 → 覚えている View の答え（_viewsVersion のときのもの）
+    private readonly Dictionary<string, (DiaTrain Dia, object View)> _views = new();
+    private int _viewsVersion = -1;
+
+    private object BuildView(DiaTrain d)
+    {
         {
             var t = _over.TryGetValue(d.Number, out var o) ? o : d.Turn;
             var changed = _over.ContainsKey(d.Number);
@@ -396,8 +417,8 @@ public sealed class TurnChanges(RailData rail)
             if ((Sec(s.Arr) ?? Sec(s.Dep)) is not { } at) continue;
             var cands = (by.GetValueOrDefault(sid) ?? new())
                 .Where(x => x.D.Number != d.Number && x.Index < x.D.Stops.Count - 1 && x.D.Stops[x.Index].Stop == "停"
-                    && RouteEngine.TrainInfo(x.D.Number)?.Dir == back)
-                .Select(x => (x.D, dep: Sec(x.D.Stops[x.Index].Dep) ?? Sec(x.D.Stops[x.Index].Arr)))
+                    && x.Dir == back)
+                .Select(x => (x.D, dep: x.Dep))
                 .Where(x => x.dep is { } t && t >= at - 900 && t <= at + 7200)
                 .OrderBy(x => x.dep).Take(10)
                 .Select(x => (object)new { train = x.D.Number, type = x.D.Type, time = Hhmm(x.dep!.Value), unyo = Unyo(x.D.Number, 0) })
@@ -419,17 +440,20 @@ public sealed class TurnChanges(RailData rail)
         return st.Routes[dir].Arrive.Keys.Where(k => st.Routes[back].Depart.ContainsKey(k)).OrderBy(k => k).ToList();
     }
 
-    private Dictionary<string, List<(DiaTrain D, int Index)>> ByStation()
+    private Dictionary<string, List<(DiaTrain D, int Index, Dir? Dir, double? Dep)>> ByStation()
     {
         if (_byStation != null) return _byStation;
-        var m = new Dictionary<string, List<(DiaTrain, int)>>();
+        var m = new Dictionary<string, List<(DiaTrain, int, Dir?, double?)>>();
         foreach (var d in rail.Dia.Values)
+        {
+            var dir = RouteEngine.TrainInfo(d.Number)?.Dir; // 向きと時刻は、候補を探すたびに読み直さないよう、ここで1回だけ読む
             for (var i = 0; i < d.Stops.Count; i++)
                 if (d.Stops[i].StationId is { } sid)
                 {
                     if (!m.TryGetValue(sid, out var l)) m[sid] = l = new();
-                    l.Add((d, i));
+                    l.Add((d, i, dir, Sec(d.Stops[i].Dep) ?? Sec(d.Stops[i].Arr)));
                 }
+        }
         return _byStation = m;
     }
 
