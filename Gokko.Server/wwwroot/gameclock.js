@@ -6,6 +6,7 @@
 (() => {
   let clock = null; // { daySec, at（その時刻だった実際の時刻 ms）, speed }。ロープレ時刻がなければ null
   let skew = 0; // サーバーの時計 − この PC の時計（ms）
+  let last = null; // 最後に読んだ /api/clock の答え（進んでいるか・止めた時刻を出す画面が使う）
 
   async function sync() {
     try {
@@ -13,6 +14,7 @@
       const c = await (await fetch("/api/clock", { cache: "no-store" })).json();
       const server = Date.parse(c.serverUtc);
       skew = server - (before + Date.now()) / 2;
+      last = c;
       clock = c.daySec == null ? null : { daySec: c.daySec, at: server, speed: c.speed > 0 ? c.speed : 1 };
     } catch (e) { /* 読めなければ前のまま */ }
   }
@@ -56,5 +58,5 @@
   }
 
   setInterval(sync, 5000);
-  window.GokkoClock = { ready, sync, now, speed, daySec, fmt, isoFromGame, msFromDaySec, isSet: () => clock != null };
+  window.GokkoClock = { ready, sync, now, speed, daySec, fmt, isoFromGame, msFromDaySec, isSet: () => clock != null, raw: () => last };
 })();

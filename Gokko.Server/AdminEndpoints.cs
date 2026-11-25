@@ -1160,7 +1160,10 @@ public static class AdminEndpoints
 
         // ダイヤグラムに薄く引く、時刻表（Timetable.json）の計画の線。大きいので、画面を開いたときに1回だけ読む。
         // 路線の駅だけ（y はゾーン）。時刻はロープレ時刻 "HH:mm:ss"（書かれていなければ null）
-        g.MapGet("/diagram/plan", (RailData rail, EventStops events, CentralControl central) => Results.Ok(new
+        // 全ダイヤから作るので、後運用の差し替え・打ち切り・試運転の選択・催物用臨停設定（/diagram の turnVersion と同じ数）が変わるまで使い回す
+        // （変わると開いている画面が一斉に読み直すので、そのたびに作っていた）
+        g.MapGet("/diagram/plan", (RailData rail, EventStops events, CentralControl central, ResponseCache cache) => cache.GetVersioned("diagram-plan",
+            rail.Turns.Version + rail.TrialVersion + events.Version + central.CutVersion, () => new
         {
             // 折り返しの入換にかかる秒数（ゾーン → "から>へ" → 秒）
             shuntSeconds = rail.Stations.Values.Where(s => s.ShuntSeconds.Count > 0 && rail.Line.ZoneOfStation(s.Id) >= 0)

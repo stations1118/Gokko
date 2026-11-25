@@ -17,6 +17,7 @@ public sealed class ResponseCache(IOptions<JsonOptions> json)
         public readonly object Gate = new();
         public byte[]? Body;
         public long At;
+        public long Version;
     }
 
     private readonly ConcurrentDictionary<string, Entry> _entries = new();
@@ -27,6 +28,25 @@ public sealed class ResponseCache(IOptions<JsonOptions> json)
     {
         foreach (var e in _entries.Values)
             lock (e.Gate) e.Body = null;
+    }
+
+    /// <summary>
+    /// key の答え。version が前と同じ間はそれを使い回し、変わったら build で作り直す（大きくて、めったに変わらない答え用。
+    /// key ごとに1つしか持たない。Clear のあとも作り直す）。
+    /// </summary>
+    public IResult GetVersioned(string key, long version, Func<object> build)
+    {
+        var e = _entries.GetOrAdd(key, _ => new Entry());
+        lock (e.Gate)
+        {
+            if (e.Body == null || e.Version != version)
+            {
+                e.Body = JsonSerializer.SerializeToUtf8Bytes(build(), _options);
+                e.Version = version;
+            }
+
+            return Results.Bytes(e.Body, "application/json; charset=utf-8");
+        }
     }
 
     /// <summary>key の答え。ttl より新しいものがあればそれを、なければ build で作り直す（同時に来た人は、1人が作るのを待つ）。</summary>

@@ -355,7 +355,9 @@
       render(s);
       lastRoutes = await api("GET", "/routes");
       trainSettings.update(lastRoutes.trains);
-      renderDiagram(await api("GET", "/diagram"));
+      const diagram = await api("GET", "/diagram");
+      window.gokkoDiagram = { at: Date.now(), data: diagram }; // 埋め込んだダイヤグラムが、同じ答えをもう一度読まないように渡す
+      renderDiagram(diagram);
       manual.update(lastRoutes.trains);
     } catch (e) {
       $("conn").textContent = "接続できません"; $("conn").className = "status ng";
