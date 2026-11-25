@@ -683,7 +683,9 @@
 
     // 列車の名札（列車がいる線の真上に重ねる）。軌道回路名の画面では出さない（在線は赤い線、次に着く列車は到着の表で分かる）
     const outside = [];
-    for (const t of NAMES ? [] : s.tid.trains) {
+    // 切り離した車両（解2076C など）は、元の列車と同じ番線にいる間は札が重なる。先に描いて、元の列車の札を上にする
+    const drawOrder = (NAMES ? [] : s.tid.trains).slice().sort((x, y) => (String(y.train).startsWith("解") ? 1 : 0) - (String(x.train).startsWith("解") ? 1 : 0));
+    for (const t of drawOrder) {
       const a = trainAnchor(trainLines.get(t.train) || []);
       if (!a) { outside.push(`${t.train}（${t.circuits.join("・") || "位置不明"}）`); continue; }
       p.push(chip(X(a[0]) - CHIP.w / 2, Y(a[1]) - CHIP.h / 2, t.train));

@@ -390,6 +390,8 @@
     // 列番: 列車が踏んでいる回路のうち、画面にあるものの上（上り線）か下（下り線）に箱
     trainLayer.textContent = '';
     for (const tr of tid.trains) {
+      // 切り離した車両（解2076C など）は、元の列車が同じ番線にいる間は出さない（元の列車が出ていったら出す）
+      if (String(tr.train).startsWith('解') && tid.trains.some(o => o !== tr && !String(o.train).startsWith('解') && o.circuits.some(c => tr.circuits.includes(c)))) continue;
       const seg = L.segments.find(s => tr.circuits.includes(s.c) && legOpen(s));
       if (!seg) continue;
       const a = seg.p[0], b = seg.p[seg.p.length - 1];
