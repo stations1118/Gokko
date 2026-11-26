@@ -22,6 +22,22 @@
   section.wide { grid-column: 1 / -1; }
   h2 { font-size: 14px; margin: 0 0 10px; }
   section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; min-width: 0; }
+  /* ボックスの大きさは固定。中身が増えたり文字が大きくなったりしても、ボックスの中だけで縦に送る（下のボックスがずれないように） */
+  main > section { height: var(--h); overflow: auto; overscroll-behavior: contain; }
+  /* 見出しと、その下の入力・ボタンの行は、送っても上に残す */
+  main > section h2 { position: sticky; top: -12px; z-index: 2; background: var(--panel); margin: -12px -14px 10px; padding: 12px 14px 6px; }
+  main > section .pin { position: sticky; top: 27px; z-index: 2; background: var(--panel); padding-bottom: 4px; }
+  main > section table { width: 100%; }
+  .load-tiles { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
+  .load-tiles div { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; min-height: 52px; }
+  .load-tiles b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .load-tiles span { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .load-charts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .load-charts figure { margin: 0; }
+  .load-charts figcaption { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .load-charts canvas { width: 100%; height: 90px; display: block; border-bottom: 1px solid var(--line); }
+  @media (max-width: 800px) { .load-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } .load-charts { grid-template-columns: 1fr; } }
+  #randomState { display: inline-block; min-width: 4.5em; }
   input, button, select { font: inherit; color: inherit; }
   .rpclock { margin-left: auto; display: flex; align-items: baseline; gap: 6px; }
   #rpClock { font-family: "BIZ UDGothic", "BIZ UDゴシック", "Yu Gothic UI", monospace; font-size: 20px; font-weight: bold; font-variant-numeric: tabular-nums; }
@@ -62,24 +78,29 @@
 </header>
 
 <main>
-  <section class="wide">
-    <div id="mode" style="margin-bottom:8px"></div>
+  <!-- ボックスの高さは style の --h で決める（中身が増えてもボックスの中で送るだけ） -->
+  <!-- ダイヤグラムだけは固定しない（詳細表示・拡大縮小に合わせて、ボックスごと伸び縮みする） -->
+  <section class="wide" style="--h:auto; overflow:visible">
     <iframe id="diagramFrame" src="diagrammarker.html?scope=dia&embed=1" title="ダイヤグラム" style="width:100%; height:480px; border:0; display:block"></iframe>
   </section>
-  <section class="wide">
-    <h2>出発順序・単線区間の走行順</h2>
-    <div id="orders"></div>
-  </section>
-  <section class="wide">
-    <div id="queue"></div>
-  </section>
-  <section class="wide">
+  <section class="wide" style="--h:280px">
     <h2>列車別設定</h2>
     <div id="trains"></div>
   </section>
-  <section class="wide" id="eventStopSection">
+  <section class="wide" style="--h:260px">
+    <h2>出発順序・単線区間の走行順</h2>
+    <div id="orders"></div>
+  </section>
+  <section class="wide" id="connSection" style="--h:220px">
+    <h2>接続待ち</h2>
+    <div id="connections"></div>
+  </section>
+  <section id="rinjiSection" style="--h:360px">
+    <div id="rinji"></div>
+  </section>
+  <section id="eventStopSection" style="--h:360px">
     <h2>催物用臨停設定</h2>
-    <div class="row">
+    <div class="row pin">
       <label>駅 <select id="esStation"></select></label>
       <label>種別 <select id="esKind"></select></label>
       <select id="esDir" title="臨時停車させる向き"><option value="上下">上下</option><option value="上り">上り</option><option value="下り">下り</option></select>
@@ -88,34 +109,38 @@
       <button id="esAdd" class="primary">追加</button>
     </div>
     <div id="esList"></div>
-    <div id="esHelp" class="muted" style="margin-top:6px"></div>
   </section>
-  <section class="wide" id="connSection">
-    <h2>接続待ち</h2>
-    <div id="connections"></div>
-  </section>
-  <section class="wide" id="rinjiSection">
-    <div id="rinji"></div>
-  </section>
-  <section class="wide">
+  <section class="wide" style="--h:1010px">
     <h2>手動進路構成</h2>
     <iframe id="circuitMap" src="tid.html?names=1&embed=1" title="軌道回路名つきの配線" style="width:100%; height:320px; border:1px solid var(--line); border-radius:6px; margin-bottom:8px; background:#fff"></iframe>
     <div id="manual"></div>
   </section>
-  <section class="wide">
+  <section class="wide" style="--h:260px">
+    <div id="queue"></div>
+  </section>
+  <section class="wide" style="--h:300px">
     <div id="continues"></div>
   </section>
-  <section class="wide">
+  <section class="wide" style="--h:460px">
     <div id="aiTrains"></div>
   </section>
-  <section class="wide">
-    <div id="blockSignals"></div>
-  </section>
-  <section class="wide" id="tempTrainSection">
+  <section class="wide" id="tempTrainSection" style="--h:280px">
     <h2>催物用臨時列車設定</h2>
     <div id="tempTrains" class="muted">読み込み中…</div>
   </section>
-  <section>
+  <section class="wide" style="--h:420px">
+    <div id="blockSignals"></div>
+  </section>
+  <section style="--h:220px">
+    <h2>作動中の特発</h2>
+    <div id="incidents"></div>
+  </section>
+  <section style="--h:220px">
+    <h2>ランダム特発設定</h2>
+    <div class="row"><span id="randomState" class="status muted">-</span>
+      <button id="randomOn" class="primary">開始</button><button id="randomOff">停止</button></div>
+  </section>
+  <section style="--h:320px">
     <h2>ロープレ時刻</h2>
     <div class="row"><span id="gameTime" class="clock">--:--:--</span><span id="clockState" class="muted"></span></div>
     <div class="row">
@@ -128,19 +153,24 @@
       <input id="clockHour" placeholder="時" size="3" inputmode="numeric" title="0〜23">
       <button id="clockHourSet">時だけ設定（分・秒は今の日本時間）</button>
     </div>
-    <div class="muted">設定した時刻から実時間と同じ速さで進みます。設定すると、手で入れたダイヤの指示（列車ごとの指示・出発順序・走行順・後運用の差し替え）を取り消します。</div>
+    <div id="mode" style="margin-top:12px; padding-top:10px; border-top:1px solid var(--line); min-height:32px"></div>
   </section>
-  <section>
+  <section style="--h:320px">
     <h2>駅の扱い</h2>
     <div id="stationModes"></div>
   </section>
-  <section>
+  <section class="wide" style="--h:160px">
     <h2>自動退避設定</h2>
     <div id="passing"></div>
   </section>
-  <section class="wide">
-    <h2>作動中の特発</h2>
-    <div id="incidents"></div>
+  <section class="wide" style="--h:260px">
+    <h2>サーバーの負荷 <span id="loadNote" class="muted"></span></h2>
+    <div id="loadTiles" class="load-tiles"></div>
+    <div class="load-charts">
+      <figure><figcaption>CPU（%）</figcaption><canvas id="loadCpu"></canvas></figure>
+      <figure><figcaption>メモリ（MB。線: このサーバー、点線: マシンの空き）</figcaption><canvas id="loadMem"></canvas></figure>
+      <figure><figcaption>配信1回の時間（ms。線: 平均、点線: 最大）</figcaption><canvas id="loadBc"></canvas></figure>
+    </div>
   </section>
 </main>
 
@@ -272,8 +302,7 @@
             <td>${state(r)}</td>
             <td>${r.cut ? `<button data-conn="${esc(r.key)}" data-cut="0">接続を戻す</button>`
                         : `<button data-conn="${esc(r.key)}" data-cut="1" class="danger">接続を切る</button>`}${r.blocked && !r.cut
-              ? ` <button data-rinji-pick="${esc(r.waiter)}" title="${esc(r.waiter)} から特発臨を立てる欄を開く（折り返して詰まりをほどく）">特発臨…</button>` : ""}</td></tr>`).join("")}</table>
-        <div class="muted" style="margin-top:6px">接続を受ける列車が着くまで、待つ列車の出発進路を開けません（待つ上限はありません）。接続を受ける列車が走っていなければ待ちません。「接続を切る」と待たずに発車します。司令員が出勤していないときは、詰まった組（接続を受ける列車が前の列車に阻まれて着けない）をサーバーが自動で切ります。</div>`;
+              ? ` <button data-rinji-pick="${esc(r.waiter)}" title="${esc(r.waiter)} から特発臨を立てる欄を開く（折り返して詰まりをほどく）">特発臨…</button>` : ""}</td></tr>`).join("")}</table>`;
     setHtml($("connections"), html);
   }
   $("connections").addEventListener("click", async (ev) => {
@@ -358,12 +387,85 @@
   });
 
   // 特発臨（運転整理のために、その場で立てる臨時列車。tokuhatsu-rinji.js）
-  GokkoRinji.panel({ el: $("rinji"), api, act, onMessage: (m) => { $("error").textContent = m; } });
+  GokkoRinji.panel({ el: $("rinji"), api, act, help: false, onMessage: (m) => { $("error").textContent = m; } });
 
   // 自動運転列車（にぎやかし）。速さは管理画面だけに出す
-  GokkoDia.aiTrainPanel({ el: $("aiTrains"), api });
+  GokkoDia.aiTrainPanel({ el: $("aiTrains"), api, help: false });
+
+  // ランダム特発設定（開始と停止だけ。間隔・確率などは管理画面で変える）
+  async function refreshRandom() {
+    if (!key && !crewToken) return;
+    try {
+      const r = await api("GET", "/random");
+      $("randomState").textContent = r.enabled ? "動作中" : "停止中";
+      $("randomState").className = "status " + (r.enabled ? "ok" : "muted");
+    } catch (e) { /* 読めないときは、上の接続の表示に任せる */ }
+  }
+  const randomAct = async (enabled) => {
+    if (!confirm(`ランダム特発を${enabled ? "開始" : "停止"}しますか？`)) return;
+    await act("POST", "/random", { enabled });
+    await refreshRandom();
+  };
+  $("randomOn").onclick = () => randomAct(true);
+  $("randomOff").onclick = () => randomAct(false);
+
+  // サーバーの負荷（5秒ごと。見るだけ）
+  function drawLoad(canvas, series, opts) {
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    if (!w || !h) return;
+    canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+    const g = canvas.getContext("2d");
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, w, h);
+    const css = getComputedStyle(document.documentElement);
+    const all = series.flatMap((s) => s.values).filter((v) => v != null);
+    const max = Math.max(opts.min || 1, ...all) * 1.1;
+    g.fillStyle = css.getPropertyValue("--muted"); g.font = "11px system-ui";
+    g.fillText(max.toFixed(max < 10 ? 1 : 0), 2, 11);
+    for (const s of series) {
+      const n = s.values.length;
+      if (n < 2) continue;
+      g.strokeStyle = css.getPropertyValue(s.color); g.lineWidth = 1.5; g.setLineDash(s.dash ? [4, 3] : []);
+      g.beginPath();
+      let started = false;
+      s.values.forEach((v, i) => {
+        if (v == null) { started = false; return; }
+        const x = (i / (opts.count - 1)) * w + (opts.count - n) / (opts.count - 1) * w;
+        const y = h - (v / max) * (h - 4);
+        if (started) g.lineTo(x, y); else { g.moveTo(x, y); started = true; }
+      });
+      g.stroke();
+    }
+  }
+  async function refreshLoad() {
+    if (!key && !crewToken) return;
+    try {
+      const r = await api("GET", "/load");
+      const c = r.current;
+      if (!c) { $("loadNote").textContent = "（測り始めたところです）"; return; }
+      $("loadNote").textContent = `（${r.cores}コア）`;
+      const tile = (label, value) => `<div><span>${esc(label)}</span><b>${esc(value)}</b></div>`;
+      const mb = (v) => v == null ? "-" : `${Math.round(v)} MB`;
+      setHtml($("loadTiles"), [
+        tile("CPU", `${c.cpuPercent.toFixed(1)} %`),
+        tile("このサーバーのメモリ", mb(c.processMb)),
+        tile("マシンの空きメモリ", c.machineAvailableMb == null ? "-" : `${mb(c.machineAvailableMb)} / ${mb(c.machineTotalMb)}`),
+        tile("ロードアベレージ", c.loadAverage1 == null ? "-" : c.loadAverage1.toFixed(2)),
+        tile("配信1回（平均/最大）", `${c.broadcastAvgMs.toFixed(1)} / ${c.broadcastMaxMs.toFixed(1)} ms`),
+        tile("参加者 / にぎやかし", `${c.players} / ${c.aiTrains}`),
+      ].join(""));
+      const h = r.history, count = 720;
+      drawLoad($("loadCpu"), [{ values: h.map((x) => x.cpuPercent), color: "--accent" }], { count, min: 10 });
+      drawLoad($("loadMem"), [{ values: h.map((x) => x.processMb), color: "--accent" }, { values: h.map((x) => x.machineAvailableMb), color: "--ok", dash: true }], { count, min: 100 });
+      drawLoad($("loadBc"), [{ values: h.map((x) => x.broadcastAvgMs), color: "--accent" }, { values: h.map((x) => x.broadcastMaxMs), color: "--danger", dash: true }], { count, min: 5 });
+    } catch (e) { $("loadNote").textContent = e.message; }
+  }
+  $("saveKey").addEventListener("click", () => { refreshRandom(); refreshLoad(); });
 
   refresh();
+  refreshRandom(); setInterval(refreshRandom, 5000); // ほかの司令員・管理画面が切り替えたときも出す
+  refreshLoad(); setInterval(refreshLoad, 5000);
   let polling = false; const poll = async () => { if (polling) return; polling = true; try { await refresh(); } finally { polling = false; } }; // 前の読み込みが終わっていなければ重ねて投げない（サーバーが遅いとき、要求が積み重なって配信まで詰まるため）
   setInterval(poll, 1000);
 })();
@@ -392,7 +494,7 @@
     try {
       const j = await api("GET");
       const html = j.groups.length === 0
-        ? `<div class="muted">承認された臨時列車はありません（運転課の画面で作って申請し、運転課課長代理が承認したものが出ます）</div>`
+        ? `<div class="muted">承認された臨時列車はありません</div>`
         : j.groups.map((g) => `<div style="margin-bottom:10px">
             <div class="row" style="margin-bottom:4px"><b>${esc(g.name)}</b> <span class="muted">${g.trains.length}本・作成 ${esc(g.owner)}・承認 ID:${esc(g.approvedBy)}</span>
               ${g.applied ? `<b class="ok">適用中</b> <button data-tt="${esc(g.id)}" data-tt-act="cancel" class="danger">取消</button>`
@@ -403,9 +505,7 @@
                   <label title="外すと、この運行番号の列車は走らせません（適用中なら、走っている自動運転の列車も消します）"><input type="checkbox" data-tu="${esc(g.id)}" data-tu-unyo="${esc(u)}" ${on ? "checked" : ""}> 運行${esc(u)}</label></td>` : ""}
                 <td><b>${esc(t.number)}</b></td><td>${esc(t.type)}</td>
                 <td>${esc(t.from)} ${esc(short(t.dep))}${t.dep ? "発" : ""}</td><td>→ ${esc(t.to)} ${esc(short(t.arr))}着</td><td class="muted">${t.dest ? esc(t.dest) + "行" : ""}</td></tr>`).join("");
-            }).join("")}</table></div>`).join("")
-          + `<div class="muted">適用すると、所定の時刻表に重ねてダイヤグラムに出し、自動運転の列車として走らせます（ユーザーが乗る列車は出しません）。取消で外し、走っている自動運転の列車も消します。<br>
-              運行番号のチェックを外すと、その運行番号の列車だけ走らせません（ほかの運行番号はそのまま。適用中でも切り替えられます）。</div>`;
+            }).join("")}</table></div>`).join("");
       if (html !== last) { $("tempTrains").innerHTML = html; last = html; }
       $("tempTrains").className = "";
     } catch (e) { $("tempTrains").textContent = e.message; $("tempTrains").className = "muted"; last = ""; }
@@ -467,9 +567,6 @@
     if (!filled) {
       $("esStation").innerHTML = d.stations.map((s) => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join("");
       $("esKind").innerHTML = d.kinds.map((k, i) => `<option value="${esc(k.kind)}">${esc(k.label)}${i < d.kinds.length - 1 ? "〜準急" : ""}</option>`).join("");
-      $("esHelp").textContent = `選んだ種別と、それより下の種別（準急まで）が、その駅を通る時刻が開始〜終了の間なら臨時停車します（終了が空なら終わりなし）。` +
-        `普通はもともと止まり、回送・試運転は止まりません。停車時間は${d.dwellSeconds}秒（発車＝通過時刻）。自動運転の列車が止まり、進路・運転順序・ダイヤグラム・列車位置案内・タブレットのスタフも臨時停車として扱います。` +
-        `列車別設定の臨時通過・打ち切りがあれば、そちらが先です。サーバーを再起動すると消えます。`;
       filled = true;
     }
     const html = d.rules.length === 0

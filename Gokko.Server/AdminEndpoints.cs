@@ -214,6 +214,18 @@ public static class AdminEndpoints
                 ? Results.Ok(new { ok = true })
                 : Results.BadRequest(new { ok = false, message = error });
         });
+        // ランダム特発は、開始と停止だけ（間隔・確率などは管理画面だけで変える）
+        dia.MapGet("/random", (RandomOptions random) => Results.Ok(new { enabled = random.Enabled }));
+        dia.MapPost("/random", (RandomRequest req, RandomOptions random, IncidentManager incidents) =>
+        {
+            if (req.Enabled is { } enabled && enabled != random.Enabled)
+            {
+                random.Enabled = enabled;
+                incidents.Note(enabled ? "ランダム特発: 開始（司令用管理画面）" : "ランダム特発: 停止（司令用管理画面）");
+            }
+            return Results.Ok(new { ok = true, enabled = random.Enabled });
+        });
+        dia.MapGet("/load", (ServerLoad load) => Results.Ok(load.View())); // サーバーの負荷（見るだけ）
 
         // 列車位置案内（passenger.html。お客様向け）。見るだけで、合言葉なしで誰でも見られる。信号場の発車案内は出さない
         app.MapGet("/api/passenger/train", (string train, RouteEngine engine) =>
