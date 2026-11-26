@@ -503,8 +503,8 @@ public sealed class AiTrains : BackgroundService
                 // 自動運転の列車（自分の列車）は要らないので、複製しない
                 var snapshot = _players.SnapshotWithoutVirtualTrains();
                 var users = UserTrains(snapshot);
-                var inGame = snapshot.Where(p => !PlayerRegistry.IsVirtual(p.ConnectionId) && p.InGame && p.TrainNumber.Length > 0)
-                    .Select(p => RailData.NormalizeTrain(p.TrainNumber)).ToHashSet();
+                var inGame = snapshot.Where(p => !PlayerRegistry.IsVirtual(p.ConnectionId) && p.InGame && p.CountedTrainNumber.Length > 0)
+                    .Select(p => RailData.NormalizeTrain(p.CountedTrainNumber)).ToHashSet(); // 入換で動かしている人は、残した在線の列番
 
                 // 防護無線（運転士の発報・司令の区間防護）の範囲。自分のロックの外で集める
                 activeProtection.Clear();
@@ -1844,7 +1844,7 @@ public sealed class AiTrains : BackgroundService
     {
         var set = new HashSet<string>();
         foreach (var p in snapshot)
-            if (!PlayerRegistry.IsVirtual(p.ConnectionId) && p.TrainNumber.Length > 0) set.Add(RailData.NormalizeTrain(p.TrainNumber));
+            if (!PlayerRegistry.IsVirtual(p.ConnectionId) && p.CountedTrainNumber.Length > 0) set.Add(RailData.NormalizeTrain(p.CountedTrainNumber)); // 入換で動かしている人は、残した在線の列番
         foreach (var c in _relay.Conductors())
             if (c.TrainNumber.Length > 0) set.Add(RailData.NormalizeTrain(c.TrainNumber));
         var roster = _duties.Current;

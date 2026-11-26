@@ -88,6 +88,15 @@ public sealed class PlayerInfo
     /// </summary>
     public DateTime ShuntCleanupUntilUtc { get; set; }
 
+    /// <summary>
+    /// 入換で動かしている人の、残した在線の列番（<see cref="PlayerRegistry.Snapshot()"/> の複製にだけ入れる）。
+    /// ゲームの中だけで走っている間、ゲームに入れた列番は残した在線と違うことがあるので、ユーザーの列車はこの列番で数える。
+    /// </summary>
+    public string? ShuntTrain { get; set; }
+
+    /// <summary>ユーザーの列車として数える列番（入換で動かしている人は、残した在線の列番）。</summary>
+    public string CountedTrainNumber => ShuntTrain ?? TrainNumber;
+
     public PlayerInfo Clone()
     {
         var copy = (PlayerInfo)MemberwiseClone();
@@ -197,10 +206,12 @@ public sealed class PlayerRegistry(GameData data, CentralControl central)
     private List<PlayerInfo> Snapshot(bool virtualTrains)
     {
         var list = new List<PlayerInfo>();
+        var parked = ParkedShuntGhosts();
         foreach (var p in _players.Values)
         {
             PlayerInfo c;
             lock (p) c = p.Clone();
+            c.ShuntTrain = ShuntGhostIn(parked, c)?.Info.TrainNumber;
             // 連結された増結車は在線を出さない（親の列車の在線だけにする）
             // 入換で動かしている列車（ゲームの中だけで X線へ走っている）も出さない。サーバーでは X線に残した在線のまま
             if (c.CoupledInto != null || c.ShuntMove == ShuntMoveState.Moving) (c.TrackCircuits, c.Zones) = (new List<string>(), new List<int>());
@@ -224,9 +235,11 @@ public sealed class PlayerRegistry(GameData data, CentralControl central)
     public List<(string CrewId, string Train)> CrewTrains()
     {
         var list = new List<(string, string)>();
+        var parked = ParkedShuntGhosts();
         foreach (var p in _players.Values)
             lock (p)
-                if (p.CrewId.Length > 0 && p.InGame && p.TrainNumber.Length > 0) list.Add((p.CrewId, p.TrainNumber));
+                // 入換で動かしている人（残した在線がある）は、ゲームに入れた列番ではなく、残した在線（下で足す）の列番で数える
+                if (p.CrewId.Length > 0 && p.InGame && p.TrainNumber.Length > 0 && ShuntGhostIn(parked, p) == null) list.Add((p.CrewId, p.TrainNumber));
         lock (_ghosts)
         {
             ExpireGhosts();
@@ -384,13 +397,17 @@ public sealed class PlayerRegistry(GameData data, CentralControl central)
     }
 
     /// <summary>入換で動かすために、この人が残した在線（接続し直していれば、同じ乗務員の在線）。</summary>
-    private Ghost? ShuntGhostOf(PlayerInfo p)
+    private Ghost? ShuntGhostOf(PlayerInfo p) => ShuntGhostIn(ParkedShuntGhosts(), p);
+
+    /// <summary>入換で動かすために残した在線（の複製の一覧）。</summary>
+    private List<Ghost> ParkedShuntGhosts()
     {
-        lock (_ghosts)
-            return _ghosts.Values.Where(g => g.Info.ShuntMove == ShuntMoveState.Parked
-                                             && (g.Owner == p.ConnectionId || p.CrewId.Length > 0 && g.Info.CrewId == p.CrewId))
-                .OrderByDescending(g => g.Owner == p.ConnectionId).FirstOrDefault();
+        lock (_ghosts) return _ghosts.Values.Where(g => g.Info.ShuntMove == ShuntMoveState.Parked).ToList();
     }
+
+    private static Ghost? ShuntGhostIn(List<Ghost> parked, PlayerInfo p) =>
+        parked.Where(g => g.Owner == p.ConnectionId || p.CrewId.Length > 0 && g.Info.CrewId == p.CrewId)
+            .OrderByDescending(g => g.Owner == p.ConnectionId).FirstOrDefault();
 
     private static string ShuntMovingReason(ShuntSpot s) =>
         $"{s.Name}入換中: ゲームの中だけで{s.Name}まで走ります（サーバーでは{s.Name}に止まったまま。ほかの列車の在線は見ません）。"
