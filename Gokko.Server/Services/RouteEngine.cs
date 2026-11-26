@@ -3675,13 +3675,19 @@ public sealed partial class RouteEngine
             if (WaitingForRequest(other, os)) continue; // 出発要求をしないまま止まっている列車（始発・待避線）は追い越してよい
             // ダイヤ運転中: ダイヤでこちらが先に出る（通る）始発列車は待たない（江ノ原検車区から出る列車より先に、本線の列車を通す）
             if (os.IsStart && DiaMode && DiaSec(other, st.St.Id, depart: true) is { } od && DiaSec(run, st.St.Id, depart: true) is { } rd && rd < od) continue;
-            // 出発抑止中で、別の番線にいる先行列車は追い越してよい（駒野1番線で抑止中の列車を残して、2番線の列車を先に出す）
-            if ((_central.Hold(other.Train, st.St.Id) & HoldKind.Depart) != 0 && os.Track != null && os.Track != st.Track) continue;
             var otherTrack = os.Track != null && st.Track != null && os.Track != st.Track;
-            // ダイヤで追い越すことになっている・司令員が順序を決めたなら、別の番線から先に出てよい
-            if (otherTrack && MayOvertake(run, other, st)) continue;
-            // 待避駅で別の番線（自動の待避。ダイヤ運転中は、ダイヤ・司令員が決めた追い越しだけ。遅れで順番を入れ替えない）
-            if (!DiaMode && _data.PassingStations.ContainsKey(st.St.Id) && otherTrack) continue;
+            // 追い越してよいのは出発（通過）だけ。場内は、追い越すときでも先行列車が先に取る（下の「別の番線に入るだけ」の決まり）。
+            // 追い越しを理由に場内まで許すと、駅の手前を走っている先行列車より先に、共通の第1場内（駒野の上り 1RE）を取ってしまう
+            // （11/26 19:30 駒野の上り: 館浜を先に出た 1980C より先に、後ろの 1908A が 5RB→1RE と 8R を取った）
+            if (departure && otherTrack)
+            {
+                // 出発抑止中で、別の番線にいる先行列車は追い越してよい（駒野1番線で抑止中の列車を残して、2番線の列車を先に出す）
+                if ((_central.Hold(other.Train, st.St.Id) & HoldKind.Depart) != 0) continue;
+                // ダイヤで追い越すことになっている・司令員が順序を決めたなら、別の番線から先に出てよい
+                if (MayOvertake(run, other, st)) continue;
+                // 待避駅で別の番線（自動の待避。ダイヤ運転中は、ダイヤ・司令員が決めた追い越しだけ。遅れで順番を入れ替えない）
+                if (!DiaMode && _data.PassingStations.ContainsKey(st.St.Id)) continue;
+            }
             // 別の番線に入るだけならよい。ただし、前の列車がまだ場内を取っていなくて、場内の進路が重なるなら、前の列車が先
             // （続行する2本が同じ駅の別の番線に入るとき、後ろの列車が先に場内を取ると、前の列車の場内がふさがるため）
             if (!departure && os.Track != null && st.Track != null && os.Track != st.Track
