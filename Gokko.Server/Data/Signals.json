@@ -87,6 +87,9 @@
       "direction": "上り",
       "isRepeater": false,
       "next": [],
+      "protects": [
+        "TH57_13RT"
+      ],
       "routes": [
         {
           "interlock": "三郷連動装置",
@@ -98,7 +101,13 @@
       "name": "三郷上り場内12R",
       "direction": "上り",
       "isRepeater": false,
-      "next": [],
+      "next": [
+        "三郷上り出発13R"
+      ],
+      "protects": [
+        "TH57_21T",
+        "TH57_12RT"
+      ],
       "routes": [
         {
           "interlock": "三郷連動装置",
@@ -110,7 +119,13 @@
       "name": "三郷下り出発12L",
       "direction": "下り",
       "isRepeater": false,
-      "next": [],
+      "next": [
+        "下り閉塞287"
+      ],
+      "protects": [
+        "TH57_21T",
+        "AS2T"
+      ],
       "routes": [
         {
           "interlock": "三郷連動装置",
@@ -122,7 +137,12 @@
       "name": "三郷下り場内14L",
       "direction": "下り",
       "isRepeater": false,
-      "next": [],
+      "next": [
+        "三郷下り出発12L"
+      ],
+      "protects": [
+        "TH57_14LT"
+      ],
       "routes": [
         {
           "interlock": "三郷連動装置",
@@ -4718,7 +4738,9 @@
       "next": [
         "上り閉塞288"
       ],
-      "protects": []
+      "protects": [
+        "AS1T"
+      ]
     },
     {
       "name": "上り閉塞288",

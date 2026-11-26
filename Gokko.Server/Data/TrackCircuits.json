@@ -30,7 +30,8 @@
         "TH58"
       ],
       "adjacent": [
-        "AS1T"
+        "AS1T",
+        "TH57_21T"
       ]
     },
     {
@@ -1184,12 +1185,17 @@
     },
     {
       "name": "TH57_12RT",
-      "upSignals": [],
+      "upSignals": [
+        "三郷上り出発13R"
+      ],
       "downSignals": [],
       "stations": [
         "TH57"
       ],
-      "adjacent": []
+      "adjacent": [
+        "TH57_21T",
+        "TH57_13RT"
+      ]
     },
     {
       "name": "TH57_13RT",
@@ -1198,27 +1204,41 @@
       "stations": [
         "TH57"
       ],
-      "adjacent": []
+      "adjacent": [
+        "TH57_12RT"
+      ]
     },
     {
       "name": "TH57_14LT",
       "upSignals": [],
-      "downSignals": [],
+      "downSignals": [
+        "三郷下り出発12L"
+      ],
       "stations": [
         "TH57",
         "TH58"
       ],
-      "adjacent": []
+      "adjacent": [
+        "TH57_21T"
+      ]
     },
     {
       "name": "TH57_21T",
-      "upSignals": [],
-      "downSignals": [],
+      "upSignals": [
+        "三郷上り出発13R"
+      ],
+      "downSignals": [
+        "下り閉塞287"
+      ],
       "stations": [
         "TH57",
         "TH58"
       ],
-      "adjacent": []
+      "adjacent": [
+        "AS2T",
+        "TH57_12RT",
+        "TH57_14LT"
+      ]
     },
     {
       "name": "TH58_2RAT",

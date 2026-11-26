@@ -3549,21 +3549,60 @@
       "interlock": "三郷連動装置",
       "routes": [
         {
+          "from": "館浜方",
+          "to": "1番線",
+          "circuits": [
+            "TH57_21T",
+            "TH57_12RT"
+          ],
+          "approach": [
+            "AS1T",
+            "AS2T"
+          ],
+          "kind": "場内信号機",
           "name": "12R",
           "category": "上り場内",
           "signal": "三郷上り場内12R"
         },
         {
+          "from": "1番線",
+          "to": "新大路方",
+          "circuits": [
+            "TH57_13RT"
+          ],
+          "approach": [
+            "AS2T",
+            "TH57_21T",
+            "TH57_12RT"
+          ],
+          "kind": "出発信号機",
           "name": "13R",
           "category": "上り出発",
           "signal": "三郷上り出発13R"
         },
         {
+          "from": "新大路方",
+          "to": "2番線",
+          "circuits": [
+            "TH57_14LT"
+          ],
+          "approach": [],
+          "kind": "場内信号機",
           "name": "14L",
           "category": "下り場内",
           "signal": "三郷下り場内14L"
         },
         {
+          "from": "2番線",
+          "to": "館浜方",
+          "circuits": [
+            "TH57_21T",
+            "AS2T"
+          ],
+          "approach": [
+            "TH57_14LT"
+          ],
+          "kind": "出発信号機",
           "name": "12L",
           "category": "下り出発",
           "signal": "三郷下り出発12L"

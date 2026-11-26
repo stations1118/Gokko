@@ -37,13 +37,12 @@ public sealed class AiTrains : BackgroundService
     private const int MinDwellSeconds = 15;
     private const double ShuntSpeed = 25 / 3.6; // 入換の速さ
 
-    // ---- 赤山町（ゲームの線区の三郷方の端） ----
-    /// <summary>上りがここに入ったら、ExitSeconds（ロープレ時刻の秒）で消す: 9LT（三郷方の出口）・2RAT（1番線）。</summary>
-    private static readonly HashSet<string> ExitCircuits = new() { "TH58_9LT", "TH58_2RAT" };
+    // ---- 三郷（ゲームの線区の新大路方の端。上りは1番線、下りは2番線） ----
+    /// <summary>上りがここに入ったら、ExitSeconds（ロープレ時刻の秒）で消す: 13RT（1番線の先、新大路方の出口）。</summary>
+    private static readonly HashSet<string> ExitCircuits = new() { "TH57_13RT" };
     private const double ExitSeconds = 20;
-    /// <summary>赤山町を2番線で通過する下りは、通過時刻の EntryLeadSeconds 前に 3番線（9LCT）に出す。</summary>
-    private const string EntryStation = "TH58";
-    private const int EntryTrack = 3;
+    /// <summary>三郷を通過する下り（新大路方から入ってくる）は、通過時刻の EntryLeadSeconds 前に 2番線に出す。</summary>
+    private const string EntryStation = "TH57";
     private const double EntryLeadSeconds = 20;
     private static readonly TimeSpan TerminalLinger = TimeSpan.FromSeconds(60);
     /// <summary>ダイヤ運転中、継続乗務の在線がこれだけ残ったら、自動運転の列車として引き継ぐ。</summary>
@@ -516,7 +515,7 @@ public sealed class AiTrains : BackgroundService
                     {
                         if (!_trains.ContainsKey(t.Id)) continue; // この周期の中で消えた（連結した増結車）
                         // ユーザーがその列番で出てきたら、自動運転の列車は消して、ユーザーに運転してもらう（途中駅からでも）
-                        // 上りが赤山町の 9LT（三郷方の出口）か 2RAT（1番線）に入ったら、20秒で消す（その先はゲームの線区の外）
+                        // 上りが三郷の 13RT（新大路方の出口）に入ったら、20秒で消す（その先はゲームの線区の外）
                         var protectedStop = ShouldStopForProtection(t, activeProtection);
                         if (protectedStop) t.ExitUtc = null;
                         else if (t.Dir == Dir.Up && t.ExitUtc == null && t.Info.TrackCircuits.Any(ExitCircuits.Contains))
@@ -524,7 +523,7 @@ public sealed class AiTrains : BackgroundService
                         if (t.ExitUtc is { } ex && now >= ex)
                         {
                             _trains.Remove(t.Id);
-                            _log.Note($"にぎやかし: {t.Number} は赤山町から線区の外へ出たので消しました");
+                            _log.Note($"にぎやかし: {t.Number} は三郷から線区の外へ出たので消しました");
                             continue;
                         }
 
@@ -691,7 +690,7 @@ public sealed class AiTrains : BackgroundService
             var terminal = !t.Plan.Skip(t.DwellIndex + 1).Any();
             if (terminal)
             {
-                // ダイヤではまだ先へ行く（線区の外へ出ていく）: 出発の進路が開いたら出ていく（赤山町は 9LT に入って20秒で消える）。
+                // ダイヤではまだ先へ行く（線区の外へ出ていく）: 出発の進路が開いたら出ていく（三郷は 13RT に入って20秒で消える）。
                 // 進路が開かないまま発車時刻から60秒たったら消す
                 if (t.Dia.Stops.LastOrDefault()?.StationId != stopNow.StationId && t.CutStation != stopNow.StationId)
                 {
@@ -1970,10 +1969,10 @@ public sealed class AiTrains : BackgroundService
                 if (n - lateFrom > SpawnLateLimit) continue;
                 if (due > n + PendingHorizon) continue;
 
-                // 赤山町を2番線で通過する下り（三郷方から入ってくる）: 通過時刻の20秒前に 9LCT（3番線）に出す
-                var entryPass = startId == EntryStation && start.Stop != "停" && start.Track == 2 && startDir == Dir.Down;
-                var track = _central.TrackOverride(number, startId) ?? (entryPass ? EntryTrack : null);
-                pending.Add(new PendingTrain(number, startId, track ?? start.Track, track != null && !(entryPass && track == EntryTrack), due, held, n > due));
+                // 三郷を通過する下り（新大路方から入ってくる）: 通過時刻の20秒前に2番線に出す（早く出すと、通過列車がホームで長く待つ）
+                var entryPass = startId == EntryStation && start.Stop != "停" && startDir == Dir.Down;
+                var track = _central.TrackOverride(number, startId);
+                pending.Add(new PendingTrain(number, startId, track ?? start.Track, track != null, due, held, n > due));
                 if (held || due - n > (entryPass ? TimeSpan.FromSeconds(EntryLeadSeconds) : TimeSpan.FromMinutes(2))) continue;
                 todo.Add((number, start.Name, track));
             }
@@ -2307,7 +2306,7 @@ public sealed class AiTrains : BackgroundService
         public string Status { get; set; } = "";
         public string LoggedStatus { get; set; } = ""; // 状態の記録（logs/ai-*.log）に最後に書いた状態
         public bool Auto { get; init; }
-        public DateTime? ExitUtc { get; set; }    // 赤山町から線区の外へ出て消す時刻
+        public DateTime? ExitUtc { get; set; }    // 三郷から線区の外へ出て消す時刻
         public bool Shunting { get; set; }        // 入換（引上げ）中
         public double ShuntStartHead { get; set; }
         public PlanStop? ShuntStation { get; set; }
