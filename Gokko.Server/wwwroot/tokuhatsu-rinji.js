@@ -75,7 +75,7 @@ window.GokkoRinji = (() => {
   // =========================================================================================
   // 司令用管理画面の欄
   // =========================================================================================
-  function panel({ el, api, act, onMessage }) {
+  function panel({ el, api, act, onMessage, help = true }) {
     let data = { candidates: [], list: [], types: [], stations: [] };
     const form = { train: "", station: "", type: "普通", number: "", numberTouched: false, dest: "", dep: "", linkTurn: true };
     let plan = null; // スジの案（表で直す）
@@ -93,10 +93,10 @@ window.GokkoRinji = (() => {
         <button data-draft class="primary">時刻を引く</button>
       </div>
       <div data-plan></div>
-      <div class="muted" style="margin-top:6px">走っている列車から、止まっている駅か、これから通る駅を発駅にして立てます。時刻は標準運転時分から引いた案です（表で直せます）。途中駅・終点の番線は空けておくと、自動進路構成が決めます。
+      ${help ? `<div class="muted" style="margin-top:6px">走っている列車から、止まっている駅か、これから通る駅を発駅にして立てます。時刻は標準運転時分から引いた案です（表で直せます）。途中駅・終点の番線は空けておくと、自動進路構成が決めます。
         立てると、元の列車は発駅で打ち切りになり、元の列車の後運用は時刻表どおりに残ります（「元の列車の後運用につなぐ」を選ぶと、特発臨の終点からつなぎます）。
         自動運転の列車は、発駅に着いて止まったら特発臨の列番に変わって走ります（番線は着いた番線）。ユーザーの列車は、タブレットに特発臨が出るので、運転士に列番を入れ直してもらってください。
-        ダイヤグラムの◆の窓で「打ち切り」を選んでも、その駅から立てられます。ロープレ時刻を設定するか、サーバーを再起動すると消えます。</div>`;
+        ダイヤグラムの◆の窓で「打ち切り」を選んでも、その駅から立てられます。ロープレ時刻を設定するか、サーバーを再起動すると消えます。</div>` : ""}`;
     const $ = (sel) => el.querySelector(sel);
     const f = (k) => el.querySelector(`[data-f="${k}"]`);
     const cand = () => data.candidates.find((c) => c.train === form.train);

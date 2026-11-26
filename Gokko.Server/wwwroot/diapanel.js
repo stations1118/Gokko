@@ -1590,21 +1590,21 @@
   // 自動運転列車（にぎやかし。サーバーだけで走る列車）: アリ/ナシの切り替え・手で出す・一覧（管理画面と司令用管理画面で共通）。
   // showSpeed: 走っている速さを出すか（管理画面だけ）。api(method, path, body) はその画面の API（/api/admin か /api/dia）を呼ぶ
   let aiPanelSeq = 0;
-  function aiTrainPanel({ el, api, showSpeed = false }) {
+  function aiTrainPanel({ el, api, showSpeed = false, help = true }) {
     const name = "aiMode" + (++aiPanelSeq);
     el.innerHTML = `<h2>自動運転列車（にぎやかし）</h2>
-      <p class="muted">サーバーだけで走る列車です。進路・信号・TID（札の右上に *）・ほかの列車の信号に、ふつうの列車として出ます（ゲームの画面には映りません）。ロープレ時刻が動いている間だけ走ります。</p>
+      ${help ? `<p class="muted">サーバーだけで走る列車です。進路・信号・TID（札の右上に *）・ほかの列車の信号に、ふつうの列車として出ます（ゲームの画面には映りません）。ロープレ時刻が動いている間だけ走ります。</p>` : ""}
       <div class="row"><b>自動運転列車</b>
         <label><input type="radio" name="${name}" value="on"> アリ</label>
         <label><input type="radio" name="${name}" value="off"> ナシ</label>
-        <span class="muted">アリにすると、ダイヤの列車を時刻に合わせて出します。出勤した行路の列車・入力された列番は出しません。ユーザーがその列番で出てきたら、自動運転の列車は消えます。</span>
+        ${help ? `<span class="muted">アリにすると、ダイヤの列車を時刻に合わせて出します。出勤した行路の列車・入力された列番は出しません。ユーザーがその列番で出てきたら、自動運転の列車は消えます。</span>` : ""}
       </div>
       <div class="row"><b>試運転</b>
         <span data-ai="trialNone"></span>
-        <span class="muted">所定の臨時列車です。普段は「なし」（1本も出しません）。走らせる運行番号に印を付けると（いくつでも）、その試運転を、自動運転列車アリのときに時刻に合わせて出します。再起動すると「なし」に戻ります。</span>
+        ${help ? `<span class="muted">所定の臨時列車です。普段は「なし」（1本も出しません）。走らせる運行番号に印を付けると（いくつでも）、その試運転を、自動運転列車アリのときに時刻に合わせて出します。再起動すると「なし」に戻ります。</span>` : ""}
       </div>
       <div data-ai="trial" style="margin:0 0 8px 1.5em"></div>
-      <p class="muted">ダイヤ運転中に運転画面を出た列車（継続乗務の在線）は、3分たつと、その場所から自動運転の列車が引き継いで走ります（両数は運行ごとの両数）。自動運転列車アリのときは、継続乗務の在線を消したときも引き継ぎます。</p>
+      ${help ? `<p class="muted">ダイヤ運転中に運転画面を出た列車（継続乗務の在線）は、3分たつと、その場所から自動運転の列車が引き継いで走ります（両数は運行ごとの両数）。自動運転列車アリのときは、継続乗務の在線を消したときも引き継ぎます。</p>` : ""}
       <h3 style="margin:12px 0 4px">手で出す</h3>
       <div class="row">
         <input data-ai="train" placeholder="列番（例: 1651）" size="12" title="打つと、下の一覧をその列番で絞り込みます">
