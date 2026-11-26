@@ -356,6 +356,14 @@ public sealed partial class RouteEngine
     {
         if (!DiaMode || run.Dia == null || st.ArrivePath.Count == 0) return null;
         if (DiaSec(run, st.St.Id, depart: false) is not { } mine) return null;
+        // 単線区間をこちらへ向かっている列車（区間にいる・手前の駅で区間へ出る出発をもう開けた）は待たせない。
+        // 始発列車はその区間へ出られない（対向列車を待つ）ので、待たせると互いに待って詰まる
+        // （三郷: 赤山町を出た上りが、三郷始発の下りの発車待ちで場内に入れず、下りは単線区間の上りを待っていた）
+        if (run.Stations.TakeWhile(s => s != st).LastOrDefault() is { } prev && _data.IsSingleTrack(prev.St.Id, st.St.Id))
+        {
+            var (lo, hi) = (Math.Min(prev.Zone, st.Zone), Math.Max(prev.Zone, st.Zone));
+            if (prev.Depart == GroupState.Requested || prev.Done || run.Player.Zones.Any(z => z > lo && z < hi)) return null;
+        }
         var path = Circuits(st.ArrivePath).ToHashSet();
         foreach (var other in _runs.Values.Where(o => o != run && o.Dia != null && o.HasPosition))
         {
@@ -3403,6 +3411,18 @@ public sealed partial class RouteEngine
         // ---- 相手の駅の番線: 自分が入る番線を対向列車がふさいでいる・ふさぎに来るなら待つ（走行順で先でも） ----
         // 対向列車は、この区間を通らないとその番線から出られない。入っていくと、お互いに動けなくなる
         if (NextTrackBlocker(run, next) is { } blocker) return blocker.Why;
+
+        // ---- 出現前の自動運転列車: 相手の駅にこれから出す対向列車が、ダイヤでこの列車より先に区間に入るなら待つ ----
+        // 出す前は走っていないので走行順に入らない。先に区間へ出ると、出てきた列車が相手の駅で対向列車を待つことになる
+        // （三郷始発の下りが、赤山町で早めに出発を開けた上りを三郷で5分待った）。走行順を手で決めていれば、そちらに従う。
+        // 抑止中・時刻を過ぎても出せていない列車は待たない（出てこないかもしれない）
+        if (DiaMode && _central.SectionOrder(st.St.Id, next) == null && DiaDaySec(run, st.St.Id, depart: true) is { } myDep)
+            foreach (var p in PendingTrains())
+            {
+                if (p.Station != next || p.Held || p.Late || TrainInfo(p.Number) is not { } pi || pi.Dir == run.Dir) continue;
+                var due = p.Due.TotalSeconds < 4 * 3600 ? p.Due.TotalSeconds + 86400 : p.Due.TotalSeconds;
+                if (due < myDep) return $"出現前の対向列車（{p.Number}）が{nextName}から先";
+            }
 
         // ---- 走行順（集中扱い）: 区間ごとに決めた順で流す ----
         // ダイヤ運転中（手で決めていなければ）は、いまサーバー上で走っているダイヤの列車だけで、区間に入るダイヤの時刻の順に並べる。
