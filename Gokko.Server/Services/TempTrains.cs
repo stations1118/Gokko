@@ -567,8 +567,9 @@ public sealed class TempTrains
             if (t.Unyo.Length == 0) errors.Add($"{n}: 運行番号を入れてください（24・24S など）");
             if (!types.Contains(t.Type)) { errors.Add($"{n}: 種別を選んでください"); continue; }
             if (NumberTypeError(t) is { } te) errors.Add(te);
-            // 増結車（連結）と構内入換（前の列車の終点のあと「入換」の後運用で、その駅の1駅だけ）は、1駅だけでよい
-            var yard = IsYardShunt(t, trains);
+            // 増結車（連結）と構内入換（前の列車の終点のあと「入換」の後運用で、その駅の1駅だけ）は、1駅だけでよい。
+            // 切り離した車両（解＋元の列番）も、切り離した駅で後運用の列車になるなら1駅だけでよい（前運用の「切り離し」で作る）
+            var yard = IsYardShunt(t, trains) || n.StartsWith("解") && t.TurnHow is "発" or "入換" or "種別変更" && t.TurnNext.Length > 0;
             if (t.Stops.Count < (t.TurnHow == "連結" || yard ? 1 : 2))
             {
                 errors.Add(t.Stops.Count == 1
