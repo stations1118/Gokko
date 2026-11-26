@@ -1863,8 +1863,7 @@
             "TH65_45T",
             "TH65_47T",
             "TH65_48T",
-            "TH65_ET",
-            "TH65_50ロT"
+            "TH65_ET"
           ],
           "approach": [
             "TH65_3RT"
@@ -1921,8 +1920,7 @@
             "TH65_45T",
             "TH65_47T",
             "TH65_48T",
-            "TH65_ET",
-            "TH65_50ロT"
+            "TH65_ET"
           ],
           "approach": [
             "TH65_11LT"
@@ -1979,8 +1977,7 @@
           "circuits": [
             "TH65_44T",
             "TH65_48T",
-            "TH65_ET",
-            "TH65_50ロT"
+            "TH65_ET"
           ],
           "approach": [
             "TH65_12LT"
@@ -2155,8 +2152,7 @@
           "to": "ET",
           "circuits": [
             "TH65_50ロT",
-            "TH65_ET",
-            "TH65_48T"
+            "TH65_ET"
           ],
           "approach": [
             "TH65_YT"
@@ -2509,8 +2505,7 @@
           "circuits": [
             "TH65_44T",
             "TH65_48T",
-            "TH65_ET",
-            "TH65_50ロT"
+            "TH65_ET"
           ],
           "approach": [
             "TH65_5T"
@@ -2527,8 +2522,7 @@
           "circuits": [
             "TH65_44T",
             "TH65_48T",
-            "TH65_ET",
-            "TH65_50ロT"
+            "TH65_ET"
           ],
           "approach": [
             "TH65_6T"

@@ -913,7 +913,7 @@ public sealed partial class RouteEngine
             foreach (var p in snapshot)
             {
                 // 入換で動かしている列車（ゲームの中だけで X線へ走っている）: サーバーの列車にしない。
-                // この人のゲームにだけ、走るのに要る進路（藤江13L・大道寺13LD）を送る（BuildOutputs）
+                // この人のゲームにだけ、走るのに要る進路（藤江13L、E線は大道寺32LE）を送る（BuildOutputs）
                 if (p.ShuntMove == ShuntMoveState.Moving && PlayerRegistry.ShuntSpotOf(p.ShuntSpot) is { } shuntSpot)
                 {
                     if (_runs.Remove(p.ConnectionId, out var was)) RunLog(now, was, "扱いを外しました（入換で、ゲームの中だけで動かす）");
@@ -3215,8 +3215,7 @@ public sealed partial class RouteEngine
             && c.Contains(platform) && FullyInTrack(owner, r.Station, c))
             return [platform];
 
-        // 行き先が軌道回路の進路（大道寺の 22RE〜26RE・32LE は「ET」）も同じ。行き先の回路に入りきっていれば、その回路だけ。
-        // 22RE などは ET の先の 50ロT が、32LE は ET の先の 48T が後ろに並ぶ。E線で停まっている列車が、Y線への入換や 4番線の発着をふさがないように
+        // 行き先が軌道回路の進路（大道寺の 22RX・30R など）も同じ。行き先の回路に入りきっていれば、その回路だけ。
         if (DestCircuitOf(r.Def) is { } dest && owner.Player.TrackCircuits.Contains(dest)
             && c.Where(x => x != dest).All(x => !owner.Player.TrackCircuits.Contains(x)))
             return [dest];
@@ -3634,7 +3633,7 @@ public sealed partial class RouteEngine
             // 列車がもう入っている進路は消さない
             var wanted = run.Requests.Where(r => !r.Released).Select(r => (r.Def.Interlock, r.Def.Name)).ToHashSet();
 
-            // 入換で動かしたあと、残した在線につなぎ直した列車: ゲームの中だけで走るのに使った進路（大道寺13LD など）が残っていれば消す。
+            // 入換で動かしたあと、残した在線につなぎ直した列車: ゲームの中だけで走るのに使った進路（藤江13L・大道寺32LE）が残っていれば消す。
             // 列車が入っている進路なので、下の「残っていた進路」では消えない。残すと、そこから出る入換の進路が競合で開通しない
             if (run.Player.ShuntCleanupUntilUtc > now && PlayerRegistry.ShuntSpotOf(run.Player.ShuntSpot) is { } cleanup)
                 foreach (var k in cleanup.Routes.Where(k => run.Player.GameRoutes.Contains(k) && !wanted.Contains(k)))

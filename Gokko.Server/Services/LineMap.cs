@@ -18,6 +18,9 @@ public sealed class LineMap
 
     private readonly HashSet<string> _passengerCircuits = new(StringComparer.Ordinal);
 
+    /// <summary>単線区間に関係ない側線（大道寺の E線・Y線）の回路 → その駅のゾーン。</summary>
+    private readonly Dictionary<string, int> _sidingZone = new(StringComparer.Ordinal);
+
     internal static readonly JsonDocumentOptions JsonOptions = new()
     {
         AllowTrailingCommas = true,
@@ -80,17 +83,40 @@ public sealed class LineMap
             }
         }
 
+        if (root.TryGetProperty("sidings", out var sidings))
+        {
+            foreach (var item in sidings.EnumerateArray())
+            {
+                var circuit = Str(item).Trim();
+                if (!map._circuitZone.TryGetValue(circuit, out var zone) || zone % 2 != 0)
+                    throw new InvalidDataException($"sidings の回路「{circuit}」は、yards（駅構内）にありません");
+                map._sidingZone[circuit] = zone;
+            }
+        }
+
         // unassigned（割り当てなしの回路）は、位置の判定には使わないので読み込まない。
         return map;
     }
 
-    /// <summary>踏んでいる軌道回路が属するゾーン（駅間または駅構内）。データにない回路は無視する。</summary>
+    /// <summary>
+    /// 踏んでいる軌道回路が属するゾーン（駅間または駅構内）。データにない回路は無視する。
+    /// 側線（sidings。大道寺の E線・Y線）に少しでもいる列車は、その駅の回路（駅ID で始まる回路）が駅間に入っていても駅構内にいるものとする
+    /// （E線に入りきらない列車が分岐の 48T にかかっていても、単線区間にいることにしない）。
+    /// </summary>
     public List<int> ZonesOf(IEnumerable<string> circuits)
     {
+        var list = circuits as IReadOnlyCollection<string> ?? circuits.ToList();
+        var sidingStations = new List<int>();
+        foreach (var circuit in list)
+            if (_sidingZone.TryGetValue(circuit, out var sz) && !sidingStations.Contains(sz)) sidingStations.Add(sz);
         var zones = new SortedSet<int>();
-        foreach (var circuit in circuits)
+        foreach (var circuit in list)
         {
-            if (_circuitZone.TryGetValue(circuit, out var zone)) zones.Add(zone);
+            if (!_circuitZone.TryGetValue(circuit, out var zone)) continue;
+            if (zone % 2 != 0)
+                foreach (var s in sidingStations)
+                    if (Math.Abs(s - zone) == 1 && circuit.StartsWith(_chain[s / 2] + "_", StringComparison.Ordinal)) { zone = s; break; }
+            zones.Add(zone);
         }
 
         return zones.ToList();
