@@ -3125,6 +3125,7 @@
     },
     {
       "number": "1653", "type": "普通", "label": "普通", "dest": "大道寺", "unyo": 52,
+      "turn": { "kind": "折返", "number": "2152", "time": "21:32", "how": "入換", "via": "5番線", "out": "Y線", "after": "2023A", "text": "2152 21:32入換 普通 大路行（X線から5番線に留置。2023A のあと Y線から1番線へ）" },
       "stops": [
         { "st": "TH46", "name": "新大路", "stop": "停", "arr": null, "dep": "16:53:40", "track": 4 },
         { "st": "TH47", "name": "桜坂", "stop": "停", "arr": null, "dep": "16:55:20", "track": null },
@@ -5128,6 +5129,7 @@
     },
     {
       "number": "2051", "type": "普通", "label": "普通", "dest": "大道寺", "unyo": 50,
+      "turn": { "kind": "折返", "number": "2250", "time": "22:08", "how": "入換", "via": "5番線", "out": "X線", "after": "2121A", "text": "2250 22:08入換 普通 大路行（X線から5番線に留置。2121A のあと X線から2番線へ）" },
       "stops": [
         { "st": "TH45", "name": "大路", "stop": "停", "arr": null, "dep": "20:29:00", "track": 2 },
         { "st": "TH46", "name": "新大路", "stop": "停", "arr": "20:30:40", "dep": "20:31:10", "track": 3 },

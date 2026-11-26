@@ -669,6 +669,12 @@ public sealed class AiTrains : BackgroundService
             UpdateInfo(t);
             return;
         }
+        // 留置線から番線への入換で、途中の線（大道寺の X線・Y線）まで来た: 向きを変える
+        if (!t.Dwelling && t.FromShunt && t.ShuntMoved && t.Speed == 0 && t.PlanIndex == 0 && next != null && MidShuntReverse(t, next))
+        {
+            UpdateInfo(t);
+            return;
+        }
 
         // 止まっている（駅で）
         if (t.Dwelling)
@@ -894,6 +900,33 @@ public sealed class AiTrains : BackgroundService
     {
         var here = t.ShuntStation ?? t.Plan[t.DwellIndex];
         var turn = _rail.Turns.TurnOf(t.Dia);
+
+        // 留置線へ入れる引上げ（大道寺 3番線 → X線 → 5番線）: 引き上げた線では列番を変えず、向きを変えて留置線への進路を待つ。
+        // 留置線に入って止まったら（もう一度ここに来る）、そこで列番を変える。
+        // 引き上げた線・留置線のほかで止まったとき（番線の中で、引上げの進路が開く前に止まった）は、何もしない（進路を待つ）
+        if (!inPlace && turn?.Via is { } via && _rail.Stations.TryGetValue(here.StationId, out var sst)
+            && sst.Routes[t.Dir].ShuntOuts.FirstOrDefault(o => o.Label == via && o.ThenRoutes.Count > 0) is { } stable)
+        {
+            var at = t.Path.SelectMany(s => s.Circuits).LastOrDefault(c => c.Start < t.Head)?.Name;
+            var mid = stable.Routes.LastOrDefault()?.Circuits.LastOrDefault();
+            var dest = stable.ThenRoutes.LastOrDefault()?.Circuits.LastOrDefault();
+            if (at != (t.StableTurned ? dest : mid))
+            {
+                t.Status = t.StableTurned ? $"{here.Name} {via}への入換中" : $"{here.Name} で入換（引上げ）の進路待ち";
+                return;
+            }
+            if (!t.StableTurned)
+            {
+                Reverse(t);
+                t.StableTurned = true;
+                t.ShuntStartHead = t.Head;
+                t.Status = $"{here.Name} の引上げた線で向きを変えました。{via}への入換待ち";
+                _log.Note($"にぎやかし: {t.Number} は {here.Name} の引上げた線で向きを変えました（{via}へ）");
+                return;
+            }
+        }
+        var stabled = t.StableTurned;
+        t.StableTurned = false;
         t.Shunting = false;
         if (turn?.Number is not { Length: > 0 } number || _rail.DiaOf(number) is not { } nd || _routes.DirOfTrain(number) is not { } dir)
         {
@@ -922,21 +955,19 @@ public sealed class AiTrains : BackgroundService
         }
 
         // 今いる軌道回路（引上線）から、反対向きに道筋を作り直す
-        var circuit = t.Path.SelectMany(s => s.Circuits).LastOrDefault(c => c.Start < t.Head)?.Name ?? t.Info.TrackCircuits.LastOrDefault() ?? "";
-        var len = Math.Max(LengthOf(circuit), t.Length + 10);
-        t.Path.Clear();
-        t.Path.Add(new Seg(null, null, 0, len, [new SegCircuit(circuit, 0, len)]));
-        t.Head = len;
-        t.StartHead = t.Head;
-        t.Speed = 0;
+        t.ShuntOrigin = Reverse(t);
+        t.MidTurned = false;
         t.PlanIndex = 0;
         t.Dwelling = false;
-        t.Blocked = true;
-        t.EndSignal = null;
         t.Info.TrainNumber = number;
-        t.Info.GameRoutes.Clear();
         t.Info.Stops = t.Plan.Select(p => new StopInfo { Name = p.Name, StopType = p.Stops ? "StopForPassenger" : "Passing" }).ToList();
         t.Info.LastCenter = null;
+        if (stabled)
+        {
+            t.Status = $"{here.Name} の留置線に入りました（{old} → {number}）。番線への入換待ち";
+            _log.Note($"にぎやかし: {old} は {here.Name} の留置線に入って {number} になりました");
+            return;
+        }
         if (inPlace)
         {
             t.Status = $"{here.Name} {here.Track}番線で列番変更（{old} → {number}）。入換待ち";
@@ -945,6 +976,41 @@ public sealed class AiTrains : BackgroundService
         }
         t.Status = $"引上線で折り返し（{old} → {number}）。番線への入換待ち";
         _log.Note($"にぎやかし: {old} は {here.Name} の引上線で折り返して {number} になりました");
+    }
+
+    /// <summary>今いる軌道回路から、反対向きに道筋を作り直す（列番・停車駅はそのまま）。その軌道回路を返す。</summary>
+    private string Reverse(Train t)
+    {
+        var circuit = t.Path.SelectMany(s => s.Circuits).LastOrDefault(c => c.Start < t.Head)?.Name ?? t.Info.TrackCircuits.LastOrDefault() ?? "";
+        var len = Math.Max(LengthOf(circuit), t.Length + 10);
+        t.Path.Clear();
+        t.Path.Add(new Seg(null, null, 0, len, [new SegCircuit(circuit, 0, len)]));
+        t.Head = len;
+        t.StartHead = t.Head;
+        t.Speed = 0;
+        t.Blocked = true;
+        t.EndSignal = null;
+        t.Info.GameRoutes.Clear();
+        t.Info.LastCenter = null;
+        return circuit;
+    }
+
+    /// <summary>
+    /// 留置線から番線への入換の途中（大道寺 5番線 → X線 → 2番線 の X線）で止まったら、向きを変える。
+    /// 番線への2つ目の進路は、自動進路構成が開ける（開いたら、その進路で番線に入る）。
+    /// </summary>
+    private bool MidShuntReverse(Train t, PlanStop p)
+    {
+        if (t.MidTurned || t.ShuntOrigin is not { } origin || t.PathEnd - t.Head > SignalMargin + 3) return false;
+        if (!_rail.Stations.TryGetValue(p.StationId, out var st)) return false;
+        var here = t.Path.SelectMany(s => s.Circuits).LastOrDefault(c => c.Start < t.Head)?.Name;
+        if (here == null || !st.Routes[t.Dir].Shunts.Any(s => s.ThenRoutes.Count > 0 && s.FromCircuit == origin && s.Routes.LastOrDefault()?.Circuits.LastOrDefault() == here))
+            return false;
+        Reverse(t);
+        t.MidTurned = true;
+        t.ShuntMoved = false;
+        t.Status = $"{st.Name} の入換の途中で向きを変えました。番線への入換待ち";
+        return true;
     }
 
     /// <summary>
@@ -2201,6 +2267,9 @@ public sealed class AiTrains : BackgroundService
         public PlanStop? ShuntStation { get; set; }
         public bool ShuntMoved { get; set; }      // 引上線から番線へ、道筋が延びた
         public bool FromShunt { get; set; }       // 引上線から折り返した（ホームへの入換を待つ。発車時刻まで止まらずに番線へ入る）
+        public bool StableTurned { get; set; }    // 留置線へ入れる引上げで、引き上げた線（大道寺の X線）で向きを変えた（次に止まった所で列番を変える）
+        public string? ShuntOrigin { get; set; }  // 列番を変えた（入換を始める）軌道回路（大道寺の 5番線 TH65_5T）
+        public bool MidTurned { get; set; }       // 留置線から番線への入換で、途中の線（X線・Y線）で向きを変えた
         public bool MidLine { get; set; }         // 駅間など、番線でない所から走り出した（継続乗務の在線を引き継いだ）。最初の駅で発車待ちにしない
         public long EventVersion { get; set; } = -1; // 停車・通過の一覧に入れた催物用臨停設定の版（EventStops.Version）
         public string? CutStation { get; set; }   // 打ち切り（列車別設定・途中折返し）の駅。そこを終着にしている
