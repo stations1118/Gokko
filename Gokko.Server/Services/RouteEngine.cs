@@ -488,6 +488,18 @@ public sealed partial class RouteEngine
     /// 進路を取り始める位置（ApproachTrigger）をまだ過ぎていなければ、場内を要求しない（通過列車は出発も、場内を待つので一緒に待つ）。
     /// 現示が変わるところを運転士に見せない、いちばん遅い位置で取る。
     /// </summary>
+    /// <summary>特発臨（列番, 駅ID → その駅で特発臨の列番に変わるのを待っているか）。Program.cs で TokuhatsuRinji につなぐ。</summary>
+    public Func<string, string, bool>? RinjiPendingAt { get; set; }
+
+    /// <summary>
+    /// その駅で、次の列番に変わるのを待っている（途中折返しで打ち切った駅・特発臨の発駅）。
+    /// 待っている間は、引上げの入換などを自動で開けない。
+    /// </summary>
+    private bool WaitsRenumberAt(TrainRun run, StationRun st) =>
+        run.Dia != null && _data.Turns.DirectOf(run.Dia.Number) is { Midway: true } mw && mw.Station == st.St.Id
+        || RinjiPendingAt?.Invoke(run.Train, st.St.Id) == true
+        || run.GameTrain.Length > 0 && RinjiPendingAt?.Invoke(run.GameTrain, st.St.Id) == true;
+
     private string? ApproachHold(TrainRun run, StationRun st) =>
         ApproachOf(run, st) is { } a && !PassedApproach(run, st, a) ? $"取り始め待ち（{string.Join("・", a.Triggers)} を過ぎたら）" : null;
 
@@ -1808,9 +1820,15 @@ public sealed partial class RouteEngine
                 // 引上げは、スタフの折返が「入換」のときだけ（「発」なら、その番線から次の列番でそのまま出る）
                 // 始発でも、その番線の回路にいるときだけ（つなぎ直しなどで列車を作り直したとき、もう引上線にいるのに、引上げの進路を取り直さないように）
                 // 増結車（折返が「併結」）は、番線で連結を待つので引き上げない
+                // 途中の駅で打ち切って、そこで次の列番（途中折返し・特発臨）に変わるのを待っている列車は引き上げない
+                // （終点の後運用が「入換」でも、この駅で入換の進路を開けると、列番の差し替えを待つ間に別の信号機が開いてしまう）
                 if (st.ShuntOutChoice == null && ShuntOutOptions(run, st).Count > 0 && FullyInTrack(run, st)
-                    && _data.Turns.TurnOf(run.Dia) is not ({ Kind: "折返", How: not "入換" } or { Kind: "併結" }) && !run.Train.StartsWith("連"))
+                    && _data.Turns.TurnOf(run.Dia) is not ({ Kind: "折返", How: not "入換" } or { Kind: "併結" }) && !run.Train.StartsWith("連")
+                    && !WaitsRenumberAt(run, st))
                     st.ShuntOutChoice = DefaultShuntOut(run, st);
+                // 引上げを選んだあとで、この駅で次の列番に変わることになった（特発臨を立てた・途中折返しにした）: まだ要求していなければやめる
+                else if (st.ShuntOutChoice != null && st.ShuntOut != GroupState.Requested && WaitsRenumberAt(run, st))
+                    (st.ShuntOutChoice, st.ShuntOut, st.ShuntOutWait) = (null, GroupState.None, "");
             }
             ApplyHold(run, st, now);
 
@@ -4804,6 +4822,16 @@ public sealed partial class RouteEngine
         var ordered = items.Select(x => (x, Arr: ParseDiaTime(DutySpan(x).Arr), Dep: ParseDiaTime(DutySpan(x).Dep)))
             .OrderBy(t => t.Dep ?? double.MaxValue).ToList();
         return (ordered.FirstOrDefault(t => t.Arr is { } a && a >= now).x ?? ordered[^1].x).Train;
+    }
+
+    /// <summary>
+    /// 走っている列車の、時刻表の列番。同じ列番が2本走ってサーバーでは 1985CX と呼んでいる列車は、時刻表の 1985C を返す。
+    /// 走っていない・時刻表にない列車は、受け取った列番のまま。
+    /// </summary>
+    public string DiaNumberOf(string train)
+    {
+        var key = RailData.NormalizeTrain(train);
+        lock (_lock) return RunByTrain(key)?.Dia?.Number ?? key;
     }
 
     /// <summary>その列車が今走っているか（勤怠管理の画面用）。</summary>
