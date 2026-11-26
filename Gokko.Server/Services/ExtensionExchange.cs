@@ -444,12 +444,6 @@ public sealed class ExtensionExchange(
         }
     }
 
-    /// <summary>電話機が消えた（PC の接続が切れた・盤を閉じた）ときに、通話を片づける。</summary>
-    public void Tidy()
-    {
-        lock (_gate) Snapshot();
-    }
-
     // ---- 音声 ----
 
     /// <summary>音声の宛先（接続ID）。送ってよくない音声なら空。</summary>

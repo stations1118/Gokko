@@ -177,9 +177,6 @@ public sealed class DriverInput
     /// <summary>運転士のゲームで、全部のドアが閉まっているか。</summary>
     public bool AllClose { get; set; }
 
-    /// <summary>警笛（空笛）を鳴らしているか。</summary>
-    public bool Horn { get; set; }
-
     /// <summary>運転士がブザーを押しているか（ブザーのキーを押している間。車掌のゲームでも、押している間だけ鳴らす）。</summary>
     public bool Buzzer { get; set; }
 

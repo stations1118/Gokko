@@ -416,7 +416,7 @@ public sealed class AiTrains : BackgroundService
     // サーバーからの「配信」（プレイヤーのクライアントが受け取るものと同じ）
     // =========================================================================================
 
-    public void Receive(string id, ClientState state)
+    public void Receive(string id, ClientState state, string? planDetail)
     {
         lock (_lock)
         {
@@ -439,7 +439,7 @@ public sealed class AiTrains : BackgroundService
             t.CanRequestDeparture = state.CanRequestDeparture;
             t.RouteMessage = state.RouteMessage;
             // この先の駅の状態（進路待ちの理由など。プレイヤーには出さない詳しい状態）。止まっているときの理由に出す
-            t.PlanDetail = state.Plan.Where(x => !string.IsNullOrEmpty(x.Detail)).Select(x => $"{x.Name}: {x.Detail}").FirstOrDefault();
+            t.PlanDetail = planDetail;
         }
     }
 
