@@ -39,10 +39,11 @@
   .stack { display: grid; align-content: start; min-width: 0; }
   @media (max-width: 760px) { .grid { grid-template-columns: minmax(0, 1fr) !important; } }
   /* 列車を表示している間は、画面の高さに収める: 上の帯・次の駅・下の行はいつも見え、時刻表の白い部分だけがスクロールする */
-  /* 幅の狭い窓（クライアントの最前面の窓など）でも同じ。1列のときは、行路の欄を下に低く出す */
+  /* 幅の狭い窓（クライアントの最前面の窓など。時刻表だけを見たくて狭めることが多い）: 時刻表の段を画面いっぱいに出し、
+     行路の欄はその下に置く（画面全体をスクロールすると出てくる） */
   @media (max-width: 760px) {
-    body.fit #app > .grid { grid-template-rows: minmax(0, 1fr) auto; }
-    body.fit #app > .grid > .stack:not(:has(> .staff)) { max-height: 18vh; }
+    body.fit #app > .grid { grid-template-rows: 100% auto; overflow-y: auto; }
+    body.fit #app > .grid > .stack:not(:has(> .staff)) { overflow: visible; min-height: max-content; } /* 行路の欄は中身の高さのまま（画面全体でスクロール） */
   }
   @media all {
     body.fit { height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
@@ -768,6 +769,8 @@
     // 描き直しても、時刻表のスクロールの位置は残す（初めて出すときは、次の駅が見える所まで送る）
     const oldScroll = document.querySelector(".staff-scroll");
     const keepTop = oldScroll ? oldScroll.scrollTop : null;
+    const oldGrid = document.querySelector("#app > .grid"); // 幅の狭い窓では、画面全体（行路の欄まで）のスクロールも残す
+    const keepGrid = oldGrid ? oldGrid.scrollTop : 0;
     document.body.classList.toggle("fit", !!data);
     document.getElementById("app").innerHTML = data ? flash() + rinjiNotice() + render(layout)
       : `<div class="pick">${flash()}<div class="pane err">${esc(error)}</div>
@@ -775,6 +778,8 @@
             <div class="t-muted">出勤すると、空いている行路が自動で割り当てられます。好きな行路を選ぶときは<a href="shukkinbo.html" style="color:var(--muted)">出勤簿</a>から選んで出勤してください。乗る列車が決まっているときは、「列車を選ぶ」から列番を入れて開いてください。</div></div>` : ""}
           <div class="pane"><div class="row" style="gap:4px 14px">${user ? `<span>ログイン: ${who()}（<a href="#" data-leave="1" style="color:var(--muted)">退勤</a>）（<a href="#" data-logout="1" style="color:var(--muted)">ログアウト</a>）</span>` : ""}<span><a href="tablet.html?pick=1" style="color:var(--muted)">列車を選ぶ</a></span>${dispatchLinks()}</div></div></div>`;
     restoreStaffScroll(keepTop);
+    const newGrid = document.querySelector("#app > .grid");
+    if (newGrid && keepGrid) newGrid.scrollTop = keepGrid;
   }
 
   // 時刻表のスクロール: 描き直す前の位置に戻す。初めて出したときと、次の駅が変わったときは、次の駅の行を上から1/3ほどの所へ送る
