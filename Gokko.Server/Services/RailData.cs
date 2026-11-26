@@ -740,6 +740,8 @@ public sealed class RailData
         }
 
         ComputeStopProtects(data);
+        // 待避・連絡・交換の記事を作るための所定の分を、裏で前もって作っておく（臨時停車・臨時列車を入れたときに軽く済むように）
+        _ = Task.Run(() => DiaNotes.Prepare(data._baseDia));
         return data;
     }
 
