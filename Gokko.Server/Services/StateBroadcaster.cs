@@ -257,6 +257,7 @@ public sealed class StateBroadcaster : BackgroundService
                 {
                     state.ShuntButtonLabel = shunt.Label;
                     state.ShuntButtonEnabled = shunt.Enabled;
+                    state.ShuntCancelVisible = shunt.CanCancel;
                     if (_players.ShuntMessageOf(p.ConnectionId) is { } shuntMessage) state.RouteMessage = shuntMessage;
                 }
             }

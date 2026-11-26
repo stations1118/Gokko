@@ -32,6 +32,9 @@ public static class Protocol
     /// <summary>入換で動かすボタン（X線入換・X線停車中。在線共有モード）。戻り値 string（結果のお知らせ）。</summary>
     public const string ShuntMove = "ShuntMove";
 
+    /// <summary>入換で動かすのを取り消す（取消ボタン）。戻り値 string（結果のお知らせ）。</summary>
+    public const string ShuntCancel = "ShuntCancel";
+
     /// <summary>TRAIN CREW の SetRoute の結果を知らせる（在線共有モード）。引数 string（"連動装置_進路 is OK" など）。</summary>
     public const string RouteResult = "RouteResult";
 
