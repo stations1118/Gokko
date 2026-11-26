@@ -525,16 +525,7 @@ public sealed class TempTrains
         _rail.BaseDia.Values.FirstOrDefault(d => d.Turn is { Kind: "折返", Number: { } tn } && tn == number || d.Next?.Number == number)?.Number;
 
     /// <summary>所定の列車を写して、「終点のあと」だけ差し替えたもの（終夜運転で、留置になる列車を臨時列車につなぐ）。</summary>
-    private static DiaTrain WithTurn(DiaTrain d, DiaTurn turn)
-    {
-        var c = new DiaTrain
-        {
-            Number = d.Number, Type = d.Type, TypeLabel = d.TypeLabel, Dest = d.Dest, TerminalId = d.TerminalId, Next = d.Next, Unyo = d.Unyo, Cars = d.Cars, Turn = turn
-        };
-        c.Stops.AddRange(d.Stops);
-        foreach (var (k, v) in d.Stations) c.Stations[k] = v;
-        return c;
-    }
+    private static DiaTrain WithTurn(DiaTrain d, DiaTurn turn) => d.WithTurn(turn);
 
     /// <summary>
     /// 構内入換: 1駅だけの列車で、このグループの列車の終点のあと「入換」の後運用になっているもの（その列車の終点と同じ駅）。

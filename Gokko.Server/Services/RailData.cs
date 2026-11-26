@@ -208,6 +208,18 @@ public sealed class DiaTrain
 
     /// <summary>駅ID → 停車するか・番線（書かれていなければ null）。</summary>
     public Dictionary<string, (string StopType, int? Track)> Stations { get; } = new();
+
+    /// <summary>この列車を写して、「終点のあと」だけ差し替えたもの（終夜運転で、留置になる所定の列車を臨時列車につなぐ）。</summary>
+    public DiaTrain WithTurn(DiaTurn? turn)
+    {
+        var c = new DiaTrain
+        {
+            Number = Number, Type = Type, TypeLabel = TypeLabel, Dest = Dest, TerminalId = TerminalId, Next = Next, Unyo = Unyo, Cars = Cars, Turn = turn
+        };
+        c.Stops.AddRange(Stops);
+        foreach (var (k, v) in Stations) c.Stations[k] = v;
+        return c;
+    }
 }
 
 /// <summary>
@@ -364,11 +376,11 @@ public sealed class RailData
             return skipped;
         }
         var d = new Dictionary<string, DiaTrain>(_baseDia);
-        // 所定の列車の差し替え（終夜運転の前運用）。臨時停車で時刻を変えた列車は、そちらを使う
+        // 所定の列車の差し替え（終夜運転の前運用）。臨時停車で時刻も変えた列車は、変えた時刻に差し替えた「終点のあと」を付ける（両方生かす）
         foreach (var list in _replace.Values)
             foreach (var t in list)
                 if (_baseDia.ContainsKey(t.Number)) d[t.Number] = t;
-        foreach (var (n, t) in _retimed) d[n] = t;
+        foreach (var (n, t) in _retimed) d[n] = d.TryGetValue(n, out var r) && !ReferenceEquals(r, _baseDia[n]) ? t.WithTurn(r.Turn) : t;
         foreach (var (src, list) in _extra)
             if (src != source)
                 foreach (var t in list) d.TryAdd(t.Number, t);
