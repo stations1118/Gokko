@@ -1345,7 +1345,7 @@ public sealed partial class RouteEngine
     /// 列番から種別と向きを読む（列車番号の付け方: 接頭辞 + 始発時刻2桁 + 運番下2桁 + 社局 + 種別 + 接尾辞）。
     /// ・呼び分けの「#2」など、接尾辞（X・Y・Z）は除く
     /// ・向き: 数字の最後の桁（奇数＝下り、偶数＝上り）
-    /// ・種別: 接頭辞が「回」（定期回送）「試」（試運転）なら回送。それ以外（「臨」を含む）は、数字のあとの文字の最後（社局 T・S の後ろ）
+    /// ・種別: 接頭辞が「回」（定期回送）「臨回」（臨時の回送）「試」（試運転）なら回送。それ以外（「臨」を含む）は、数字のあとの文字の最後（社局 T・S の後ろ）
     ///   A＝特急、B＝急行、C＝準急、D＝区急、K＝快急、なし（社局 T・S だけも）＝普通
     /// </summary>
     internal static (string Type, Dir Dir)? TrainInfo(string train)
@@ -1356,7 +1356,7 @@ public sealed partial class RouteEngine
         if (!digits.Success) return null;
         var dir = int.Parse(digits.Groups[1].Value[^1..]) % 2 == 1 ? Dir.Down : Dir.Up;
         string type;
-        if (body.StartsWith("回") || body.StartsWith("試") || body.StartsWith("連") || body.StartsWith("解")) type = "回送"; // 連777（増結車）・解2076C（切り離した車両）
+        if (body.StartsWith("回") || body.StartsWith("臨回") || body.StartsWith("試") || body.StartsWith("連") || body.StartsWith("解")) type = "回送"; // 臨回1352（特発臨の回送）・連777（増結車）・解2076C（切り離した車両）
         else if (body.Length == 0) type = "普通";
         else
             type = char.ToUpperInvariant(body[^1]) switch

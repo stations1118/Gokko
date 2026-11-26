@@ -148,6 +148,13 @@ public sealed class AiTrains : BackgroundService
     /// <summary>特発臨（司令員がその場で立てる臨時列車）。元の列車が発駅に止まったら、特発臨の列番に変える。</summary>
     public TokuhatsuRinji? Rinji { get; set; }
 
+    /// <summary>走っている自動運転の列車の両数（特発臨に引き継ぐ）。走っていなければ null。</summary>
+    public int? CarsNow(string number)
+    {
+        var key = RailData.NormalizeTrain(number);
+        lock (_lock) return _trains.Values.FirstOrDefault(t => t.Number == key)?.Cars;
+    }
+
     // =========================================================================================
     // 出す・消す・一覧（管理画面から）
     // =========================================================================================
@@ -221,7 +228,7 @@ public sealed class AiTrains : BackgroundService
         {
             var number = RailData.NormalizeTrain(dia.Number);
             if (running.Contains(number) || users.Contains(number) || covered.Contains(number) || number.StartsWith("解")) continue;
-            if (Rinji?.IsRinji(number) == true || _rail.IsIdleTrial(dia)) continue;
+            if (Rinji?.IsConversion(number) == true || _rail.IsIdleTrial(dia)) continue; // 列番を変えて走る特発臨は出さない（出庫の特発臨は出す）
             if (_routes.DirOfTrain(number) is not { } dir) continue;
             // 出す駅は Add で駅を指定しなかったときと同じ選び方
             var stops = dia.Stops.Where(s => s.StationId != null && _rail.Stations.TryGetValue(s.StationId, out var sd) && sd.RouteControl).ToList();
@@ -1130,8 +1137,9 @@ public sealed class AiTrains : BackgroundService
     {
         if (Rinji is not { } rinji || rinji.PendingFor(t.Number) is not { } r || _rail.DiaOf(r.Number) is not { } nd) return false;
         if (!_rail.Stations.TryGetValue(r.StationId, out var st)) return false;
-        // 発駅の番線（走っている列車から立てた特発臨は、番線が決まっていないので、止まった番線）
-        var track = r.Track ?? st.TrackCircuit.Where(kv => t.Info.TrackCircuits.Contains(kv.Value)).Select(kv => (int?)kv.Key).FirstOrDefault() ?? -1;
+        // 発駅の番線（決めた番線にいなければ、止まった番線。決めた番線に入れなかったときも、着いた所で変わる）
+        var track = r.Track is { } rt && st.TrackCircuit.TryGetValue(rt, out var rc) && t.Info.TrackCircuits.Contains(rc) ? rt
+            : st.TrackCircuit.Where(kv => t.Info.TrackCircuits.Contains(kv.Value)).Select(kv => (int?)kv.Key).FirstOrDefault() ?? -1;
         if (!st.TrackCircuit.TryGetValue(track, out var platform) || !t.Info.TrackCircuits.Contains(platform)) return false; // まだ発駅の番線に着いていない
         if (_routes.DirOfTrain(r.Number) is not { } dir) return false;
         var i = nd.Stops.FindIndex(s => s.StationId == r.StationId);
@@ -1141,6 +1149,9 @@ public sealed class AiTrains : BackgroundService
         t.Shunting = false;
         t.FromShunt = false;
         t.CoupleStage = 0;
+        // 終着・線区の外へ出る列車として「終わり」の印が付いていたら外す（残すと、特発臨に変わったあと、しばらくして消してしまう）
+        t.FinishedUtc = null;
+        t.ExitUtc = null;
         Become(t, r.Number, nd, dir, st, track, platform, i, null, utcNow);
         rinji.MarkStarted(r.Number, track);
         t.Status = $"{st.Name} {track}番線で特発臨に変わりました（{old} → {r.Number}）";
@@ -1971,7 +1982,7 @@ public sealed class AiTrains : BackgroundService
             foreach (var (dia, number, startDir, cands, firstDep) in SpawnPlans())
             {
                 if (_spawned.Contains(number) || users.Contains(number) || covered.Contains(number) || runningNumbers.Contains(number)) continue;
-                if (Rinji?.IsRinji(number) == true) continue; // 特発臨は出さない（元の列車が発駅で列番を変えて走る）
+                if (Rinji?.IsConversion(number) == true) continue; // 特発臨は出さない（元の列車が発駅で列番を変えて走る。出庫の特発臨は、ふつうの出庫と同じく出す）
                 if (_rail.IsIdleTrial(dia)) continue; // 選ばれていない運行番号の試運転は走らない
                 // 出す駅は始発駅（線区の外から来る列車は、線区に入る最初の駅）だけ。終着と、番線を使わずに通過する駅には出さない。
                 // 始発駅で出せなければ、出せるまでそこで待つ（遅れた列車として出す）。先の駅に飛ばして出すと、単線区間を越えて急に現れ、

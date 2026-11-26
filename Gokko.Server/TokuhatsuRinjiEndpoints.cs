@@ -14,6 +14,7 @@ public static class TokuhatsuRinjiEndpoints
         {
             candidates = rinji.Candidates(),
             list = rinji.View(),
+            depots = rinji.DepotView(), // 出庫できる車庫
             types = TokuhatsuRinji.Types,
             stations = rail.ControlStations.Select(s => new { id = s.Id, name = s.Name, zone = rail.Line.ZoneOfStation(s.Id) })
         }));
