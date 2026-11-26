@@ -613,10 +613,12 @@ public sealed partial class RouteEngine
         public TrainRun? CouplePartner { get; set; }
         /// <summary>連結: まだ番線に入りきっていない増結車（回730・連777 など）の列番。いなければ null。</summary>
         public string? CoupleWaiting { get; set; }
-        /// <summary>連結: 第二場内の代わりに開ける入換信号機の進路（大道寺4番は 28L）。場内を取ったときに決める。</summary>
-        public RouteDef? CoupleShunt { get; set; }
-        public bool CoupleShuntRequested { get; set; }
-        /// <summary>連結: 列車が止まった時刻（入換信号機の手前・番線の中）。完全に止まったことを確かめるのに使う。</summary>
+        /// <summary>連結: あとで開ける番線の場内（第二場内。大道寺4番は 12L、新野崎4番は 5L）。場内を取ったときに決める。</summary>
+        public RouteDef? CoupleSecond { get; set; }
+        public bool CoupleSecondRequested { get; set; }
+        /// <summary>連結: 駅扱いの「誘導開通」。止まるのを待たずに、番線の場内も開ける。</summary>
+        public bool CoupleGuide { get; set; }
+        /// <summary>連結: 列車が止まった時刻（番線の場内の手前・番線の中）。完全に止まったことを確かめるのに使う。</summary>
         public DateTime? CoupleStoppedUtc { get; set; }
         public bool Coupled { get; set; }
         /// <summary>解放: 切り離した（「解」の列車を出した）。止まった時刻は完全停止の確認に使う。</summary>
@@ -2157,7 +2159,7 @@ public sealed partial class RouteEngine
     // ---- 駅扱い（強制進路） ----
 
     /// <summary>駅扱いのボタン（その列車・駅で選べる進路）。action は CentralControl.RequestManual に渡す値。</summary>
-    private static List<(string Action, string Label)> ManualOptions(TrainRun run, StationRun st)
+    private List<(string Action, string Label)> ManualOptions(TrainRun run, StationRun st)
     {
         var routes = st.St.Routes[run.Dir];
         var list = new List<(string, string)>();
@@ -2172,6 +2174,9 @@ public sealed partial class RouteEngine
         {
             foreach (var t in routes.Arrive.Keys.OrderBy(t => t)) list.Add(($"arrive:{t}", $"本線→{t}番線"));
             if (routes.Through.Count > 0) list.Add(("through", "本線通過"));
+            // 連結: 番線に「連」＋この列車の列番の列車がいるときだけ
+            foreach (var t in routes.Arrive.Where(a => a.Value.Count >= 2).Select(a => a.Key).OrderBy(t => t))
+                if (GuidePartner(run, st, t) != null) list.Add(($"guide:{t}", $"誘導開通（本線→{t}番線）"));
         }
 
         if (!st.Terminal)
@@ -2213,12 +2218,19 @@ public sealed partial class RouteEngine
             case "arrive" when track is { } a && routes.Arrive.ContainsKey(a) && !st.IsStart:
                 _central.SetTrack(run.Train, st.St.Id, a);
                 UseTrack(a);
-                st.ForceArrive = true;
+                (st.ForceArrive, st.CoupleGuide) = (true, false);
                 break;
             case "through" when routes.Through.Count > 0 && !st.IsStart:
                 _central.SetTrack(run.Train, st.St.Id, null);
                 UseTrack(null);
-                st.ForceArrive = true;
+                (st.ForceArrive, st.CoupleGuide) = (true, false);
+                break;
+            // 誘導開通（連結）: 番線にいる列車の列番から「連」を除いたものが、この列車の列番のときだけ
+            case "guide" when track is { } g && routes.Arrive.TryGetValue(g, out var gp) && gp.Count >= 2 && !st.IsStart && GuidePartner(run, st, g) is { } gpart:
+                _central.SetTrack(run.Train, st.St.Id, g);
+                UseTrack(g);
+                (st.ForceArrive, st.CoupleGuide) = (true, true);
+                _log.Note($"連結: {run.Train} {st.St.Name} 駅扱いの誘導開通（{g}番線の {gpart.Train} に連結）");
                 break;
             case "depart" when track is { } d && routes.Depart.ContainsKey(d) && !st.Terminal:
                 _central.SetTrack(run.Train, st.St.Id, d);
@@ -2819,7 +2831,7 @@ public sealed partial class RouteEngine
         if (needArrive)
         {
             string? conflict = null;
-            if (st.ForceArrive) arriveWait = conflict = InterlockConflict(run, st.ArrivePath, occupied); // 駅扱い: 連動の確認だけ
+            if (st.ForceArrive) arriveWait = conflict = InterlockConflict(run, CoupleArrivePath(st), occupied, st.CouplePartner); // 駅扱い: 連動の確認だけ
             else
                 arriveWait = panel ? PanelWait
                     : arriveHeld ? "場内抑止（集中扱い）"
@@ -2893,8 +2905,10 @@ public sealed partial class RouteEngine
     // ・増結車は、列番が「連」＋この列車の列番の列車（連777 → 777）と、ダイヤでその列番に折り返す列車（回730 → 連777）。
     //   増結車が止まる駅（ダイヤの終着、ダイヤがなければ今いる駅）で連結する
     // ・増結車が番線に入って止まるまで、場内は取らない
-    // ・増結車が番線にいれば、場内は第一場内（13LD）だけ取り、第二場内（12L）の代わりに、同じ回路の入換信号機（28L）を、
+    // ・増結車が番線にいれば、場内は第一場内（大道寺 13LD・新野崎 10LD）だけ取り、番線の場内（大道寺 12L・新野崎 5L）は、
     //   列車がその手前で完全に止まってから開ける。増結車の在線は、この列車の進路・信号では見ない
+    // ・駅扱いの「誘導開通」: 番線にいる列車の列番から「連」を除いたもの（連1283C → 1283C）が入ろうとしている列車のときだけ選べる。
+    //   止まるのを待たずに、番線の場内まで開ける（早引き）
     // ・連結するまで出発は取らない。連結したら（増結車が消えたら）ふつうに出発
     // =========================================================================================
 
@@ -2936,28 +2950,27 @@ public sealed partial class RouteEngine
     private static string? PartnerStation(TrainRun r) =>
         r.Dia?.TerminalId ?? r.Stations.FirstOrDefault(s => !s.Done)?.St.Id;
 
-    /// <summary>第二場内と同じ所から同じ回路へ入る入換信号機の進路（大道寺 12L → 28L、11L → 27L）。</summary>
-    private RouteDef? ParallelShunt(RouteDef home) => ParallelShuntOf(_data, home);
-
-    internal static RouteDef? ParallelShuntOf(RailData data, RouteDef home) =>
-        data.Routes.Values.FirstOrDefault(r => r.Interlock == home.Interlock && r.Name != home.Name && r.Kind.Contains("入換")
-                                               && r.From == home.From && r.To == home.To && r.Circuits.SequenceEqual(home.Circuits));
-
     /// <summary>
-    /// その駅・向き・番線で、増結車が待つ番線に列車が入って連結できるか（場内が2つ以上あり、最後の場内と同じ所へ入る入換信号機がある）。
+    /// その駅・向き・番線で、増結車が待つ番線に列車が入って連結できるか（場内が2つ以上ある。第一場内の先で止まり、番線の場内をあとで開ける）。
     /// 運転課の臨時列車の確認に使う
     /// </summary>
     internal static bool CanCoupleAt(RailData data, string stationId, Dir dir, int track) =>
         data.Stations.TryGetValue(stationId, out var sd) && sd.RouteControl && sd.Routes[dir].Arrive.TryGetValue(track, out var path)
-        && path.Count >= 2 && ParallelShuntOf(data, path[^1]) != null;
+        && path.Count >= 2;
 
-    /// <summary>場内で取る進路。増結車が番線にいれば、最後の進路（第二場内）を除く（入換信号機はあとで開ける）。</summary>
+    /// <summary>場内で取る進路。増結車が番線にいれば、最後の進路（番線の場内）を除く（あとで開ける）。</summary>
     private List<RouteDef> CoupleArrivePath(StationRun st)
     {
-        if (st.CouplePartner == null || st.ArrivePath.Count < 2 || ParallelShunt(st.ArrivePath[^1]) is not { } shunt) return st.ArrivePath;
-        st.CoupleShunt = shunt;
+        if (st.CouplePartner == null || st.ArrivePath.Count < 2) return st.ArrivePath;
+        st.CoupleSecond = st.ArrivePath[^1];
         return st.ArrivePath.Take(st.ArrivePath.Count - 1).ToList();
     }
+
+    /// <summary>駅扱いの「誘導開通」の相手: その番線にいる、列番が「連」＋この列車の列番の列車。いなければ null。</summary>
+    private TrainRun? GuidePartner(TrainRun run, StationRun st, int track) =>
+        st.St.TrackCircuit.TryGetValue(track, out var tc)
+            ? _runs.Values.FirstOrDefault(r => r != run && r.Train == "連" + run.Train && r.Player.TrackCircuits.Contains(tc))
+            : null;
 
     private void UpdateCoupling(TrainRun run, StationRun st, Dictionary<string, TrainRun> occupied, DateTime now)
     {
@@ -2966,44 +2979,49 @@ public sealed partial class RouteEngine
         if (st.Coupled || st.IsStart || st.Track is not { } track || !st.St.TrackCircuit.TryGetValue(track, out var tc)) return;
         var numbers = CouplingPartnerNumbers(run.Train);
         var partners = _runs.Values.Where(r => r != run && numbers.Contains(r.Train) && PartnerStation(r) == st.St.Id).ToList();
-        if (partners.Count == 0 && st.CoupleShunt == null) return;
+        if (partners.Count == 0 && st.CoupleSecond == null) return;
         var partner = partners.FirstOrDefault(r => r.Player.TrackCircuits.Count > 0 && r.Player.TrackCircuits.All(c => c == tc) && r.Player.Speed < StopSpeedKmh);
         if (partner == null)
         {
             // 増結車がまだ番線にいない（入換の途中など）。自分がもう番線に入っていれば待たない
             if (partners.Count > 0 && !run.Player.TrackCircuits.Contains(tc)) st.CoupleWaiting = partners[0].Train;
-            // 場内を取ったあと増結車がいなくなった（消えた）: 入換信号機の代わりに、第二場内を開ける
-            if (partners.Count == 0 && st.CoupleShunt != null && !st.CoupleShuntRequested && st.Arrive == GroupState.Requested && st.ArrivePath.Count > 0)
+            // 場内を取ったあと増結車がいなくなった（消えた）: ふつうに番線の場内を開ける
+            if (partners.Count == 0 && st.CoupleSecond != null && !st.CoupleSecondRequested && st.Arrive == GroupState.Requested && st.ArrivePath.Count > 0)
             {
                 run.Requests.Add(new RouteReq { Def = st.ArrivePath[^1], Id = ++_seq, Station = st, Departure = false, RequestedUtc = now });
-                st.CoupleShuntRequested = true;
-                _log.Note($"連結: {run.Train} {st.St.Name} 増結車がいないので、第二場内 {st.ArrivePath[^1].Name} を開けます");
+                st.CoupleSecondRequested = true;
+                _log.Note($"連結: {run.Train} {st.St.Name} 増結車がいないので、番線の場内 {st.ArrivePath[^1].Name} を開けます");
             }
             return;
         }
         st.CouplePartner = partner;
 
-        // 入換信号機: 第一場内を取ったあと、列車がその手前で完全に止まってから開ける
-        if (st.CoupleShunt is { } shunt && !st.CoupleShuntRequested)
+        // 番線の場内: 第一場内を取ったあと、列車がその手前で完全に止まってから開ける（駅扱いの誘導開通なら、止まるのを待たない）
+        if (st.CoupleSecond is { } second && !st.CoupleSecondRequested)
         {
             if (st.Arrive != GroupState.Requested) return;
-            var before = run.Player.TrackCircuits.Count > 0 && !run.Player.TrackCircuits.Any(shunt.Circuits.Contains);
-            if (before && run.Player.Speed < StopSpeedKmh) st.CoupleStoppedUtc ??= now;
-            else st.CoupleStoppedUtc = null;
-            if (st.CoupleStoppedUtc is not { } stopped || now - stopped < CoupleStopCheck) return;
-            if (InterlockConflict(run, [shunt], occupied, partner) is { } why)
+            if (!st.CoupleGuide)
             {
-                st.ArriveWait = $"連結の入換信号機待ち（{why}）";
+                var before = run.Player.TrackCircuits.Count > 0 && !run.Player.TrackCircuits.Any(second.Circuits.Contains);
+                if (before && run.Player.Speed < StopSpeedKmh) st.CoupleStoppedUtc ??= now;
+                else st.CoupleStoppedUtc = null;
+                if (st.CoupleStoppedUtc is not { } stopped || now - stopped < CoupleStopCheck) return;
+            }
+            if (InterlockConflict(run, [second], occupied, partner) is { } why)
+            {
+                st.ArriveWait = $"連結の場内待ち（{why}）";
                 return;
             }
-            run.Requests.Add(new RouteReq { Def = shunt, Id = ++_seq, Station = st, Departure = false, RequestedUtc = now });
-            (st.CoupleShuntRequested, st.CoupleStoppedUtc) = (true, null);
-            _log.Note($"連結: {run.Train} {st.St.Name} 止まったのを確かめて、入換信号機 {shunt.Name} を開けます（増結車 {partner.Train}）");
+            run.Requests.Add(new RouteReq { Def = second, Id = ++_seq, Station = st, Departure = false, RequestedUtc = now });
+            (st.CoupleSecondRequested, st.CoupleStoppedUtc) = (true, null);
+            _log.Note(st.CoupleGuide
+                ? $"連結: {run.Train} {st.St.Name} 駅扱いの誘導開通で、番線の場内 {second.Name} を開けます（増結車 {partner.Train}）"
+                : $"連結: {run.Train} {st.St.Name} 止まったのを確かめて、番線の場内 {second.Name} を開けます（増結車 {partner.Train}）");
             return;
         }
 
         // ユーザーの列車: 番線に入りきって、しばらく止まっていたら連結したとする（自動運転列車は AiTrains が決める）
-        if (st.CoupleShuntRequested && !PlayerRegistry.IsVirtual(run.ConnId)
+        if (st.CoupleSecondRequested && !PlayerRegistry.IsVirtual(run.ConnId)
             && run.Player.TrackCircuits.Count > 0 && run.Player.TrackCircuits.All(c => c == tc))
         {
             if (run.Player.Speed < StopSpeedKmh) st.CoupleStoppedUtc ??= now;
@@ -3053,7 +3071,7 @@ public sealed partial class RouteEngine
                 .ToDictionary(x => x.ConnId, x => x.Map);
     }
 
-    /// <summary>信号の上限で見ない軌道回路: 連結する列車には、番線で待っている増結車の在線を見せない（入換信号機で入るため）。</summary>
+    /// <summary>信号の上限で見ない軌道回路: 連結する列車には、番線で待っている増結車の在線を見せない（止まってから番線の場内で入るため）。</summary>
     public List<string> CouplingIgnored(string connId)
     {
         lock (_lock)
