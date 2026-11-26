@@ -69,6 +69,9 @@ public sealed class ConductorPanelForm : Form
     /// <summary>寄せ方の切り替えが押された。</summary>
     public event Action? CatchUpModeClicked;
 
+    /// <summary>［自動運転］が押された（運転士がいない列車で、自分のゲームを自動で運転する）。</summary>
+    public event Action? AutoClicked;
+
     private readonly NfbSwitch _door34 = new("3/4閉", "閉");
     private readonly NfbSwitch _doorCut = new("羽衣橋", "締切");
 
@@ -88,6 +91,7 @@ public sealed class ConductorPanelForm : Form
     private readonly Label _linkLabel = new();
     private readonly FlatButton _ebButton = new("非常ブレーキ");
     private readonly FlatButton _catchUpButton = new("寄せ　タイミング優先");
+    private readonly FlatButton _autoButton = new("自動運転　切");
     private readonly CswView _leftCsw = new();
     private readonly CswView _rightCsw = new();
     private readonly Label _statusLabel = new();
@@ -205,7 +209,14 @@ public sealed class ConductorPanelForm : Form
         _catchUpButton.Font = new Font(Font.FontFamily, 9.5f);
         _catchUpButton.Margin = new Padding(3, 4, 3, 2);
         _catchUpButton.Click += (_, _) => CatchUpModeClicked?.Invoke();
-        Row(34, _catchUpButton);
+        Row(34, _catchUpButton, 0, 1);
+
+        // 自動運転（運転士がいない列車だけ。押すたびに入・切）
+        _autoButton.Font = new Font(Font.FontFamily, 9.5f);
+        _autoButton.Margin = new Padding(3, 4, 3, 2);
+        _autoButton.ForeColor = Text2;
+        _autoButton.Click += (_, _) => AutoClicked?.Invoke();
+        Row(34, _autoButton, 1, 1);
 
         _ebButton.Font = new Font(Font.FontFamily, 14f, FontStyle.Bold);
         _ebButton.Margin = new Padding(3, 8, 3, 8);
@@ -295,6 +306,15 @@ public sealed class ConductorPanelForm : Form
         _catchUpButton.Text = $"寄せ　{text}";
         _catchUpButton.ForeColor = text == "切" ? Text2 : Text1;
         _catchUpButton.Invalidate();
+    }
+
+    /// <summary>自動運転の入・切を出す。</summary>
+    public void SetAuto(bool on)
+    {
+        _autoButton.Text = on ? "自動運転　入" : "自動運転　切";
+        _autoButton.ForeColor = on ? Color.White : Text2;
+        _autoButton.Fill = on ? Color.FromArgb(40, 96, 180) : Card;
+        _autoButton.Invalidate();
     }
 
     public void SetLink(string title, string link, bool ok)

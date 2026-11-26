@@ -292,6 +292,8 @@ public sealed class CrewController
         _panel.DoorAction += OnPanelDoor;
         _panel.SetCatchUpMode(CatchUpModeText(CatchUpMode));
         _panel.CatchUpModeClicked += CycleCatchUpMode;
+        _panel.AutoClicked += ToggleAuto;
+        _panel.SetAuto(_auto != null);
         _panel.NfbToggled += (action, on) =>
         {
             // 3/4閉・羽衣橋（ドアカット）: 自分のゲームで押し、運転士のゲームでも押す
@@ -339,6 +341,7 @@ public sealed class CrewController
         var r = _panel.SavedBounds; // 次に出すときも同じ位置・大きさにする
         _config.ConductorPanelBounds = $"{r.X},{r.Y},{r.Width},{r.Height}";
         _config.Save();
+        StopAuto("");
         if (_emergency) _tci.SetAtoNotch(0);
         if (_localBuzzerOn) _tci.SetButton("Buzzer", false);
         _emergency = _reOpen = _joukou = _buzzer = _gameBuzzer = _localBuzzerOn = false;
@@ -637,6 +640,17 @@ public sealed class CrewController
             UpdateLocalBuzzer();
         }
 
+        // 自動運転: 運転士がいない間だけ。運転士が乗ってきたら切って、運転士の操作に従う
+        if (_auto != null && !rider)
+        {
+            if ((input != null && age < StaleMs) || _crew.Status is { Drivers: > 0 }) StopAuto("運転士が乗ったので、自動運転を切りました");
+            else
+            {
+                AutoTick(s, gameBuzzer, now);
+                return;
+            }
+        }
+
         if (input != null && age < StaleMs)
         {
             if (_linkBrake) _tci.ForgetSent();
@@ -698,6 +712,71 @@ public sealed class CrewController
         _ = _tci.PressAsync(action, 50);
         _lastDoorFixMs = now; // 押したばかりなので、しばらく（ドアが動き終わるまで）運転士のドアに合わせ直さない
         _doorMismatchSinceMs = 0;
+    }
+
+    // ---- 自動運転（車掌モード。運転士がいない列車で、自分のゲームのノッチを自動運転が決める） ----
+
+    private AutoDriver? _auto;
+    private bool _autoBuzzer; // 発車の合図（ブザー）が鳴っていたか（鳴り始めを見る）
+    private int _autoPower = int.MinValue, _autoBrake = int.MinValue; // 前の周期に送ったノッチ
+    private long _autoMismatchMs; // ゲームのノッチが、送ったノッチと違い始めた時刻（0 なら同じ）
+
+    /// <summary>［自動運転］: 入・切。入れられるのは運転士がいないときだけ。</summary>
+    private void ToggleAuto()
+    {
+        if (_auto != null)
+        {
+            StopAuto("自動運転を切りました（ノッチを中立・常用最大ブレーキに戻しました）");
+            return;
+        }
+
+        var age = Environment.TickCount64 - Interlocked.Read(ref _latestInputMs);
+        if (_role != CrewRole.Conductor) return;
+        if ((_latestInput != null && age < StaleMs) || _crew.Status is { Drivers: > 0 })
+        {
+            Message?.Invoke("運転士が乗っているので、自動運転は使えません");
+            return;
+        }
+
+        _auto = new AutoDriver();
+        _autoBuzzer = true; // 入れた瞬間に鳴っていたブザーでは発車しない
+        _autoPower = _autoBrake = int.MinValue;
+        _autoMismatchMs = 0;
+        _tci.WantStations = true;
+        _panel?.SetAuto(true);
+        Message?.Invoke("自動運転: ノッチは自動で扱います。ドアは操作盤で扱い、閉めたらブザーで発車の合図をしてください");
+    }
+
+    /// <summary>自動運転を切る（入っていなければ何もしない）。ノッチは中立・常用最大ブレーキに戻す。</summary>
+    private void StopAuto(string message)
+    {
+        if (_auto == null) return;
+        _auto = null;
+        _tci.WantStations = false;
+        _tci.SetNotch(0, ServiceMaxBrake, force: true);
+        _panel?.SetAuto(false);
+        if (message.Length > 0) Message?.Invoke(message);
+    }
+
+    private void AutoTick(TciState s, bool gameBuzzer, long now)
+    {
+        var buzzer = _buzzer || gameBuzzer;
+        var departSignal = buzzer && !_autoBuzzer;
+        _autoBuzzer = buzzer;
+        if (_auto == null || !s.IsDriver || _tci.LastRaw is not { } raw) return;
+
+        // ゲームのキーやマスコンに触れてゲームのノッチが変わっても、自動運転を優先する（0.3秒違っていたら送り直す）
+        var mismatch = _autoPower != int.MinValue && (s.Power != _autoPower || s.Brake != _autoBrake) && !_emergency;
+        if (!mismatch) _autoMismatchMs = 0;
+        else if (_autoMismatchMs == 0) _autoMismatchMs = now;
+        var resend = mismatch && now - _autoMismatchMs > NotchResendMs;
+        if (resend) _autoMismatchMs = 0;
+
+        var (power, brake) = _auto.Step(s, raw, _tci.Signals(), departSignal, _emergency, now);
+        _tci.SetReverser(1, resend);
+        _tci.SetNotch(power, brake, resend);
+        _autoPower = power;
+        _autoBrake = brake;
     }
 
     private bool HasFollowers => _crew.Status is { } st && (st.Conductors > 0 || st.Riders > 0);
@@ -815,6 +894,7 @@ public sealed class CrewController
             }
         }
 
+        if (_auto != null) { link = $"自動運転: {_auto.Note}"; ok = true; }
         if (s is { IsDriver: false }) { link = "ゲームを運転士モードにしてください"; ok = false; }
         if (_role == CrewRole.Rider)
         {
