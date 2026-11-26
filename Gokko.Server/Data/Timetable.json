@@ -251,7 +251,7 @@
       "number": "1052", "type": "普通", "label": "普通", "dest": "大路", "unyo": 52,
       "turn": { "kind": "引継", "number": "1052", "time": null, "how": null, "text": "1052 普通 大路行" },
       "stops": [
-        { "st": "TH54", "name": "上吉沢", "stop": "停", "arr": null, "dep": "10:29:45", "track": 1, "note": "灰色;×特館②19通" },
+        { "st": "TH54", "name": "上吉沢", "stop": "停", "arr": null, "dep": "10:29:45", "track": 1, "note": "灰色" },
         { "st": "TH53", "name": "下吉沢", "stop": "運停", "arr": "10:31:30", "dep": "10:31:55", "track": 1, "note": "×普道②27着" },
         { "st": "TH52", "name": "名田", "stop": "停", "arr": "10:33:45", "dep": "10:35:30", "track": 1 },
         { "st": "TH51", "name": "三石", "stop": "停", "arr": "10:37:00", "dep": "10:37:20", "track": 1 },
@@ -10216,7 +10216,7 @@
       "number": "回1052", "type": "回送", "label": "回送", "dest": "名田", "unyo": 52,
       "next": { "number": "1052", "st": "TH52", "name": "名田" },
       "stops": [
-        { "st": "TH54", "name": "上吉沢", "stop": "停", "arr": null, "dep": "10:29:45", "track": 1, "note": "灰色;×特館②19通;(待)特手②29通" },
+        { "st": "TH54", "name": "上吉沢", "stop": "停", "arr": null, "dep": "10:29:45", "track": 1, "note": "灰色;(待)特手②29通" },
         { "st": "TH53", "name": "下吉沢", "stop": "運停", "arr": "10:31:30", "dep": "10:31:55", "track": 1, "note": "灰色;×普道②27着" },
         { "st": "TH52", "name": "名田", "stop": "停", "arr": "10:33:45", "dep": "10:35:30", "track": 1, "note": "灰色" }
       ]
