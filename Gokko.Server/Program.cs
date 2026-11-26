@@ -57,7 +57,7 @@ builder.Services.AddSingleton<OccupancyLog>(); // 在線の記録（logs/occupan
 builder.Services.AddSingleton(sp => new AiTrains(dataDir, rail, sp.GetRequiredService<PlayerRegistry>(), sp.GetRequiredService<GameClock>(),
     sp.GetRequiredService<RouteEngine>(), sp.GetRequiredService<CentralControl>(), sp.GetRequiredService<IncidentManager>(),
     sp.GetRequiredService<CrewRoster>(), sp.GetRequiredService<DutyRosters>(), sp.GetRequiredService<CrewRelay>(), sp.GetRequiredService<ProtectionRadio>(),
-    sp.GetRequiredService<DispatcherProtection>(), sp.GetService<ILogger<AiTrains>>())); // にぎやかしの列車（サーバーだけで走る。Data/AiTrains.json）
+    sp.GetRequiredService<DispatcherProtection>(), stopMarkers, sp.GetService<ILogger<AiTrains>>())); // にぎやかしの列車（サーバーだけで走る。Data/AiTrains.json）
 builder.Services.AddSingleton(sp => new TempTrains(dataDir, rail, sp.GetService<ILogger<TempTrains>>())); // 催物用の臨時列車（Data/TempTrains.json。運転課で作り、司令用管理画面で適用）
 builder.Services.AddSingleton<ServerLoad>(); // サーバーの負荷（管理画面・logs/load-*.log）
 builder.Services.AddSingleton<ResponseCache>(); // 何人もの画面が読みに来る API の答えを、少しのあいだ使い回す（ダイヤグラム）

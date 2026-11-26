@@ -72,6 +72,7 @@ public sealed class AiTrains : BackgroundService
     private readonly List<StopSpec> _stops = new();
     private readonly Dictionary<string, double> _circuitLengths = new();
     private readonly UnyoCars _unyoCars; // 運行番号ごとの両数（Data/UnyoCars.csv。ない運行は6両）
+    private readonly StopMarkers _markers; // 停止位置目標（両数に合った停目に止める。Data/StopMarkers.*.csv）
     private Dictionary<string, Dictionary<string, string>> _couplePartners = new(); // 連結: 列車ID → 駅ID → 番線で待つ増結車（RouteEngine から周期ごとに写す）
     private static readonly TimeSpan CoupleStopB = TimeSpan.FromSeconds(5); // 連結: 停B で止まっている時間
     private readonly List<(string Child, int Cars, string Station, int Track, string Parent)> _pendingSplits = new(); // 解放: これから出す車両
@@ -120,13 +121,14 @@ public sealed class AiTrains : BackgroundService
 
     public AiTrains(string dataDir, RailData rail, PlayerRegistry players, GameClock clock, RouteEngine routes, CentralControl central,
         IncidentManager log, CrewRoster crew, DutyRosters duties, CrewRelay relay, ProtectionRadio protectionRadio,
-        DispatcherProtection dispatcherProtection, ILogger<AiTrains>? logger = null)
+        DispatcherProtection dispatcherProtection, StopMarkers markers, ILogger<AiTrains>? logger = null)
     {
         _crew = crew;
         _duties = duties;
         _relay = relay;
         _protectionRadio = protectionRadio;
         _dispatcherProtection = dispatcherProtection;
+        _markers = markers;
         _rail = rail;
         _players = players;
         _clock = clock;
@@ -356,7 +358,8 @@ public sealed class AiTrains : BackgroundService
             // 最初の道筋: 出す番線の軌道回路。停止位置は、番線ごとの表（出発信号機の手前）から
             // 表の駅名はダイヤの駅名（江原検など、駅の設定の名前と違う所がある）。なければ駅の設定の名前
             var stopSpec = FindStop(start.Name, dir.Value, track) ?? FindStop(st.Name, dir.Value, track);
-            var before = stopSpec?.Before ?? 20;
+            // 両数に合った停目に出す（表の位置は6両停目）
+            var before = (stopSpec?.Before ?? 20) + MarkerOffset(train, start.Name, dir.Value, track, train.Plan.Count <= 1);
             var len = Math.Max(LengthOf(platform), train.Length + before + 10);
             train.Path.Add(new Seg(null, null, 0, len, [new SegCircuit(platform, 0, len)]));
             train.Head = len - before;
@@ -1047,7 +1050,8 @@ public sealed class AiTrains : BackgroundService
         var track = hit.Key;
         if (_stops.FirstOrDefault(s => s.Station == p.Name && s.Dir == t.Dir && s.Track == track) is { } spec && BoundaryOf(t, spec.Signal) != null) return false;
 
-        var before = (FindStop(p.Name, t.Dir, track) ?? FindStop(st.Name, t.Dir, track))?.Before ?? 20;
+        var before = ((FindStop(p.Name, t.Dir, track) ?? FindStop(st.Name, t.Dir, track))?.Before ?? 20)
+                     + MarkerOffset(t, p.Name, t.Dir, track, t.Plan.Count > 0 && t.Plan[^1].StationId == p.StationId);
         var len = Math.Max(LengthOf(here), t.Length + before + 10);
         t.Path.Clear();
         t.Path.Add(new Seg(null, null, 0, len, [new SegCircuit(here, 0, len)]));
@@ -1145,7 +1149,8 @@ public sealed class AiTrains : BackgroundService
             t.Plan.Add(PlanOf(nd, s));
         }
 
-        var before = (FindStop(first.Name, dir, track) ?? FindStop(st.Name, dir, track))?.Before ?? 20;
+        var before = ((FindStop(first.Name, dir, track) ?? FindStop(st.Name, dir, track))?.Before ?? 20)
+                     + MarkerOffset(t, first.Name, dir, track, t.Plan.Count <= 1);
         var len = Math.Max(LengthOf(platform), t.Length + before + 10);
         t.Path.Clear();
         t.Path.Add(new Seg(null, null, 0, len, [new SegCircuit(platform, 0, len)]));
@@ -1451,7 +1456,9 @@ public sealed class AiTrains : BackgroundService
             // 連結: 番線に増結車がいれば、停B（停止位置目標のない駅は連結位置の4m手前）、そのあと連結位置（増結車の後ろ）
             if (CouplePartnerAt(t, p) != null && CouplePos(t, p) is { } cp)
                 return t.CoupleStage >= 2 ? b - cp.Couple : b - cp.StopB;
-            var x = spec.After is { } after ? b + after : b - spec.Before;
+            // 両数に合った停目（4両停目など）は、表の位置（6両停目）から手前
+            var x = (spec.After is { } after ? b + after : b - spec.Before)
+                    - MarkerOffset(t, p.Name, t.Dir, spec.Track, t.Plan.Count > 0 && t.Plan[^1].StationId == p.StationId);
             // 表の位置だと最後尾が番線の回路の手前（分岐の回路）に残るなら、番線の回路に収まるところまで前へ出す（番線の回路の終わりは越えない）。
             // 残したままだと、分岐を通るほかの進路（日野森で 2番線に着いた上りの最後尾が 22T に残り、3番線の下りの 4L が出られなかった）をふさぐ
             if (platform != null && x < platform.End && x - t.Length < platform.Start + Margin)
@@ -1564,7 +1571,8 @@ public sealed class AiTrains : BackgroundService
         var passed = t.Path.LastOrDefault(s => s.Signal != null && s.Start <= t.Head);
         if (passed?.Signal is not { } from) return null;
         if (ChainDistance(from, spec.Signal) is not { } d) return null;
-        return d - (t.Head - passed.Start) + (spec.After ?? -spec.Before);
+        return d - (t.Head - passed.Start) + (spec.After ?? -spec.Before)
+               - MarkerOffset(t, p.Name, t.Dir, spec.Track, t.Plan.Count > 0 && t.Plan[^1].StationId == p.StationId);
     }
 
     /// <summary>
@@ -2080,6 +2088,23 @@ public sealed class AiTrains : BackgroundService
     private StopSpec? FindStop(string station, Dir dir, int track) =>
         _stops.FirstOrDefault(s => s.Station == station && s.Dir == dir && s.Track == track)
         ?? (track == 0 ? _stops.FirstOrDefault(s => s.Station == station && s.Dir == dir) : null);
+
+    /// <summary>
+    /// 両数に合った停目が、停止位置の表（AiTrains.json の stops。6両の列車で測ったので6両停目）から何 m 手前にあるか（停止位置目標の表から）。
+    /// 表にない駅・番線、その両数の停目がない（6両停目に止まる）ときは 0。
+    /// 増結車がその駅で連結を待つときも 0（いちばん先の停目に止まり、後ろに列車が来て連結する。大道寺の連結位置は6両停目に止まった増結車で測った）。
+    /// station はダイヤの駅名（江原検など）。track は番線（進路を扱わない駅は 0）。
+    /// </summary>
+    private double MarkerOffset(Train t, string station, Dir dir, int? track, bool terminal)
+    {
+        if (WaitsForCouple(t, terminal)) return 0;
+        return _markers.Choose(dir, station, track is > 0 ? track.Value.ToString(CultureInfo.InvariantCulture) : null, t.Cars)?.Offset ?? 0;
+    }
+
+    /// <summary>増結車として連結を待つ列車か（列番が「連」で始まる、または終着で「連」の列番に折り返す。連777・連777 に折り返す 回730）。</summary>
+    private bool WaitsForCouple(Train t, bool terminal) =>
+        RailData.NormalizeTrain(t.Number).StartsWith('連')
+        || (terminal && _rail.Turns.TurnOf(t.Dia) is { Kind: "折返", Number: { } n } && RailData.NormalizeTrain(n).StartsWith('連'));
 
     private void LoadDistances(string path)
     {
