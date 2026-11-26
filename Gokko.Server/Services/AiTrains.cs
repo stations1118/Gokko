@@ -420,12 +420,16 @@ public sealed class AiTrains : BackgroundService
 
     public void Receive(string id, ClientState state, string? planDetail)
     {
+        // 信号制御盤で開通させている進路（プレイヤーには OtherRoutes で写して届く。自動運転列車は OtherRoutes を受け取らないので、ここで入れる）。
+        // 盤のロックを取るので、自分のロックの外で読む
+        var panel = _central.PanelRoutes().Select(r => (r.Interlocking, r.RouteName)).ToHashSet();
         lock (_lock)
         {
             if (!_trains.TryGetValue(id, out var t)) return;
             t.Received = true;
             t.RedSignals = state.Signals.Where(s => s.Phase == "R").Select(s => s.Name).ToHashSet();
             foreach (var r in state.Routes) t.Info.GameRoutes.Add((r.Interlocking, r.RouteName));
+            SyncPanelRoutes(t, panel);
             foreach (var r in state.DeleteRoutes)
             {
                 // 入ってしまった進路は消さない（ゲームの接近鎖錠の代わり）。まだ入っていなければ、道筋もそこまでに縮める
@@ -442,6 +446,24 @@ public sealed class AiTrains : BackgroundService
             t.RouteMessage = state.RouteMessage;
             // この先の駅の状態（進路待ちの理由など。プレイヤーには出さない詳しい状態）。止まっているときの理由に出す
             t.PlanDetail = planDetail;
+        }
+    }
+
+    /// <summary>
+    /// 信号制御盤の進路を、自動運転列車の「自分のゲームの進路」に写す。盤の一覧から外れたもの（盤で取り消した・ほかの列車が入った）は消す。
+    /// 列車がもう入った進路は消さない（盤の一覧からは、列車が入ると外れる）。
+    /// </summary>
+    private static void SyncPanelRoutes(Train t, HashSet<(string, string)> panel)
+    {
+        foreach (var key in panel)
+            if (t.Info.GameRoutes.Add(key)) t.PanelRoutes.Add(key);
+        foreach (var key in t.PanelRoutes.Where(k => !panel.Contains(k)).ToList())
+        {
+            t.PanelRoutes.Remove(key);
+            var i = t.Path.FindIndex(s => s.Route is { } d && (d.Interlock, d.Name) == key);
+            if (i >= 0 && t.Path[i].Start <= t.Head) continue;
+            if (i > 0) t.Path.RemoveRange(i, t.Path.Count - i);
+            t.Info.GameRoutes.Remove(key);
         }
     }
 
@@ -2371,6 +2393,8 @@ public sealed class AiTrains : BackgroundService
         public bool Blocked { get; set; }
         public string? EndSignal { get; set; }
         public HashSet<string> RedSignals { get; set; } = new();
+        /// <summary>信号制御盤から写した進路（Info.GameRoutes のうち、盤の一覧から入れたもの）。</summary>
+        public HashSet<(string Interlock, string Route)> PanelRoutes { get; } = new();
         public bool Received { get; set; }
         public HashSet<(int First, int Last)> ReceivedRanges { get; } = new();
         public bool BrakingForProtection { get; set; }
