@@ -4553,17 +4553,42 @@ public sealed partial class RouteEngine
     /// </summary>
     public string? CurrentTrainOf(IEnumerable<Duty> duties)
     {
+        lock (_lock) return CurrentTrainLocked(duties, RunningNumbers());
+    }
+
+    /// <summary>行路ごとの、いま乗る列車（行路の一覧用。<see cref="CurrentTrainOf"/> を行路1本ずつ呼ぶのと同じ答えを、1回のロックで出す）。</summary>
+    public List<string?> CurrentTrainsOf(IReadOnlyList<Duty> duties)
+    {
         lock (_lock)
         {
-            var items = duties.SelectMany(d => d.Items).Where(x => x.Kind != "休憩" && _data.DiaOf(x.Train) != null).ToList();
-            if (items.Count == 0) return null;
-            var running = items.FirstOrDefault(x => _runs.Values.Any(r => r.HasPosition && (r.Train == x.Train || RailData.NormalizeTrain(r.GameTrain) == x.Train)));
-            if (running != null) return running.Train;
-            var now = NowSec();
-            var ordered = items.Select(x => (x, Arr: ParseDiaTime(DutySpan(x).Arr), Dep: ParseDiaTime(DutySpan(x).Dep)))
-                .OrderBy(t => t.Dep ?? double.MaxValue).ToList();
-            return (ordered.FirstOrDefault(t => t.Arr is { } a && a >= now).x ?? ordered[^1].x).Train;
+            var running = RunningNumbers();
+            return duties.Select(d => CurrentTrainLocked([d], running)).ToList();
         }
+    }
+
+    /// <summary>走っている列車の列番（サーバーの列番と、ゲームの列番）。_lock の中で呼ぶ。</summary>
+    private HashSet<string> RunningNumbers()
+    {
+        var set = new HashSet<string>();
+        foreach (var r in _runs.Values)
+        {
+            if (!r.HasPosition) continue;
+            set.Add(r.Train);
+            set.Add(RailData.NormalizeTrain(r.GameTrain));
+        }
+        return set;
+    }
+
+    private string? CurrentTrainLocked(IEnumerable<Duty> duties, HashSet<string> runningNumbers)
+    {
+        var items = duties.SelectMany(d => d.Items).Where(x => x.Kind != "休憩" && _data.DiaOf(x.Train) != null).ToList();
+        if (items.Count == 0) return null;
+        var running = items.FirstOrDefault(x => runningNumbers.Contains(x.Train));
+        if (running != null) return running.Train;
+        var now = NowSec();
+        var ordered = items.Select(x => (x, Arr: ParseDiaTime(DutySpan(x).Arr), Dep: ParseDiaTime(DutySpan(x).Dep)))
+            .OrderBy(t => t.Dep ?? double.MaxValue).ToList();
+        return (ordered.FirstOrDefault(t => t.Arr is { } a && a >= now).x ?? ordered[^1].x).Train;
     }
 
     /// <summary>その列車が今走っているか（勤怠管理の画面用）。</summary>

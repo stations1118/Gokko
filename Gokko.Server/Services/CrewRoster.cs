@@ -1441,6 +1441,13 @@ public sealed class CrewRoster
         lock (_lock) return _attend.TryGetValue(id, out var t) ? t : null;
     }
 
+    /// <summary>出勤している人（社員番号 → 出勤した時刻 UTC。社員番号の順）。</summary>
+    public Dictionary<string, DateTime> Attended()
+    {
+        lock (_lock)
+            return _users.Where(u => _attend.ContainsKey(u.Id)).OrderBy(u => u.Id, StringComparer.Ordinal).ToDictionary(u => u.Id, u => _attend[u.Id]);
+    }
+
     /// <summary>その行路を自動で割り当てたか。</summary>
     public bool IsAuto(string duty)
     {
