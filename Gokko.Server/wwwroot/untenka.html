@@ -196,7 +196,7 @@
         </div>
         <div class="row">
           発駅: <select id="tFrom"></select>
-          <span id="tPrevBox" hidden>前運用: <select id="tPrev" title="留置になる所定の列車（滞泊など）から、そのまま続けて走るとき"></select></span>
+          <span id="tPrevBox" hidden>前運用: <select id="tPrev" title="発駅でほかの列車（このグループの列車か所定の列車）から切り離した車両で出るとき（「解＋元の列番」の切り離しの列車を作ってつなぎます）。終夜なら、留置になる所定の列車（滞泊など）から続けて走るときも"></select></span>
           発車: <input id="tDep" class="t-in" placeholder="10:00">
           終点: <select id="tTo"></select>
           <button id="lay">駅を並べる</button>
@@ -373,7 +373,8 @@
       lastUnyo = t.unyo;
       return head + `<tr class="pick ${i === curTrain ? "sel" : ""}" data-t="${i}">
         <td class="mono"><b>${esc(t.number || "（列番なし）")}</b></td><td>${esc(t.type)}</td>
-        ${yardRow ? `<td colspan="3">${esc(stById[f.st]?.name || "")} 構内入換 <span class="mono">${esc(short(f.arr || f.dep))}</span> ${f.track != null ? `${f.track}番線へ` : ""}</td><td class="muted">${esc(dirOf(t) || "")}</td></tr>`
+        ${yardRow && /^解/.test(t.number || "") && f.dep ? `<td colspan="3">${esc(stById[f.st]?.name || "")} ${f.track != null ? `${f.track}番線で` : ""}切り離し <span class="mono">${esc(short(f.dep))}</span>${t.turnNext ? ` → ${esc(t.turnNext)}` : ""}</td><td class="muted">${esc(dirOf(t) || "")}</td></tr>`
+        : yardRow ? `<td colspan="3">${esc(stById[f.st]?.name || "")} 構内入換 <span class="mono">${esc(short(f.arr || f.dep))}</span> ${f.track != null ? `${f.track}番線へ` : ""}</td><td class="muted">${esc(dirOf(t) || "")}</td></tr>`
           : `<td>${esc(f ? stById[f.st]?.name : "")} <span class="mono">${esc(short(f?.dep))}</span></td><td>→</td>
         <td>${esc(l ? stById[l.st]?.name : "")} <span class="mono">${esc(short(l?.arr || l?.dep))}</span></td><td class="muted">${esc(t.dest)}行 ${esc(dirOf(t) || "")}</td></tr>`}`;
     }).join("");
@@ -582,23 +583,72 @@
     const arrOf = (p) => { const l = p.stops[p.stops.length - 1]; return sec(l.arr || l.dep) ?? 0; };
     return plan.filter((p) => p.stay && !p.trial && p.stops.length && p.stops[p.stops.length - 1].st === first.st).sort((a, b) => arrOf(a) - arrOf(b));
   }
+  // ---- 前運用（切り離し）: 発駅に停車する列車（このグループの列車か所定の列車）から切り離した車両で、そのまま出る ----
+  // 切り離した車両は「解＋元の列番」の1駅だけの列車にし、その後運用をこの列車にする（時刻表の 解2076C と同じ切り離し）
+  const splitOf = (t) => t.number && t.stops[0] && cur.trains.find((x) => x !== t && /^解/.test(x.number || "") && x.turnHow === "発" && x.turnNext === t.number
+    && x.stops.length === 1 && x.stops[0].st === t.stops[0].st) || null;
+  function splitCandidates(t) {
+    const first = t.stops[0], dep = first && sec(first.dep);
+    if (!first || /^[解連]/.test(t.number || "")) return [];
+    const at = (x) => x.stops.find((s) => s.st === first.st);
+    const when = (x) => sec(at(x).arr || at(x).dep) ?? 0;
+    // 発駅に停車し（そこから出る列車は除く）、この列車が出る前の3時間以内に着く列車。近い順に20本まで
+    const ok = (x) => x !== t && x.number && !/^[解連]/.test(x.number) && x.turnHow !== "連結" && at(x) && at(x).stop === "停" && at(x) !== x.stops[0]
+      && (dep == null || (when(x) <= dep && when(x) >= dep - 3 * 3600));
+    const mine = cur.trains.filter(ok), names = new Set(mine.map((x) => x.number));
+    return [...mine, ...basePartners().filter((x) => !names.has(x.number) && ok(x))].sort((a, b) => when(b) - when(a)).slice(0, 20);
+  }
   function drawPrev(t) {
-    const show = !!(cur.overnight || t.from);
+    const splits = splitCandidates(t), sp = splitOf(t), spParent = sp ? sp.number.slice(1) : "";
+    const show = !!(cur.overnight || t.from || splits.length || sp);
     $("tPrevBox").hidden = !show;
     if (!show) return;
-    const cands = prevCandidates(t);
+    const cands = cur.overnight || t.from ? prevCandidates(t) : [];
     const keep = t.from && !cands.some((p) => p.name === t.from);
-    $("tPrev").innerHTML = `<option value="">なし</option>` + cands.map((p) => {
+    const keepSplit = spParent && !splits.some((x) => x.number === spParent);
+    const splitOpt = (x) => {
+      const s = x.stops.find((y) => y.st === t.stops[0].st), last = s === x.stops[x.stops.length - 1];
+      return `<option value="解:${esc(x.number)}" ${x.number === spParent ? "selected" : ""}>${esc(x.number)} から切り離し（${short(s.arr || s.dep)}着${s.track != null ? ` ${s.track}番線` : ""}${last ? "・終点" : ""}${x.base ? "・所定" : ""}）</option>`;
+    };
+    $("tPrev").innerHTML = `<option value="">なし</option>` + (cands.length || keep ? `<optgroup label="留置の所定列車から続けて（終夜）">` + cands.map((p) => {
       const l = p.stops[p.stops.length - 1];
       return `<option value="${esc(p.name)}" ${p.name === t.from ? "selected" : ""}>${esc(p.name)} ${short(l.arr || l.dep)}着 ${l.track != null ? l.track + "番線" : ""}${p.unyo ? `（運行${esc(p.unyo)}）` : ""}</option>`;
-    }).join("") + (keep ? `<option value="${esc(t.from)}" selected>${esc(t.from)}（発駅で終わらない列車）</option>` : "");
+    }).join("") + (keep ? `<option value="${esc(t.from)}" selected>${esc(t.from)}（発駅で終わらない列車）</option>` : "") + `</optgroup>` : "")
+      + (splits.length || keepSplit ? `<optgroup label="切り離した車両で出る">` + splits.map(splitOpt).join("")
+        + (keepSplit ? `<option value="解:${esc(spParent)}" selected>${esc(spParent)} から切り離し（今は発駅に停車しない・時刻が合わない）</option>` : "") + `</optgroup>` : "");
   }
   $("tPrev").onchange = () => {
     const t = cur.trains[curTrain];
     if (!t) return;
-    t.from = $("tPrev").value;
-    const p = t.from && plan && plan.find((x) => x.name === t.from), l = p && p.stops[p.stops.length - 1];
-    if (l && l.track != null && t.stops[0]) t.stops[0].track = l.track;
+    const v = $("tPrev").value, old = splitOf(t);
+    if (v.startsWith("解:")) {
+      const pn = v.slice(2), p = trainByNumber(pn), ps = p && p.stops.find((s) => s.st === t.stops[0]?.st);
+      if (!t.number) { alert("先にこの列車の列番を入れてください（切り離した車両の後運用にします）"); drawPrev(t); return; }
+      if (!ps) { drawPrev(t); return; }
+      const number = "解" + pn;
+      if (!old || old.number !== number) {
+        const other = cur.trains.find((x) => x.number === number);
+        if (other && (other.stops.length !== 1 || other.stops[0].st !== t.stops[0].st)) { alert(`${number} はもう別に作ってあります（そちらの後運用でこの列車を選んでください）`); drawPrev(t); return; }
+        if (old) cur.trains.splice(cur.trains.indexOf(old), 1);
+        // 終点で切り離すなら着いてから2分、途中駅なら元の列車が出てから1分あと（この列車の発車より遅くはしない）
+        const last = ps === p.stops[p.stops.length - 1];
+        let dep = last ? (sec(ps.arr || ps.dep) ?? 0) + 120 : (sec(ps.dep || ps.arr) ?? 0) + 60;
+        const tdep = sec(t.stops[0].dep);
+        if (tdep != null) dep = Math.min(dep, tdep);
+        const sp = other || { unyo: t.unyo, number, type: "回送", label: "", dest: "", cars: 0, turnVia: "", turnTime: null, stops: [] };
+        Object.assign(sp, { turnHow: "発", turnNext: t.number, stops: [{ st: ps.st, stop: "停", arr: null, dep: fmt(dep), track: ps.track ?? null }] });
+        if (!other) cur.trains.splice(cur.trains.indexOf(t), 0, sp);
+      }
+      t.from = "";
+      // 切り離した車両は、元の列車が着いた番線から出る
+      if (ps.track != null) t.stops[0].track = ps.track;
+    } else {
+      if (old) cur.trains.splice(cur.trains.indexOf(old), 1);
+      t.from = v;
+      const p = t.from && plan && plan.find((x) => x.name === t.from), l = p && p.stops[p.stops.length - 1];
+      if (l && l.track != null && t.stops[0]) t.stops[0].track = l.track;
+    }
+    curTrain = cur.trains.indexOf(t);
     dirty = true;
     drawTrains();
     drawTrain();
@@ -628,7 +678,7 @@
     // 構内入換（1駅だけで発の時刻がない列車）は、着の時刻（入換で番線に入る時刻）で比べる
     const dep0 = (x) => sec(x.stops[0].dep || (x.stops.length === 1 ? x.stops[0].arr : null)) ?? 0;
     const okNext = (x) => x !== t && x.stops[0] && x.stops[0].st === end.st && (arr == null || dep0(x) >= arr)
-        && (!d || !dirOf(x) || t.turnHow === "入換" || (dirOf(x) === d) === same);
+        && (!d || !dirOf(x) || t.turnHow === "入換" || /^解/.test(t.number || "") || (dirOf(x) === d) === same); // 切り離した車両は、どちらの向きにも出られる
     const mineN = cur.trains.filter(okNext).sort((a, b) => dep0(a) - dep0(b));
     // 終夜: 翌朝の所定の列車（前の列車がない始発）も、そのまま折返・入換の後運用にできる（近い順に20本まで）。
     // 向きは問わない（赤山町に上りで着いて、そのまま上りの始発 552 として出ることもある）
