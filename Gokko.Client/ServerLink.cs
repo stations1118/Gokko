@@ -164,6 +164,21 @@ public sealed partial class ServerLink
         }
     }
 
+    /// <summary>入換で動かすのを取り消す（取消ボタン）。</summary>
+    public async Task<string> ShuntCancelAsync()
+    {
+        var conn = _conn;
+        if (conn == null || !_joined) return "サーバーに接続していません";
+        try
+        {
+            return await conn.InvokeAsync<string>(Protocol.ShuntCancel);
+        }
+        catch (Exception)
+        {
+            return "取消を送れませんでした";
+        }
+    }
+
     public async Task<string> RequestDepartureAsync()
     {
         var conn = _conn;

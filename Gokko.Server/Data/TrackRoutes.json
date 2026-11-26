@@ -159,7 +159,13 @@
           { "fromCircuit": "TH65_YT", "fromLabel": "入換Y線", "to": 4, "routes": ["32LD"] },
           // 増結車（連777・連875C）と切り離した車両（回2131）: E線で折り返し、E線から番線へ
           { "fromCircuit": "TH65_ET", "fromLabel": "E線", "to": 3, "routes": ["29LC"] },
-          { "fromCircuit": "TH65_ET", "fromLabel": "E線", "to": 4, "routes": ["29LD"] }
+          { "fromCircuit": "TH65_ET", "fromLabel": "E線", "to": 4, "routes": ["29LD"] },
+          // X線（藤江方の本線）にいる列車: X線から 3〜6番線へ（3番線へは 31LC から入換の 27L、4番線へは 31LD から入換の 28L）。
+          // 1・2番線へは上りだけに書く（下りに書くと、下りの列車が 1・2番線を使えることになる）。駅扱いの一覧は上り・下りの両方から出す
+          { "fromCircuit": "TH65_XT", "fromLabel": "X線", "to": 3, "routes": ["31LC", "27L"] },
+          { "fromCircuit": "TH65_XT", "fromLabel": "X線", "to": 4, "routes": ["31LD", "28L"] },
+          { "fromCircuit": "TH65_XT", "fromLabel": "X線", "to": 5, "routes": ["31L5"] },
+          { "fromCircuit": "TH65_XT", "fromLabel": "X線", "to": 6, "routes": ["31L6"] }
         ],
         // 大道寺止めの入換: 3・4番線から入換Y線（既定）・E線へ
         // Y線へは、Y線から入換するときと同じく E線経由（番線→E線 2xRE、E線→Y線 30R）を既定にし、E線に列車がいれば直接（2xRY）
@@ -193,9 +199,13 @@
           { "fromCircuit": "TH65_YT", "fromLabel": "入換Y線", "to": 2, "routes": ["32LB"] },
           { "fromCircuit": "TH65_YT", "fromLabel": "入換Y線", "to": 3, "routes": ["32LC"] },
           { "fromCircuit": "TH65_YT", "fromLabel": "入換Y線", "to": 4, "routes": ["32LD"] },
-          // X線（藤江方の本線）に引き上げた列車: X線から 1・2番線へ
+          // X線（藤江方の本線）に引き上げた列車: X線から 1〜6番線へ（3番線へは 31LC から入換の 27L、4番線へは 31LD から入換の 28L）
           { "fromCircuit": "TH65_XT", "fromLabel": "X線", "to": 1, "routes": ["31LA"] },
           { "fromCircuit": "TH65_XT", "fromLabel": "X線", "to": 2, "routes": ["31LB"] },
+          { "fromCircuit": "TH65_XT", "fromLabel": "X線", "to": 3, "routes": ["31LC", "27L"] },
+          { "fromCircuit": "TH65_XT", "fromLabel": "X線", "to": 4, "routes": ["31LD", "28L"] },
+          { "fromCircuit": "TH65_XT", "fromLabel": "X線", "to": 5, "routes": ["31L5"] },
+          { "fromCircuit": "TH65_XT", "fromLabel": "X線", "to": 6, "routes": ["31L6"] },
           // 5番線（留置線）に置いた列車: Y線か X線へ出て、向きを変えてから番線へ（どちらを通るかはダイヤの折返の out。1653 → 2152 は Y線、2051 → 2250 は X線）
           { "fromCircuit": "TH65_5T", "fromLabel": "5番線", "to": 1, "routes": ["25RY"], "then": ["32LA"], "via": "Y線" },
           { "fromCircuit": "TH65_5T", "fromLabel": "5番線", "to": 2, "routes": ["25RY"], "then": ["32LB"], "via": "Y線" },
@@ -209,7 +219,9 @@
           { "from": 2, "label": "入換Y線", "routes": ["22RE", "30R"], "requireFree": ["TH65_ET"], "via": "E線" },
           { "from": 2, "label": "入換Y線", "routes": ["22RY"] }, { "from": 2, "label": "E線", "routes": ["22RE"] },
           { "from": 3, "label": "入換Y線", "routes": ["23RE", "30R"], "requireFree": ["TH65_ET"], "via": "E線" },
-          { "from": 3, "label": "入換Y線", "routes": ["23RY"] }, { "from": 3, "label": "E線", "routes": ["23RE"] }
+          { "from": 3, "label": "入換Y線", "routes": ["23RY"] }, { "from": 3, "label": "E線", "routes": ["23RE"] },
+          // X線（藤江方の本線）へ（駅扱いの入換）
+          { "from": 1, "label": "X線", "routes": ["21RX"] }, { "from": 2, "label": "X線", "routes": ["22RX"] }, { "from": 3, "label": "X線", "routes": ["23RX"] }
         ]
       },
       "notes": [

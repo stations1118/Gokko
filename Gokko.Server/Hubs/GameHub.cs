@@ -210,6 +210,16 @@ public sealed partial class GameHub(
         return message;
     }
 
+    /// <summary>入換で動かすのを取り消す（取消ボタン。在線共有モード）。</summary>
+    [HubMethodName(Protocol.ShuntCancel)]
+    public string ShuntCancel()
+    {
+        if (relay.IsConductor(Context.ConnectionId) || relay.IsRider(Context.ConnectionId)) return "入換で動かすのは運転士が扱います";
+        var message = players.CancelShunt(Context.ConnectionId);
+        broadcaster.Trigger();
+        return message;
+    }
+
     /// <summary>列車番号の確定（在線共有モード）。ダイヤにある列車か調べる。</summary>
     [HubMethodName(Protocol.CheckTrain)]
     public TrainCheckResult CheckTrain(string train) => routes.CheckTrain(train ?? "");

@@ -503,8 +503,8 @@ public sealed class AiTrains : BackgroundService
                 // 自動運転の列車（自分の列車）は要らないので、複製しない
                 var snapshot = _players.SnapshotWithoutVirtualTrains();
                 var users = UserTrains(snapshot);
-                var inGame = snapshot.Where(p => !PlayerRegistry.IsVirtual(p.ConnectionId) && p.InGame && p.TrainNumber.Length > 0)
-                    .Select(p => RailData.NormalizeTrain(p.TrainNumber)).ToHashSet();
+                var inGame = snapshot.Where(p => !PlayerRegistry.IsVirtual(p.ConnectionId) && p.InGame && p.CountedTrainNumber.Length > 0)
+                    .Select(p => RailData.NormalizeTrain(p.CountedTrainNumber)).ToHashSet(); // 入換で動かしている人は、残した在線の列番
 
                 // 防護無線（運転士の発報・司令の区間防護）の範囲。自分のロックの外で集める
                 activeProtection.Clear();
@@ -1057,7 +1057,11 @@ public sealed class AiTrains : BackgroundService
     private static bool TrackFitsDir(StationDef st, Dir dir, int track)
     {
         var r = st.Routes[dir];
-        return r.Depart.ContainsKey(track) || r.Arrive.ContainsKey(track) || r.Shunts.Any(s => s.From == track || s.To == track) || r.ShuntOuts.Any(o => o.From == track);
+        // 入換は、番線の回路で書いたもの（大道寺5番線の上りの入換は「TH65_5T から」）も数える。数えないと、5番線で 1653 が上りの 2152 に変われない
+        var circuit = st.TrackCircuit.GetValueOrDefault(track);
+        return r.Depart.ContainsKey(track) || r.Arrive.ContainsKey(track)
+               || r.Shunts.Any(s => s.From == track || s.To == track || circuit != null && s.FromCircuit == circuit)
+               || r.ShuntOuts.Any(o => o.From == track);
     }
 
     /// <summary>軌道回路がその駅の番線の回路で、その番線がその向きの列車の使わない番線なら、その理由。番線でない回路（引上線の分岐など）は null。</summary>
@@ -1843,7 +1847,7 @@ public sealed class AiTrains : BackgroundService
     {
         var set = new HashSet<string>();
         foreach (var p in snapshot)
-            if (!PlayerRegistry.IsVirtual(p.ConnectionId) && p.TrainNumber.Length > 0) set.Add(RailData.NormalizeTrain(p.TrainNumber));
+            if (!PlayerRegistry.IsVirtual(p.ConnectionId) && p.CountedTrainNumber.Length > 0) set.Add(RailData.NormalizeTrain(p.CountedTrainNumber)); // 入換で動かしている人は、残した在線の列番
         foreach (var c in _relay.Conductors())
             if (c.TrainNumber.Length > 0) set.Add(RailData.NormalizeTrain(c.TrainNumber));
         var roster = _duties.Current;

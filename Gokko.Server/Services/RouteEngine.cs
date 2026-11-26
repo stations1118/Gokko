@@ -642,6 +642,13 @@ public sealed partial class RouteEngine
         public string ShuntOutWait { get; set; } = "";
         public bool ForceShuntOut { get; set; }
 
+        /// <summary>
+        /// 引き上げた線（大道寺の X線）にいる終着の列車への、駅扱いの入換（その線から To 番線へ。TrackRoutes.json の shunt）。
+        /// 要求がなければ null。開通させたら null に戻す。
+        /// </summary>
+        public ShuntDef? ManualShuntFrom { get; set; }
+        public string ManualShuntFromWait { get; set; } = "";
+
         /// <summary>入換で経由する線路（"E線" など。直接なら null）。</summary>
         public string? ShuntVia { get; set; }
 
@@ -926,7 +933,7 @@ public sealed partial class RouteEngine
             foreach (var p in snapshot)
             {
                 // 入換で動かしている列車（ゲームの中だけで X線へ走っている）: サーバーの列車にしない。
-                // この人のゲームにだけ、走るのに要る進路（藤江13L・大道寺13LD）を送る（BuildOutputs）
+                // この人のゲームにだけ、走るのに要る進路（藤江13L、E線は大道寺32LE）を送る（BuildOutputs）
                 if (p.ShuntMove == ShuntMoveState.Moving && PlayerRegistry.ShuntSpotOf(p.ShuntSpot) is { } shuntSpot)
                 {
                     if (_runs.Remove(p.ConnectionId, out var was)) RunLog(now, was, "扱いを外しました（入換で、ゲームの中だけで動かす）");
@@ -1778,9 +1785,12 @@ public sealed partial class RouteEngine
         {
             // 最後尾が駅を抜けたら終わり
             // ただし、この駅で終わる列車（終着・行き止まりの番線）が、まだこの駅の場内の進路の回路にいるなら抜けていない
-            // （回路の区間分けがずれていると、短い列車が場内の途中の回路だけを踏んだときに抜けたとみなされ、引上げが出なくなる）
+            // （回路の区間分けがずれていると、短い列車が場内の途中の回路だけを踏んだときに抜けたとみなされ、引上げが出なくなる）。
+            // 駅間に入れてあるその駅の回路（大道寺の X線）へ引き上げただけのときも、まだ終わらない（X線から番線への入換を扱うため）
             if ((run.Rear - st.Zone) * step > 0
-                && !((st.Terminal || IsTurnbackTrack(run, st)) && st.ArrivePath.SelectMany(r => r.Circuits).Any(run.Player.TrackCircuits.Contains)))
+                && !((st.Terminal || IsTurnbackTrack(run, st))
+                     && (st.ArrivePath.SelectMany(r => r.Circuits).Any(run.Player.TrackCircuits.Contains)
+                         || run.Player.TrackCircuits.Count > 0 && run.Player.TrackCircuits.All(c => c.StartsWith(st.St.Id + "_", StringComparison.Ordinal)))))
             {
                 st.Done = true;
                 st.DoneUtc = now;
@@ -2204,7 +2214,23 @@ public sealed partial class RouteEngine
         // 終着の列車の入換（引上げ）
         var outs = ShuntOutOptions(run, st);
         for (var i = 0; i < outs.Count; i++) list.Add(($"shuntout:{i}", $"入換をする（{st.Track}番線→{outs[i].Label}）"));
+
+        // 引き上げた線（大道寺の X線）にいる終着の列車: その線から番線への入換
+        foreach (var sh in ShuntsFromHere(run, st))
+            list.Add(($"shuntfrom:{sh.To}", $"入換 {sh.FromLabel}→{sh.To}番線"));
         return list;
+    }
+
+    /// <summary>
+    /// 終着の列車が今いる線（引上げ先の X線など）から出る入換（上り・下りの shunt。行き先の番線ごとに最初のもの）。
+    /// 列車がその線にいなければ空。始発の入換（ShuntFrom。始発の列車が引上線などにいる）は、ManualOptions の始発の入換で出すので除く。
+    /// </summary>
+    private static List<ShuntDef> ShuntsFromHere(TrainRun run, StationRun st)
+    {
+        if (st.IsStart && st.ShuntFrom != null || !(st.Terminal || IsTurnbackTrack(run, st)) || run.Player.TrackCircuits.Count == 0) return [];
+        return st.St.Routes.Values.SelectMany(r => r.Shunts)
+            .Where(s => s.FromCircuit != null && s.Then is not { Count: > 0 } && s.Via == null && run.Player.TrackCircuits.Contains(s.FromCircuit))
+            .GroupBy(s => s.To).Select(g => g.First()).OrderBy(s => s.To).ToList();
     }
 
     /// <summary>
@@ -2257,6 +2283,10 @@ public sealed partial class RouteEngine
             case "shuntout" when track is { } idx && idx >= 0 && idx < ShuntOutOptions(run, st).Count:
                 // 入換をする: 連動の確認だけで開通させる（列車が番線に入りきる前でも要求できる）
                 (st.ShuntOutChoice, st.ShuntOut, st.ForceShuntOut) = (idx, GroupState.None, true);
+                return;
+            case "shuntfrom" when track is { } shTo && ShuntsFromHere(run, st).FirstOrDefault(s => s.To == shTo) is { } fromHere:
+                // 引き上げた線から番線への入換: 連動の確認だけで開通させる（Process）
+                (st.ManualShuntFrom, st.ManualShuntFromWait) = (fromHere, "");
                 return;
             default:
                 _log.Note($"駅扱い: {run.Train} {st.St.Name} の「{action}」は、この列車では使えません");
@@ -2732,6 +2762,25 @@ public sealed partial class RouteEngine
         if (!st.IsStart && st.ShuntOut == GroupState.Requested && st.ShuntThenPath is { Count: > 0 } outThen && st.ShuntThenAt is { } outAt
             && st.ShuntThen != GroupState.Requested)
             RequestThen(run, st, outThen, outAt, departure: true, occupied, now);
+
+        // 駅扱いの、引き上げた線（X線）から番線への入換。列車がその線を出ていれば取りやめる
+        if (st.ManualShuntFrom is { } msf)
+        {
+            if (msf.FromCircuit is not { } mfc || !run.Player.TrackCircuits.Contains(mfc)) st.ManualShuntFrom = null;
+            else if (InterlockConflict(run, msf.Routes, occupied) is { } msfWait)
+            {
+                ShuntWaitLog(now, run, st, "入換（駅扱い）", st.ManualShuntFromWait, msfWait);
+                st.ManualShuntFromWait = msfWait;
+            }
+            else
+            {
+                RouteLog(now, run, st, "入換（駅扱い）", msf.Routes);
+                foreach (var r in Enumerable.Reverse(msf.Routes))
+                    run.Requests.Add(new RouteReq { Def = r, Id = ++_seq, Station = st, Departure = true, RequestedUtc = now });
+                _log.Note($"入換: {run.Train} {st.St.Name} {msf.FromLabel}→{msf.To}番線（駅扱い。{string.Join("・", msf.Routes.Select(x => x.Name))}）");
+                (st.ManualShuntFrom, st.ManualShuntFromWait) = (null, "");
+            }
+        }
 
         // 前を走る同じ方向の列車がこの駅をまだ通っていないのに、後ろの自分が先に進路を取っていたら、譲る（まだ進路に入っていなければ取り消す）
         // 駅扱い（強制進路）で開通させた進路は譲らない
@@ -3237,8 +3286,7 @@ public sealed partial class RouteEngine
             && c.Contains(platform) && FullyInTrack(owner, r.Station, c))
             return [platform];
 
-        // 行き先が軌道回路の進路（大道寺の 22RE〜26RE・32LE は「ET」）も同じ。行き先の回路に入りきっていれば、その回路だけ。
-        // 22RE などは ET の先の 50ロT が、32LE は ET の先の 48T が後ろに並ぶ。E線で停まっている列車が、Y線への入換や 4番線の発着をふさがないように
+        // 行き先が軌道回路の進路（大道寺の 22RX・30R など）も同じ。行き先の回路に入りきっていれば、その回路だけ。
         if (DestCircuitOf(r.Def) is { } dest && owner.Player.TrackCircuits.Contains(dest)
             && c.Where(x => x != dest).All(x => !owner.Player.TrackCircuits.Contains(x)))
             return [dest];
@@ -3656,7 +3704,7 @@ public sealed partial class RouteEngine
             // 列車がもう入っている進路は消さない
             var wanted = run.Requests.Where(r => !r.Released).Select(r => (r.Def.Interlock, r.Def.Name)).ToHashSet();
 
-            // 入換で動かしたあと、残した在線につなぎ直した列車: ゲームの中だけで走るのに使った進路（大道寺13LD など）が残っていれば消す。
+            // 入換で動かしたあと、残した在線につなぎ直した列車: ゲームの中だけで走るのに使った進路（藤江13L・大道寺32LE）が残っていれば消す。
             // 列車が入っている進路なので、下の「残っていた進路」では消えない。残すと、そこから出る入換の進路が競合で開通しない
             if (run.Player.ShuntCleanupUntilUtc > now && PlayerRegistry.ShuntSpotOf(run.Player.ShuntSpot) is { } cleanup)
                 foreach (var k in cleanup.Routes.Where(k => run.Player.GameRoutes.Contains(k) && !wanted.Contains(k)))

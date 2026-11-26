@@ -80,6 +80,12 @@ public sealed partial class MainForm : Form
     // 入換で動かす（X線入換・E線入換）: X線に止まっていると「X線入換」、ゲームの中だけで走っている間は「X線停車中」（E線も同じ）。サーバーが出すときだけ見せる
     private readonly Button _shuntButton = new() { Text = "X線入換", Visible = false };
 
+    // 入換で動かしている途中（X線入換を押してから、つなぎ直すまで）だけ出す、取り消しのボタン
+    private readonly Button _shuntCancelButton = new() { Text = "取消", Visible = false };
+
+    // 進路タブの下のボタンの段（入換の2行の表示が入るよう、高さを変える）
+    private readonly RowStyle _routeBottomRow = new(SizeType.Absolute, 44);
+
     // 継続乗務: 押している間に運転画面を出ると、サーバーが最後の在線位置を5分間残す（同じ番線から次のシナリオを始めると、その列番で続ける）
     private readonly CheckBox _continueButton = new() { Text = "継続乗務", Appearance = Appearance.Button, TextAlign = ContentAlignment.MiddleCenter };
     private readonly CheckBox _allowConductorButton = new() { Text = "車掌乗務を許可", Appearance = Appearance.Button, TextAlign = ContentAlignment.MiddleCenter };
@@ -166,6 +172,16 @@ public sealed partial class MainForm : Form
         {
             _shuntButton.Enabled = false;
             ShowMessage(await _server.ShuntMoveAsync());
+        };
+
+        _shuntCancelButton.Font = new Font(Font.FontFamily, 9.5f, FontStyle.Bold);
+        _shuntCancelButton.Click += async (_, _) =>
+        {
+            if (MessageBox.Show(this, "入換をやめますか？\n残した在線は、ふつうの継続乗務の在線に戻ります。", "入換の取消",
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+            _shuntCancelButton.Enabled = false;
+            ShowMessage(await _server.ShuntCancelAsync());
+            _shuntCancelButton.Enabled = true;
         };
 
         Controls.Add(BuildLayout());
@@ -305,7 +321,7 @@ public sealed partial class MainForm : Form
         var routeLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1 };
         routeLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
         routeLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        routeLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+        routeLayout.RowStyles.Add(_routeBottomRow);
         _routeMessage.Dock = DockStyle.Fill;
         _routeMessage.TextAlign = ContentAlignment.MiddleLeft;
         _routeMessage.AutoEllipsis = true;
@@ -349,14 +365,19 @@ public sealed partial class MainForm : Form
         _shuntButton.Width = 130;
         departCell.Controls.Add(_departButton);
         departCell.Controls.Add(_shuntButton);
+        _shuntCancelButton.Dock = DockStyle.Right;
+        _shuntCancelButton.Width = 64;
+        departCell.Controls.Add(_shuntCancelButton); // 後に足したものから右に寄せるので、取消がいちばん右
         bottom.Controls.Add(departCell, 0, 0);
         if (showAllow) bottom.Controls.Add(_allowConductorButton, 1, 0);
         bottom.Controls.Add(_continueButton, showAllow ? 2 : 1, 0);
         routeLayout.Controls.Add(bottom);
         _routeTab.Controls.Add(routeLayout);
-        // 窓が低くて入りきらないときは、タブをスクロールする（進路の表と下のボタンがつぶれない高さを残す）
+        // 窓が低くて入りきらないときは、タブをスクロールする（進路の表と下のボタンがつぶれない高さを残す）。
+        // 最小の窓（480×560）でも下のボタン（出発要求・X線入換・継続乗務）が見えるよう、表のほうを縮める
+        // （250 にしていたときは、最小の窓でタブの見える高さが 205〜216 しかなく、下のボタンがスクロールしないと見えなかった）
         _routeTab.AutoScroll = true;
-        _routeTab.AutoScrollMinSize = new Size(0, 250);
+        _routeTab.AutoScrollMinSize = new Size(0, 170);
 
         _tabs.TabPages.Add(incidentPage);
         _tabs.TabPages.Add(_routeTab);
@@ -988,6 +1009,41 @@ public sealed partial class MainForm : Form
     // 表示
     // =====================================================================================
 
+    /// <summary>
+    /// 入換で動かすボタン（X線入換・X線停車中など）と取消ボタンを出す。label が null なら出さない。
+    /// 入換の途中（cancel）は、出発要求を隠してボタンを欄いっぱいに広げ、2行の表示（「X線入換中」と次にすること）を出す。押せないときは灰色。
+    /// </summary>
+    private void ApplyShunt(string? label, bool enabled, bool cancel)
+    {
+        var busy = label != null && cancel;
+        _shuntButton.Visible = label != null;
+        _shuntCancelButton.Visible = busy;
+        _departButton.Visible = !busy;
+        var twoLines = label?.Contains('\n') == true;
+        if (label == null)
+        {
+            _routeBottomRow.Height = 44;
+            return;
+        }
+
+        var size = Font.Size * (twoLines ? 0.85f : 1.1f);
+        if (Math.Abs(_shuntButton.Font.Size - size) > 0.01f) _shuntButton.Font = new Font(Font.FontFamily, size, FontStyle.Bold);
+        _routeBottomRow.Height = twoLines ? Math.Max(44, 2 * _shuntButton.Font.Height + 22) : 44; // 2行が入る高さ（高 DPI では文字が大きくなる）
+        if (busy) _shuntCancelButton.Width = Math.Max(48, TextRenderer.MeasureText(_shuntCancelButton.Text, _shuntCancelButton.Font).Width + 12);
+        _shuntButton.Text = label;
+        _shuntButton.Dock = busy ? DockStyle.Fill : DockStyle.Right;
+        if (!busy)
+        {
+            // 文字が入りきる幅にする（高 DPI で文字が大きいと 130 に入らないことがある）。出発要求のぶん（60）は残す
+            var width = Math.Max(130, TextRenderer.MeasureText(label, _shuntButton.Font).Width + 20);
+            _shuntButton.Width = Math.Min(width, Math.Max(130, (_shuntButton.Parent?.Width ?? width + 60) - 60));
+        }
+
+        _shuntButton.Enabled = enabled;
+        _shuntButton.BackColor = enabled ? Color.DarkOrange : SystemColors.Control;
+        _shuntButton.ForeColor = enabled ? Color.White : SystemColors.GrayText;
+    }
+
     private void UpdateView(ClientState? state)
     {
         CheckTabletLogin();
@@ -1058,7 +1114,7 @@ public sealed partial class MainForm : Form
             _planGrid.Rows.Clear();
             _planKey = "";
             _departButton.Enabled = false;
-            _shuntButton.Visible = false;
+            ApplyShunt(null, false, false);
         }
         else
         {
@@ -1073,15 +1129,8 @@ public sealed partial class MainForm : Form
             _departButton.Text = state?.DepartureLabel ?? "出発要求";
             _departButton.BackColor = _departButton.Enabled ? Color.SeaGreen : SystemColors.Control;
             _departButton.ForeColor = _departButton.Enabled ? Color.White : SystemColors.GrayText;
-            var shuntLabel = _role == CrewRole.Driver ? state?.ShuntButtonLabel : null; // 入換で動かすのは運転士が扱う
-            _shuntButton.Visible = shuntLabel != null;
-            if (shuntLabel != null)
-            {
-                _shuntButton.Text = shuntLabel;
-                _shuntButton.Enabled = state?.ShuntButtonEnabled == true;
-                _shuntButton.BackColor = _shuntButton.Enabled ? Color.DarkOrange : SystemColors.Control;
-                _shuntButton.ForeColor = _shuntButton.Enabled ? Color.White : SystemColors.GrayText;
-            }
+            // 入換で動かすのは運転士が扱う
+            ApplyShunt(_role == CrewRole.Driver ? state?.ShuntButtonLabel : null, state?.ShuntButtonEnabled == true, state?.ShuntCancelVisible == true);
         }
 
         // ダイヤ運転中は継続乗務を常に入（ボタンは押せない）。フリー運転に戻ったら、元の入・切に戻す

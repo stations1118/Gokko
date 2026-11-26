@@ -264,6 +264,9 @@ public sealed class ClientState
     /// <summary>入換で動かすボタンを押せるか。</summary>
     public bool ShuntButtonEnabled { get; set; }
 
+    /// <summary>入換で動かしている途中（X線入換を押してから、つなぎ直すまで）。取消ボタンを出す。</summary>
+    public bool ShuntCancelVisible { get; set; }
+
     /// <summary>
     /// 浅い複製（サーバーが、運転士への配信を車掌・添乗へ回すときに使う）。一覧は複製元と同じものを指すので、
     /// 中身を書き換えず、プロパティごと差し替えること。項目が増えても、そのまま複製される。
