@@ -145,9 +145,12 @@
           　名前: Duties.<input id="unyoName" type="text" size="14" maxlength="40" placeholder="例: 夕方">.csv <button id="makeUnyo">作る</button></div>
       </fieldset>
       <fieldset><legend>出勤と自動割り当て</legend>
-        <div class="note">乗務タブレットで［出勤］を押した人には、空いている行路をランダムに1つ自動で割り当てます（所属の合う行路から。前回と同じ行路と、ほかの人と列車が重なる行路は避けます）。<br>
+        <div class="note">乗務タブレットで［出勤］を押した人には、空いている行路をランダムに1つ自動で割り当てます（所属の合う行路から。前回と同じ行路と、ほかの人と乗務する列車が重なる行路は避けます。便乗は重なりに数えません）。<br>
           ［出勤者に自動で割り当てる］を押すと、出勤していて行路のない人に、出勤した順にまとめて割り当てます。自動で割り当てた行路には「自」と出ます。直すときは下の担当者の欄で選び直してください。<br>
-          タブレットで列番を入れて開いた人は、その列車の行路が割り当てられます。ほかの人がもう持っていたときは、あとから来た人が「臨変」になります。</div>
+          タブレットで列番を入れて開いた人は、その列車の行路が割り当てられます。ほかの人がもう持っていたときは、あとから来た人が「臨変」になります。<br>
+          出勤簿では、空いている行路を選んで出勤できます（同時に選んだときは先着）。<br>
+          退勤（タブレット・出勤簿の［退勤］、乗務員タブの出勤の［取消］、［全員の出勤を外す］）をすると、その人の行路（臨変も）は外れ、ほかの人が選べるようになります。
+          出勤した人がタブレットも開かず運転もしないまま30分たったときも、自動で退勤になり、行路が外れます。</div>
         <div class="row"><button id="autoAssign">出勤者に自動で割り当てる</button> <button id="clearAttend">全員の出勤を外す</button>
           　出勤: <span id="attendInfo">－</span></div>
       </fieldset>
@@ -611,7 +614,10 @@
   });
   $("users").addEventListener("click", async (ev) => {
     const a = ev.target.closest("button[data-attend]");
-    if (a) await act("POST", "/crew/attend", { id: a.dataset.attend, on: !!a.dataset.on });
+    if (!a) return;
+    // 出勤の取消は退勤と同じ（その人の行路も外れる）
+    if (!a.dataset.on && await box(`ID:${esc(a.dataset.attend)} の出勤を取り消しますか？<br>その人の行路の割り当て（臨変も）も外れます。`, ["はい", "いいえ"], true) !== "はい") return;
+    await act("POST", "/crew/attend", { id: a.dataset.attend, on: !!a.dataset.on });
   });
   $("autoAssign").onclick = async () => {
     const r = await act("POST", "/crew/auto-assign");
@@ -620,7 +626,7 @@
       : r.results.map((x) => `ID:${esc(x.user)} → ${x.duty ? `行路 <b class="mono">${esc(x.duty)}</b>` : `<span class="ng">空いている行路がありません</span>`}`).join("<br>"));
   };
   $("clearAttend").onclick = async () => {
-    if (await box("全員の出勤を外しますか？<br>司令員・信号扱いの出勤も外れます。行路の割り当てはそのまま残ります。", ["はい", "いいえ"], true) === "はい") await act("POST", "/crew/attend/clear");
+    if (await box("全員の出勤を外しますか？<br>司令員・信号扱いの出勤も外れます。出勤していた人の行路の割り当て（臨変も）も外れます。", ["はい", "いいえ"], true) === "はい") await act("POST", "/crew/attend/clear");
   };
   $("loadDuties").onclick = async () => {
     const f = $("dutyFile").value;

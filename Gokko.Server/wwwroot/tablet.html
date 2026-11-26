@@ -745,7 +745,7 @@
     document.getElementById("app").innerHTML = data ? flash() + rinjiNotice() + render(layout)
       : `<div class="pick">${flash()}<div class="pane err">${esc(error)}</div>
           ${notice ? `<div class="pane"><div class="row"><button data-attend="1">出勤</button></div>
-            <div class="t-muted">出勤すると、空いている行路が自動で割り当てられます。乗る列車が決まっているときは、「列車を選ぶ」から列番を入れて開いてください。</div></div>` : ""}
+            <div class="t-muted">出勤すると、空いている行路が自動で割り当てられます。好きな行路を選ぶときは<a href="shukkinbo.html" style="color:var(--muted)">出勤簿</a>から選んで出勤してください。乗る列車が決まっているときは、「列車を選ぶ」から列番を入れて開いてください。</div></div>` : ""}
           <div class="pane"><div class="row" style="gap:4px 14px">${user ? `<span>ログイン: ${who()}（<a href="#" data-leave="1" style="color:var(--muted)">退勤</a>）（<a href="#" data-logout="1" style="color:var(--muted)">ログアウト</a>）</span>` : ""}<span><a href="tablet.html?pick=1" style="color:var(--muted)">列車を選ぶ</a></span>${dispatchLinks()}</div></div></div>`;
     restoreStaffScroll(keepTop);
   }

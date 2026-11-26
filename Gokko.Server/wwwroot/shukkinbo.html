@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>出勤簿</title>
 <style>
-  /* 出勤簿: 上から 行路と担当する運転士・車掌 → 各駅の信号扱い → 司令員。見るだけ（ログインなしで見られる。名前だけを出す）
+  /* 出勤簿: 上から 自分の出勤 → 行路と担当する運転士・車掌 → 各駅の信号扱い → 司令員。一覧はログインなしで見られる（名前だけを出す）
+     ログインしていれば、空いている行路を選んで出勤・退勤できる
      色は乗務タブレット・乗務メニューにそろえる */
   :root {
     --bg: #1b2533; --panel: #22304a; --bar: #26354b; --fg: #e8eef6; --muted: #93a3b8; --line: #33445c;
@@ -46,8 +47,20 @@
   .none { color: var(--muted); font-size: 13px; }
   .waiting { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
   .err { color: #ff8a80; }
+  .free.off { color: var(--muted); font-weight: 400; }
+  .tag.dep { background: var(--info); }
+  .me { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+  .me .n { font-weight: 700; }
+  button { font: inherit; font-size: 13px; border: 1px solid var(--line); background: var(--bar); color: var(--fg); border-radius: 6px; padding: 2px 10px; cursor: pointer; }
+  button:hover { background: #31445f; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.pick { background: var(--ok); border-color: var(--ok); color: #fff; font-weight: 700; }
+  button.pick:hover { background: #24a05a; }
+  .flash { margin-top: 8px; padding: 6px 10px; border-radius: 8px; background: #1d3a2b; border: 1px solid var(--ok); }
+  .flash.ng { background: #3a1d1d; border-color: #b94a48; }
   @media (max-width: 600px) { body { padding: 10px; } td.cur { display: none; } th.cur { display: none; } }
 </style>
+<script src="crewsession.js"></script>
 <script src="menulink.js"></script>
 <script src="gameclock.js"></script>
 </head>
@@ -60,6 +73,12 @@
   <span class="clock" id="clock"></span>
 </div>
 <div id="err" class="err"></div>
+
+<section>
+  <h2>自分の出勤</h2>
+  <div class="me" id="me" style="margin-top:6px"><span class="none">読み込み中…</span></div>
+  <div id="flash"></div>
+</section>
 
 <section>
   <h2>行路（運転士・車掌）</h2>
@@ -88,11 +107,13 @@
   // 行路の一覧（/api/tid/duties）と、司令員・信号扱いの出勤（/api/tid/crew/role-attendance）を5秒ごとに読む
   // 運転士: 行路の担当者（臨変も）。乗務の［出勤］をしていれば「出勤」、していなければ「未出勤」。いまその行路の列車を運転していれば緑の点
   // 車掌: その行路のいま乗る列車に、車掌として乗っている人
+  // ログインしていて行路を持っていなければ、選べる行路（空いていて、ほかの人の行路と列車が重ならない）に［この行路で出勤］を出す
+  // （同時に選んだときは先着。2人目にはサーバーが断りを返すので、知らせて読み直す）。選ばずにタブレットの［出勤］を押せば、今までどおりランダム
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const tm = (iso) => `<span class="time">${GokkoClock.fmt(Date.parse(iso))}</span>`;
   const FREE = `<span class="free">空き</span>`;
-  const filters = { all: ["すべての行路", () => true], taken: ["人のいる行路", (d) => d.drivers.length || d.conductors.length],
+  const filters = { all: ["すべての行路", () => true], pickable: ["選べる行路", (d) => d.pickable], taken: ["人のいる行路", (d) => d.drivers.length || d.conductors.length],
     driver: ["運転士が空き", (d) => !d.drivers.length], conductor: ["車掌が空き", (d) => !d.conductors.length] };
   let filter = "all";
   try { const f = localStorage.getItem("gokkoShukkinboFilter"); if (filters[f]) filter = f; } catch (e) {}
@@ -109,9 +130,13 @@
     const driver = (p) => `<span class="who">${p.onTrain ? `<span class="dot" title="いま運転中"></span>` : ""}<span class="n">${esc(p.name)}</span>${
       p.attended ? `<span class="tag att">出勤</span>` : `<span class="tag no">未出勤</span>`}${p.extra ? `<span class="tag rin">臨変</span>` : ""}</span>`;
     const shown = ds.filter(filters[filter][1]);
+    const canPick = !!(me && !me.duties.length); // ログインしていて、行路を持っていない
+    const dep = me && me.depot ? me.depot[0] : "";
+    const freeDriver = (d) => !d.pickable ? `<span class="free off" title="ほかの人の行路と列車が重なるため、選べません">空き（列車が重なる）</span>`
+      : canPick ? `${FREE} <button class="pick" data-pick="${esc(d.id)}">この行路で出勤</button>` : FREE;
     setHtml($("duties"), !ds.length ? `<tr><td colspan="4" class="none">行路表（Duties.csv）はまだありません</td></tr>`
-      : shown.map((d) => `<tr><td class="id">${esc(d.id)}</td><td class="cur">${esc(d.current || "")}</td>
-          <td>${d.drivers.length ? d.drivers.map(driver).join("") : FREE}</td>
+      : shown.map((d) => `<tr><td class="id">${esc(d.id)}${dep && d.id.includes(dep) ? ` <span class="tag dep" title="自分の所属の行路">所属</span>` : ""}</td><td class="cur">${esc(d.current || "")}</td>
+          <td>${d.drivers.length ? d.drivers.map(driver).join("") : freeDriver(d)}</td>
           <td>${d.conductors.length ? d.conductors.map((p) => `<span class="who"><span class="n">${esc(p.name)}</span></span>`).join("") : FREE}</td></tr>`).join("")
         || `<tr><td colspan="4" class="none">${filters[filter][0]}の行路はありません</td></tr>`);
     setHtml($("waiting"), `<span class="muted">出勤していて行路のない運転士: </span>${(j.waiting || []).length
@@ -128,9 +153,54 @@
     setHtml($("dispatch"), disp.people.length ? disp.people.map(who).join("") : `<span class="none">いません</span>`);
   }
 
+  // 自分（ログインしている乗務員）: 名前・所属・出勤・持っている行路。ログインしていなければ null
+  let me = null;
+  const token = () => (window.GokkoCrew ? GokkoCrew.token() : "");
+  async function loadMe() {
+    if (!token()) { me = null; return; }
+    try {
+      const res = await fetch("/api/tid/crew/me", { headers: { "X-Crew-Token": token() }, cache: "no-store" });
+      me = res.ok ? await res.json() : null;
+      if (res.status === 401) GokkoCrew.clear();
+    } catch (e) { /* 読めなければ前のまま */ }
+  }
+  function drawMe() {
+    if (!me) {
+      setHtml($("me"), `<span class="none">行路を選んで出勤するには、乗務メニューでログインしてから、乗務メニューの［出勤簿］で開いてください。</span>`);
+      return;
+    }
+    const who = `<span class="n">${esc(me.name || me.id)}</span>${me.depot ? `<span class="muted">（${esc(me.depot)}）</span>` : ""}`;
+    const state = me.duties.length ? `<span class="tag att">出勤</span> 行路 <b>${me.duties.map(esc).join("・")}</b> を担当しています`
+      : me.attended ? `<span class="tag att">出勤</span> 行路はまだありません。下の一覧で［この行路で出勤］を押すと、その行路を担当します`
+      : `<span class="tag no">未出勤</span> 下の一覧で［この行路で出勤］を押すと、その行路で出勤します（タブレットの［出勤］なら、空いている行路がランダムに決まります）`;
+    setHtml($("me"), `${who}<span>${state}</span><span class="spacer"></span>${
+      me.attended || me.duties.length ? `<button id="leave">退勤</button>` : ""}<a href="tablet.html">乗務タブレットへ</a>`);
+  }
+  function flash(text, ng) { $("flash").innerHTML = text ? `<div class="flash${ng ? " ng" : ""}">${esc(text)}</div>` : ""; }
+  async function post(path, body) {
+    const res = await fetch("/api/tid" + path, { method: "POST", headers: { "Content-Type": "application/json", "X-Crew-Token": token() }, body: JSON.stringify(body || {}) });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.message || "うまくいきませんでした");
+    return j;
+  }
+  let busy = false;
+  document.addEventListener("click", async (ev) => {
+    const b = ev.target.closest("button[data-pick], button#leave");
+    if (!b || busy) return;
+    const duty = b.dataset.pick;
+    if (duty ? !confirm(`行路 ${duty} で出勤しますか？`) : !confirm("退勤しますか？\n担当している行路は外れ、ほかの人が選べるようになります。")) return;
+    busy = true; b.disabled = true;
+    try { flash((await post(duty ? "/crew/attend-duty" : "/crew/leave", duty ? { duty } : {})).message); }
+    catch (e) { flash(e.message, true); }
+    busy = false;
+    $("dutySum").dataset.html = ""; refresh();
+  });
+
   async function refresh() {
     $("clock").textContent = GokkoClock.fmt(GokkoClock.now());
     let msg = "";
+    await loadMe();
+    drawMe();
     try { drawDuties(await (await fetch("/api/tid/duties", { cache: "no-store" })).json()); } catch (e) { msg = "行路の一覧を読めませんでした"; }
     try { drawRoles(await (await fetch("/api/tid/crew/role-attendance", { cache: "no-store" })).json()); } catch (e) { msg = "出勤者を読めませんでした"; }
     $("err").textContent = msg;

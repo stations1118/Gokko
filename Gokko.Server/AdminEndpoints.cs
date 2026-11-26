@@ -52,6 +52,9 @@ public static class AdminEndpoints
 
     public sealed record CrewRoleRequest(string? Id, string? Role, bool On);
     public sealed record CrewAttendRequest(string? Id, bool On);
+
+    /// <summary>出勤簿で行路を選んで出勤する（行路番号）。</summary>
+    public sealed record CrewAttendDutyRequest(string? Duty);
     public sealed record CrewTakeRequest(string? Train);
     public sealed record CrewQrRequest(string? Origin);
     public sealed record CrewQrLoginRequest(string? Code);
@@ -236,6 +239,7 @@ public static class AdminEndpoints
             var token = http.Headers["X-Crew-Token"].ToString();
             var id = crew.UserOfToken(token);
             if (token.Length > 0 && id == null) return Results.Json(new { message = "ログインが切れました。もう一度ログインしてください", logout = true }, statusCode: 401);
+            crew.CrewActive(id); // タブレットを開いている間は、乗務員の自動退勤を数え直す
             // ゲームで運転している列車の列番が、自分の行路にないものに変わったら、その列車の行路に切り替える（重なってもよい）
             // 自分が運転している列車（参加者の一覧を丸ごと複製しない。1回の読み込みで2回複製していた）
             var mine = id == null ? new List<string>() : players.CrewTrains().Where(x => x.CrewId == id).Select(x => x.Train).ToList();
@@ -261,6 +265,13 @@ public static class AdminEndpoints
             if (crew.UserOfToken(http.Headers["X-Crew-Token"].ToString()) is not { } id) return Results.Json(new { message = "ログインしてください" }, statusCode: 401);
             var (ok, error) = crew.Attend(id, rosters.Current);
             return ok == null ? Results.BadRequest(new { message = error }) : Results.Ok(new { duties = ok.Duties, assigned = ok.Assigned, message = ok.Message });
+        });
+        // 行路を選んで出勤（出勤簿の［この行路で出勤］）: 空いている行路なら、その行路を担当にする。同時に選んだときは先着（2人目には断りを返す）
+        view.MapPost("/crew/attend-duty", (HttpRequest http, CrewAttendDutyRequest req, CrewRoster crew, DutyRosters rosters) =>
+        {
+            if (crew.UserOfToken(http.Headers["X-Crew-Token"].ToString()) is not { } id) return Results.Json(new { message = "ログインしてください" }, statusCode: 401);
+            var (ok, error) = crew.AttendWithDuty(id, req.Duty, rosters.Current);
+            return ok == null ? Results.Conflict(new { message = error }) : Results.Ok(new { duties = ok.Duties, assigned = ok.Assigned, message = ok.Message });
         });
         // 退勤（タブレットの［退勤］）: 出勤を外し、担当していた行路（臨変も）を外す
         view.MapPost("/crew/leave", (HttpRequest http, CrewRoster crew) =>
@@ -360,12 +371,15 @@ public static class AdminEndpoints
             return Results.Ok(new { id, token, discordEnabled = l.Enabled, discordLinked = l.Linked, linkUntil = l.Until });
         });
         // 合い札がまだ使えるか（クライアントの起動時）。Discord と紐づけているかも返す（紐づけていなければ、画面が紐づけを勧める）
-        view.MapGet("/crew/me", (HttpRequest http, CrewRoster crew) =>
+        // 出勤簿のために、名前・所属・乗務の出勤・持っている行路も返す
+        view.MapGet("/crew/me", (HttpRequest http, CrewRoster crew, DutyRosters rosters) =>
         {
             if (crew.InfoOf(crew.UserOfClientToken(http.Headers["X-Crew-Token"].ToString())) is not { } u) // クライアントの仮の合い札でもよい
                 return Results.Json(new { message = "ログインしてください" }, statusCode: 401);
             var l = LinkInfo(crew, u.Id);
-            return Results.Ok(new { id = u.Id, roles = u.Roles, discordEnabled = l.Enabled, discordLinked = l.Linked, linkUntil = l.Until });
+            var duties = crew.DutiesOf(u.Id).Where(d => rosters.Current.DutyById(d) != null).ToList();
+            return Results.Ok(new { id = u.Id, name = u.Name, depot = u.Depot, roles = u.Roles, attended = crew.AttendedAt(u.Id) != null, duties,
+                discordEnabled = l.Enabled, discordLinked = l.Linked, linkUntil = l.Until });
         });
         view.MapPost("/logout", (HttpRequest http, CrewRoster crew) =>
         {
@@ -401,6 +415,7 @@ public static class AdminEndpoints
             // 乗務の出勤（タブレットの［出勤］）。出勤簿で、出勤しているか・出勤していて行路のない人を出す
             var attended = crew.Attended();
             var currents = engine.CurrentTrainsOf(roster.Duties); // 行路1本ずつではなく、1回のロックでまとめて
+            var pickable = crew.PickableDuties(roster); // 出勤簿で選べる行路（空いていて、ほかの人の行路と列車が重ならない）
             return new
             {
                 file = roster.File,
@@ -413,7 +428,7 @@ public static class AdminEndpoints
                     if (assigned.TryGetValue(d.Id, out var a)) drivers.Add(Driver(a, false));
                     drivers.AddRange(extras[d.Id].Where(u => u != a).Distinct().Select(u => Driver(u, true)));
                     var onboard = current == null ? new List<object>() : conductors[current].Select(c => (object)new { name = NameOf(c.CrewId, c.Name) }).ToList();
-                    return new { id = d.Id, trains, current, drivers, conductors = onboard };
+                    return new { id = d.Id, trains, current, drivers, conductors = onboard, pickable = pickable.Contains(d.Id) };
                 }),
                 waiting = attended.Where(x => !crew.DutiesOf(x.Key).Any(d => roster.DutyById(d) != null)).OrderBy(x => x.Value)
                     .Select(x => new { name = NameOf(x.Key), since = x.Value }),
