@@ -111,6 +111,7 @@ public sealed partial class MainForm : Form
         {
             _crewPanel = new CrewController(_role, _game, _config);
             _crewPanel.Message += ShowMessage;
+            _crewPanel.RunRecorded += curve => _ = _server.UploadRunCurveAsync(curve);
             _crewPanel.ConductorRequested += r => BeginInvoke(() => ShowConductorRequest(r));
             _crewPanel.RequestCancelled += id => BeginInvoke(() => CancelConductorRequest(id));
             _crewPanel.ApprovalReceived += a => BeginInvoke(() => ShowApproval(a));

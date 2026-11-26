@@ -22,6 +22,7 @@ public sealed partial class GameHub(
     OnboardAudio onboard,
     ServerOptions options,
     CrewRoster crew,
+    RunCurves runCurves,
     ILogger<GameHub> logger) : Hub
 {
     [HubMethodName(Protocol.Join)]
@@ -176,6 +177,14 @@ public sealed partial class GameHub(
     }
 
     /// <summary>出発要求ボタン（在線共有モード）。</summary>
+    /// <summary>ランカーブ（1駅間の走り方。gzip した JSON）を受け取って、日ごとのファイルに足す。運転士と車掌（自動運転）だけ。</summary>
+    [HubMethodName(Protocol.UploadRunCurve)]
+    public bool UploadRunCurve(byte[] data)
+    {
+        var crewId = players.Get(Context.ConnectionId)?.CrewId is { Length: > 0 } id ? id : relay.ConductorCrew(Context.ConnectionId);
+        return crewId is { Length: > 0 } && runCurves.Add(crewId, data);
+    }
+
     [HubMethodName(Protocol.RequestDeparture)]
     public string RequestDeparture()
     {

@@ -56,6 +56,9 @@ public sealed class AutoDriver
     private List<Station> _stations = [];
     private readonly Queue<(long Ms, float Speed)> _speeds = new();
 
+    /// <summary>覚えたブレーキの効き方（実際の減速度 ÷ 目安。ランカーブに残す）。</summary>
+    public double Gain => _gain;
+
     /// <summary>今していること（操作盤に出す）。</summary>
     public string Note { get; private set; } = "";
 

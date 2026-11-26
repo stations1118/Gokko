@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text;
 using Gokko.Common;
+using TrainCrew;
 
 namespace Gokko.Client;
 
@@ -150,6 +151,13 @@ public sealed class CrewController
     /// </summary>
     public double LastGap { get; private set; } = double.NaN;
 
+    /// <summary>ランカーブ（1駅間の走り方）が1つできた。サーバーへ送るのは本体（MainForm）。</summary>
+    public event Action<RunCurve>? RunRecorded
+    {
+        add => _recorder.Completed += value;
+        remove => _recorder.Completed -= value;
+    }
+
     /// <summary>画面の下のお知らせに出す。</summary>
     public event Action<string>? Message;
 
@@ -159,6 +167,8 @@ public sealed class CrewController
     public void Start(string url, string password, string crewToken)
     {
         _tci.Start();
+        _tci.WantStations = _role == CrewRole.Driver; // 運転士はランカーブを記録する（停車駅の一覧が要る）
+        _ = LoadStopTableAsync();
         if (_role == CrewRole.Driver && _keyHook == null)
         {
             _keyHook = new GlobalKeyboardHook();
@@ -420,6 +430,12 @@ public sealed class CrewController
     private void DriverTick(TciState? s)
     {
         var now = Environment.TickCount64;
+        if (s is { InGame: true, IsDriver: true } && _tci.LastRaw is { } raw)
+        {
+            var signals = _tci.Signals();
+            Record("manual", s, raw, UpdateStop(s, raw, signals), signals, 0, now);
+        }
+
         foreach (var (binding, down) in _joystick.Poll()) OnDriverInputDevice(binding, down); // コントローラーのボタン
         while (_fromConductor.TryDequeue(out var c))
         {
@@ -717,7 +733,9 @@ public sealed class CrewController
     // ---- 自動運転（車掌モード。運転士がいない列車で、自分のゲームのノッチを自動運転が決める） ----
 
     private AutoDriver? _auto;
-    private StopDistance _stopDistance = new(null); // 停目までの残り（表はサーバーから自動運転を入れたときに1回だけ読む）
+    private StopDistance _stopDistance = new(null); // 停目までの残り（運転士の記録・自動運転で使う）
+    private StopTargetTable? _stopTable; // 停目の表（乗務を始めたときにサーバーから1回だけ読む。読めなければ null）
+    private readonly RunRecorder _recorder = new(); // ランカーブ（運転士の人の運転・車掌の自動運転）
     private bool _autoBuzzer; // 発車の合図（ブザー）が鳴っていたか（鳴り始めを見る）
     private int _autoPower = int.MinValue, _autoBrake = int.MinValue; // 前の周期に送ったノッチ
     private long _autoMismatchMs; // ゲームのノッチが、送ったノッチと違い始めた時刻（0 なら同じ）
@@ -743,8 +761,8 @@ public sealed class CrewController
         }
 
         _auto = new AutoDriver();
-        _stopDistance = new StopDistance(null);
-        _ = LoadStopTableAsync(_auto);
+        _stopDistance = new StopDistance(_stopTable);
+        _recorder.Reset();
         _autoBuzzer = true; // 入れた瞬間に鳴っていたブザーでは発車しない
         _autoPower = _autoBrake = int.MinValue;
         _autoMismatchMs = 0;
@@ -753,12 +771,27 @@ public sealed class CrewController
         Message?.Invoke("自動運転: ノッチは自動で扱います。ドアは操作盤で扱い、閉めたらブザーで発車の合図をしてください");
     }
 
-    /// <summary>停目の表を読む（読めなければゲームの距離だけで動く）。読み終わったときに同じ自動運転が続いていれば差し替える。</summary>
-    private async Task LoadStopTableAsync(AutoDriver auto)
+    /// <summary>停目の表を読む（読めなければゲームの距離だけで動く）。読めたら、停目までの残りを出し直す（記録は次の駅間から）。</summary>
+    private async Task LoadStopTableAsync()
     {
         var table = await StopDistance.LoadTableAsync();
-        if (table != null && ReferenceEquals(_auto, auto)) _stopDistance = new StopDistance(table);
+        if (table == null) return;
+        _stopTable = table;
+        _stopDistance = new StopDistance(table);
+        _recorder.Reset();
     }
+
+    /// <summary>停目までの残り（走った距離・両数・停車駅・信号機・軌道回路から）。</summary>
+    private StopDistanceResult UpdateStop(TciState s, TrainState raw, IReadOnlyList<SignalInfo> signals) =>
+        _stopDistance.Update(new StopDistanceInput(
+            raw.TotalLength, s.Speed, raw.CarStates?.Count ?? 0,
+            (raw.stationList ?? []).Select(x => new GameStop(x.Name ?? "", x.StopPosName ?? "", x.stopType != StopType.Passing, x.TotalLength)).ToList(),
+            signals.Select(x => new GameSignal(x.name ?? "", x.phase ?? "", x.distance)).ToList(),
+            _game.Latest?.TrackCircuits ?? []));
+
+    /// <summary>ランカーブを1つ記録する（運転士は人の運転、車掌は自動運転の間だけ）。</summary>
+    private void Record(string mode, TciState s, TrainState raw, StopDistanceResult stop, IReadOnlyList<SignalInfo> signals, double gain, long now) =>
+        _recorder.Step(mode, s, raw, stop, signals, _game.Latest?.TrackCircuits ?? [], _crew.Status?.TrainNumber is { Length: > 0 } t ? t : s.DiaName, gain, now);
 
     /// <summary>自動運転を切る（入っていなければ何もしない）。ノッチは中立・常用最大ブレーキに戻す。</summary>
     private void StopAuto(string message)
@@ -766,6 +799,7 @@ public sealed class CrewController
         if (_auto == null) return;
         _auto = null;
         _tci.WantStations = false;
+        _recorder.Reset();
         _tci.SetNotch(0, ServiceMaxBrake, force: true);
         _panel?.SetAuto(false);
         if (message.Length > 0) Message?.Invoke(message);
@@ -786,12 +820,9 @@ public sealed class CrewController
         if (resend) _autoMismatchMs = 0;
 
         var signals = _tci.Signals();
-        var stop = _stopDistance.Update(new StopDistanceInput(
-            raw.TotalLength, s.Speed, raw.CarStates?.Count ?? 0,
-            (raw.stationList ?? []).Select(x => new GameStop(x.Name ?? "", x.StopPosName ?? "", x.stopType != TrainCrew.StopType.Passing, x.TotalLength)).ToList(),
-            signals.Select(x => new GameSignal(x.name ?? "", x.phase ?? "", x.distance)).ToList(),
-            _game.Latest?.TrackCircuits ?? []));
+        var stop = UpdateStop(s, raw, signals);
         var (power, brake) = _auto.Step(s, raw, signals, stop, departSignal, _emergency, now);
+        Record("auto", s, raw, stop, signals, _auto.Gain, now);
         _tci.SetReverser(1, resend);
         _tci.SetNotch(power, brake, resend);
         _autoPower = power;
