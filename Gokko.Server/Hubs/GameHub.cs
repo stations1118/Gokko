@@ -119,13 +119,16 @@ public sealed partial class GameHub(
             var drives = report.AutoDriving && train.Length > 0 && !players.SnapshotWithoutVirtualTrains().Any(p => p.ConnectionId != conn && p.TrainNumber == train);
             if (drives)
             {
-                if (!players.IsJoined(conn))
+                var started = !players.IsJoined(conn);
+                if (started)
                 {
                     players.Add(conn, ShareMode.Shared, relay.ConductorCrew(conn) ?? "");
                     logger.LogInformation("自動運転 {ConnectionId}（車掌が {Train} を運転）", conn, train);
                 }
                 players.ApplyReport(conn, report);
-                broadcaster.Trigger();
+                // すぐ配信するのは、運転を始めたときだけ。報告（0.5秒ごと）のたびに配信すると、自動運転の車掌の人数だけ
+                // 進路の処理と全員への配信の回数が増える（運転士の報告では配信しない。次の周期の配信に入る）
+                if (started) broadcaster.Trigger();
             }
             else if (players.IsJoined(conn))
             {
