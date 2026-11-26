@@ -15,7 +15,7 @@ namespace Gokko.Server.Services;
 /// ・当てはまるひな形がない特急は、rule で特急の時刻だけ変える
 /// ・浜園は時刻表では通過のまま（停車・通過は臨時停車の指示で決まる）。着・発の時刻だけ書く
 /// ・ひな形は1時間ずつずらして当てはめる（:00 発と :30 発は時刻の形が同じでも、関わる列車が違う）
-/// ・時刻を変えたら、待避・接続の記事も、その列車と相手の列車だけ作り直す（<see cref="DiaNotes"/>）。すれ違いなどの記事は所定のまま
+/// ・時刻を変えたら、待避・連絡・交換の記事も、その列車と相手の列車だけ作り直す（RailData が表を作り直すとき。<see cref="DiaNotes"/>）
 /// </summary>
 public sealed class TempStopRetime
 {
@@ -215,9 +215,7 @@ public sealed class TempStopRetime
                     var cur = retimed.GetValueOrDefault(e.Number) ?? _rail.BaseDia.GetValueOrDefault(e.Number);
                     if (cur != null) retimed[e.Number] = Apply(cur, e);
                 }
-            // 待避・接続の記事を、時刻を変えた表から作り直す（記事だけ変わる相手の列車も差し替える）
-            var withNotes = DiaNotes.Rewrite(_rail.BaseDia, retimed);
-            _rail.SetRetimed(withNotes);
+            _rail.SetRetimed(retimed);
 
             var added = stopped.Except(before).ToList();
             var removed = before.Except(stopped).ToList();
@@ -228,8 +226,7 @@ public sealed class TempStopRetime
                                 added.Count > 0 ? $"{string.Join("・", added)} を臨停用の時刻に" : null,
                                 removed.Count > 0 ? $"{string.Join("・", removed)} を所定の時刻に" : null
                             }.OfType<string>())
-                            + (others.Count > 0 ? $"（関わる列車: {string.Join("・", others)}）" : "")
-                            + (withNotes.Count > retimed.Count ? $"（待避・接続の記事だけ変えた列車: {withNotes.Count - retimed.Count}本）" : ""));
+                            + (others.Count > 0 ? $"（関わる列車: {string.Join("・", others)}）" : ""));
         }
     }
 
