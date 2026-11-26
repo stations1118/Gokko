@@ -716,6 +716,12 @@ public sealed partial class RouteEngine
         public int Front { get; set; }
         public int Rear { get; set; }
         public double Fraction { get; set; } = 0.5;
+        /// <summary>Fraction を停車駅の距離から出せたか（出せなければ 0.5 のまま）。</summary>
+        public bool FractionKnown { get; set; }
+        /// <summary>先頭が今のゾーンに来た時刻（初めて位置が分かったときは、その時刻）。同じゾーンにいる2本の前後を決めるのに使う。</summary>
+        public DateTime? ZoneSinceUtc { get; set; }
+        /// <summary>先頭が手前のゾーンから今のゾーンへ進んだのを見たか（false なら、初めて位置が分かったときから、このゾーンにいる）。</summary>
+        public bool ZoneEntered { get; set; }
         public bool Initialized { get; set; }
 
         /// <summary>駅の一覧を作った・決め直したときのゲームの停車駅の目安（ダイヤにない列車で、変わったら決め直す）。</summary>
@@ -1438,18 +1444,27 @@ public sealed partial class RouteEngine
         var zones = PositionZones(run);
         run.HasPosition = zones.Count > 0;
         if (!run.HasPosition) return;
+        var prevFront = run.Front;
         run.Front = run.Dir == Dir.Down ? zones.Max() : zones.Min();
+        // 先頭がゾーンに来た時刻（同じゾーンの2本の前後に使う。IsAheadOf）
+        if (run.ZoneSinceUtc == null || run.Front != prevFront)
+        {
+            run.ZoneEntered = run.ZoneSinceUtc != null && (run.Front - prevFront) * run.Dir.Step() > 0;
+            run.ZoneSinceUtc = seenAt;
+        }
         run.Rear = run.Dir == Dir.Down ? zones.Min() : zones.Max();
 
         // 駅間のどこにいるか（停車駅の距離から）。分からなければ 0.5
         run.Fraction = 0.5;
+        run.FractionKnown = false;
         if (run.Front % 2 == 1)
         {
             var a = _data.Line.StationAtZone(run.Front - run.Dir.Step());
             var b = _data.Line.StationAtZone(run.Front + run.Dir.Step());
             var da = DistanceOf(run.Player, a);
             var db = DistanceOf(run.Player, b);
-            if (da is { } x && db is { } y && y > x) run.Fraction = Math.Clamp((run.Player.TraveledDistance - x) / (y - x), 0, 1);
+            if (da is { } x && db is { } y && y > x)
+                (run.Fraction, run.FractionKnown) = (Math.Clamp((run.Player.TraveledDistance - x) / (y - x), 0, 1), true);
         }
 
         // ダイヤグラム用の実績（駅のゾーンを目盛りにした位置）
@@ -2469,7 +2484,7 @@ public sealed partial class RouteEngine
 
         var candidates = _runs.Values
             .Where(o => o != run && o.HasPosition && o.Dir == run.Dir && _data.RankOf(o.Type) > rank)
-            .Where(o => (o.Front - run.Front) * run.Dir.Step() < 0) // 後ろにいる列車だけ
+            .Where(o => IsAheadOf(run, o)) // 後ろにいる列車だけ
             .Select(o => (Run: o, St: o.Stations.FirstOrDefault(s => s.St.Id == st.St.Id && !s.Done && !s.Terminal)))
             .Where(x => x.St != null)
             .Select(x =>
@@ -2553,7 +2568,7 @@ public sealed partial class RouteEngine
         foreach (var name in order.Take(idx))
         {
             if (RunByTrain(name) is not { HasPosition: true } p || p.Dir != run.Dir || HasPassed(p, st)
-                || (p.Front - run.Front) * run.Dir.Step() >= 0) continue;
+                || !IsAheadOf(run, p)) continue;
             // 待避駅: 待避の番線
             if (_data.PassingStations.TryGetValue(st.St.Id, out var ps)) return ps.TrackFor(run.Dir);
             // ほかの駅: 追い越す列車が使う番線と別の、そのまま通れる番線（なければ追い越せないので、番線は変えない）
@@ -2597,6 +2612,9 @@ public sealed partial class RouteEngine
             if ((_central.Hold(name, st.St.Id) & HoldKind.Depart) != 0) continue; // 出発抑止中の列車は待たない（ほかの列車を先に出す）
             if (p.Stations.FirstOrDefault(s => s.St.Id == st.St.Id && !s.Done) is not { } ps || IsCutOff(p, ps)) continue; // その駅を通らない
             if (SameTrackBehind(run, st, p)) continue; // 同じ番線の後ろの列車は追い越させられない
+            // 後ろを走る列車は、ダイヤ・司令員が決めた追い越しでなければ待たない（遅れで順序が入れ替わっていても、前の列車が先。
+            // 後ろの列車は AheadHold で前の列車を待つので、ここで待つとお互いに動けなくなる）
+            if (p.Dir == run.Dir && IsAheadOf(run, p) && !MayOvertake(p, run, st)) continue;
             if (!Circuits(PendingPaths(p, ps)).Any(mine.Contains)) continue; // 競合しない
             waiting.Add(name);
         }
@@ -2610,6 +2628,20 @@ public sealed partial class RouteEngine
     /// </summary>
     private void NoteDepartAhead(TrainRun run, StationRun st, List<RouteDef> path, DateTime now)
     {
+        // 前を走る同じ向きの列車が、まだこの駅を出ていないのに出発進路を出すとき（追い越し）は、訳と一緒に必ず記録に残す
+        var passed = _runs.Values.Where(o => IsAheadOf(o, run) && o.Stations.FirstOrDefault(s => s.St.Id == st.St.Id) is { Done: false } os && !IsCutOff(o, os)
+                                             && !os.Terminal && !IsTurnbackTrack(o, os)).ToList();
+        if (passed.Count > 0)
+        {
+            var why = st.ForceDepart ? "駅扱い"
+                : string.Join("・", passed.Select(o =>
+                    $"{o.Train}: " + (MayOvertake(run, o, st) ? (DiaOvertakes(run, o, st.St.Id) ? "ダイヤの追い越し" : "司令員の順序")
+                        : WaitingForRequest(o, o.Stations.First(s => s.St.Id == st.St.Id)) ? "出発要求前"
+                        : (_central.Hold(o.Train, st.St.Id) & HoldKind.Depart) != 0 ? "出発抑止中"
+                        : !DiaMode && _data.PassingStations.ContainsKey(st.St.Id) ? "自動の待避" : "そのほか")));
+            RouteLogLine(now, $"追い越し: {run.Train} {st.St.Name} が、前を走る {string.Join("・", passed.Select(o => o.Train))} より先に出発（{why}）");
+        }
+
         if (!DiaMode || run.Dia == null || DiaSec(run, st.St.Id, depart: true) is not { } myDia) return;
         var mine = Circuits(path).ToHashSet();
         var ahead = new List<string>();
@@ -2620,6 +2652,7 @@ public sealed partial class RouteEngine
             if (DiaSec(p, st.St.Id, depart: true) is not { } pd || pd >= myDia) continue;
             // 待たなくてよい先の列車（出発抑止中・同じ番線の後ろ・進路が競合しない）は書かない。待つはずの列車を待たなかったときだけ
             if ((_central.Hold(p.Train, st.St.Id) & HoldKind.Depart) != 0 || SameTrackBehind(run, st, p) || !Circuits(PendingPaths(p, ps)).Any(mine.Contains)) continue;
+            if (IsAheadOf(run, p) && !MayOvertake(p, run, st)) continue; // 後ろを走る列車（遅れて順序が入れ替わった）は待たない
             ahead.Add($"{p.Train}（ダイヤ {FormatDiaTime(pd)}）");
         }
         if (ahead.Count == 0) return;
@@ -2643,7 +2676,7 @@ public sealed partial class RouteEngine
         {
             if (RunByTrain(name) is not { HasPosition: true } p || HasPassed(p, st)) continue;
             if (p.Stations.FirstOrDefault(s => s.St.Id == st.St.Id && !s.Done) is not { } ps || IsCutOff(p, ps)) continue;
-            if (p.Dir == run.Dir && (p.Front - run.Front) * run.Dir.Step() < 0 && ps.Track == st.Track)
+            if (p.Dir == run.Dir && IsAheadOf(run, p) && ps.Track == st.Track)
                 notes.Add($"{name} と同じ番線のため追い越せません（番線を変えてください）");
             else if (Circuits(PendingPaths(p, ps)).Any(mine.Contains))
                 notes.Add($"{name} と進路が競合（{name} が先）");
@@ -3435,7 +3468,7 @@ public sealed partial class RouteEngine
                 return $"進路が重なる（{other.Train}）";
 
             // 同じ方向で後ろにいる列車は、順番待ちの相手にしない（前の列車が先。AheadHold で後ろの列車が待つ）
-            if (other.HasPosition && other.Dir == run.Dir && (other.Front - run.Front) * run.Dir.Step() < 0) continue;
+            if (IsAheadOf(run, other)) continue;
 
             // 先に開通の処理を始めて、同じ範囲を待っている列車。進路の競合（在線・重なり）で待っているものだけ
             // （単線の交換・待避・抑止・出発順序・出発要求待ちなどで自分から待っている列車を待つと、お互いに待ち合って止まる）
@@ -3564,6 +3597,8 @@ public sealed partial class RouteEngine
             var before = order.TakeWhile(t => t != run.Train)
                 .Where(t => RunByTrain(t) is { } p && !SectionCleared(p, st.St.Id, next) && !(p.Dir == run.Dir && EnteredSection(p, st))
                             && !SameTrackBehind(run, st, p)
+                            // 後ろを走る同じ向きの列車は、ダイヤ・司令員が決めた追い越しでなければ待たない（後ろの列車は AheadHold で自分を待つ）
+                            && !(p.Dir == run.Dir && IsAheadOf(run, p) && !MayOvertake(p, run, st))
                             // 先の対向列車が、この駅で自分のいる番線に入れずに待っているなら、自分が先（待つとお互いに動けない）
                             && !(p.Dir != run.Dir && NextTrackBlocker(p, st.St.Id)?.Run == run))
                 .ToList();
@@ -3683,8 +3718,67 @@ public sealed partial class RouteEngine
     /// 出発順序・走行順で p が先になっていても、run が先に出る（p を待つと、p は番線が空かず、お互いに動けなくなる）。
     /// </summary>
     private static bool SameTrackBehind(TrainRun run, StationRun st, TrainRun p) =>
-        p.Dir == run.Dir && p.HasPosition && run.HasPosition && (p.Front - run.Front) * run.Dir.Step() < 0
+        p.Dir == run.Dir && IsAheadOf(run, p)
         && st.Track is { } t && p.Stations.FirstOrDefault(s => s.St.Id == st.St.Id && !s.Done) is { } ps && ps.Track == t;
+
+    /// <summary>
+    /// 同じ向きの列車 o が、run より前を走っているか。先頭のゾーンで比べ、同じ駅の構内（同じゾーン）にいれば、先にその駅に着いた方が前
+    /// （駒野の上りで、1番線に止まっている先行列車と、2番線に入ってきた後続列車は、どちらも駒野のゾーンにいる。
+    /// ゾーンだけで比べると前後が分からず、後続列車が先行列車より先に出発進路を取っていた）。同じ駅間にいれば、駅間のどこにいるかで比べる。
+    /// </summary>
+    private static bool IsAheadOf(TrainRun o, TrainRun run)
+    {
+        if (o == run || o.Dir != run.Dir || !o.HasPosition || !run.HasPosition) return false;
+        var d = (o.Front - run.Front) * run.Dir.Step();
+        if (d != 0) return d > 0;
+        // 同じ駅間: 駅間のどこにいるかが両方分かれば、それで比べる
+        if (o.Front % 2 == 1 && o.FractionKnown && run.FractionKnown && Math.Abs(o.Fraction - run.Fraction) > 0.02) return o.Fraction > run.Fraction;
+        // 同じゾーン: 先にそのゾーンに来た方が前（複線・駅の中では、同じ向きの列車は後ろから来る）
+        if (o.ZoneSinceUtc is not { } os || run.ZoneSinceUtc is not { } rs) return false;
+        if (run.ZoneEntered) return os < rs;  // 自分が後ろから入ってきたとき、もういた列車は前
+        return false;                          // 自分が先にいた（または、どちらも初めからいて前後が分からない）
+    }
+
+    /// <summary>
+    /// 後ろを走る run が、前を走る other を駅 st で追い越してよいか。追い越してよいのは、次のときだけ:
+    /// ・ダイヤで、その駅で追い越すことになっている（other がその駅に着いてから、run がその駅を出る・通る。other はそのあとに出る）
+    /// ・司令員が手で決めた出発順序・単線の走行順で run が先、または other の発車（◆）をずらして run が先になった
+    /// （開通指示は前もって出せるので、追い越しの許しにはしない。先に出したければ、出発順序を決めるか先行列車を出発抑止にする）
+    /// それ以外は、遅れで順番が入れ替わっていても、前を走る列車が先（後ろの列車に先の進路を渡さない）。
+    /// </summary>
+    private bool MayOvertake(TrainRun run, TrainRun other, StationRun st)
+    {
+        var id = st.St.Id;
+        if (_central.Order(id, run.Dir) is { } manual)
+        {
+            var list = manual.ToList();
+            var (ri, oi) = (list.IndexOf(run.Train), list.IndexOf(other.Train));
+            if (ri >= 0 && oi >= 0 && ri < oi) return true;
+        }
+        // 司令員が手で決めた単線区間の走行順（この駅から入る区間）で、run が先
+        if (NextControlStation(run, st) is { } next && _data.IsSingleTrack(id, next) && _central.SectionOrder(id, next) is { } sec)
+        {
+            var (ri, oi) = (sec.ToList().IndexOf(run.Train), sec.ToList().IndexOf(other.Train));
+            if (ri >= 0 && oi >= 0 && ri < oi) return true;
+        }
+        // 司令員がダイヤグラムで other の発車（◆）をずらし、運転順序で run が先になった
+        if (_central.OpenAt(other.Train, id) != null && EffectiveOrder(id, run.Dir) is { } plan)
+        {
+            var list = plan.ToList();
+            var (ri, oi) = (list.IndexOf(run.Train), list.IndexOf(other.Train));
+            if (ri >= 0 && oi >= 0 && ri < oi) return true;
+        }
+        return DiaOvertakes(run, other, id);
+    }
+
+    /// <summary>ダイヤで、run が駅 stationId で other を追い越すことになっているか（other が着いたあとに run が出て、other はそのあとに出る）。</summary>
+    private bool DiaOvertakes(TrainRun run, TrainRun other, string stationId)
+    {
+        if (!DiaMode || run.Dia == null || other.Dia == null) return false;
+        if (DiaDaySec(other, stationId, depart: false) is not { } oa || DiaDaySec(other, stationId, depart: true) is not { } od
+            || DiaDaySec(run, stationId, depart: true) is not { } rd) return false;
+        return oa <= rd && rd < od;
+    }
 
     /// <summary>同じ向きの列車が、駅 st を出て、その先の駅間に入ったか（先頭が駅より先にある）。</summary>
     private static bool EnteredSection(TrainRun p, StationRun st) => p.HasPosition && (p.Front - st.Zone) * p.Dir.Step() > 0;
@@ -3712,8 +3806,9 @@ public sealed partial class RouteEngine
     /// </summary>
     private string? AheadHold(TrainRun run, StationRun st, bool departure)
     {
-        var step = run.Dir.Step();
-        foreach (var other in _runs.Values.Where(o => o != run && o.HasPosition && o.Dir == run.Dir && (o.Front - run.Front) * step > 0))
+        // 前を走る列車は IsAheadOf で決める（同じ駅の構内に2本いても、先に着いた方が前。ゾーンだけで比べると、構内に入った後続列車が
+        // 先行列車を見なくなり、先に進路を取っていた。11/27 駒野）
+        foreach (var other in _runs.Values.Where(o => IsAheadOf(o, run)))
         {
             if (other.Stations.FirstOrDefault(s => s.St.Id == st.St.Id) is not { Done: false } os || IsCutOff(other, os)) continue;
             // この駅で終わる列車は抜けないので、番線に入りきったあとは待たない（番線のふさがりは在線・進路の重なりで判断）。
@@ -3729,7 +3824,11 @@ public sealed partial class RouteEngine
             if (os.IsStart && DiaMode && DiaSec(other, st.St.Id, depart: true) is { } od && DiaSec(run, st.St.Id, depart: true) is { } rd && rd < od) continue;
             // 出発抑止中で、別の番線にいる先行列車は追い越してよい（駒野1番線で抑止中の列車を残して、2番線の列車を先に出す）
             if ((_central.Hold(other.Train, st.St.Id) & HoldKind.Depart) != 0 && os.Track != null && os.Track != st.Track) continue;
-            if (_data.PassingStations.ContainsKey(st.St.Id) && os.Track != null && os.Track != st.Track) continue; // 待避駅で別の番線
+            var otherTrack = os.Track != null && st.Track != null && os.Track != st.Track;
+            // ダイヤで追い越すことになっている・司令員が順序を決めたなら、別の番線から先に出てよい
+            if (otherTrack && MayOvertake(run, other, st)) continue;
+            // 待避駅で別の番線（自動の待避。ダイヤ運転中は、ダイヤ・司令員が決めた追い越しだけ。遅れで順番を入れ替えない）
+            if (!DiaMode && _data.PassingStations.ContainsKey(st.St.Id) && otherTrack) continue;
             // 別の番線に入るだけならよい。ただし、前の列車がまだ場内を取っていなくて、場内の進路が重なるなら、前の列車が先
             // （続行する2本が同じ駅の別の番線に入るとき、後ろの列車が先に場内を取ると、前の列車の場内がふさがるため）
             if (!departure && os.Track != null && st.Track != null && os.Track != st.Track
@@ -4058,13 +4157,15 @@ public sealed partial class RouteEngine
                 // 手で決めていなければ、運転と同じ自動の走行順（EffectiveSectionOrder）で。単線区間に同じ時刻に2本いる線にしない
                 if (NextControlStation(r, st) is { } nx && _data.IsSingleTrack(sid, nx) && SectionOrderOf(sid, nx) is { } so && so.Contains(r.Train))
                     foreach (var name in so.TakeWhile(t => t != r.Train))
-                        if (RunByTrain(name) is { } p && basePlans.TryGetValue(p, out var pp) && !SectionCleared(p, sid, nx) && !SameTrackBehind(r, st, p))
+                        if (RunByTrain(name) is { } p && basePlans.TryGetValue(p, out var pp) && !SectionCleared(p, sid, nx) && !SameTrackBehind(r, st, p)
+                            && !(p.Dir == r.Dir && IsAheadOf(r, p) && !MayOvertake(p, r, st)))
                             Max(p.Dir == r.Dir ? pp.DepAt.TryGetValue(z, out var d1) ? d1 : null : pp.ArrAt.TryGetValue(z, out var a1) ? a1 : null);
 
                 // 駅の出発順序: 同じ向きの先の列車がこの駅を出たあと
                 if (EffectiveOrder(sid, r.Dir) is { } order && order.Contains(r.Train))
                     foreach (var name in order.TakeWhile(t => t != r.Train))
                         if (RunByTrain(name) is { } p && p.Dir == r.Dir && (_central.Hold(name, sid) & HoldKind.Depart) == 0 && !SameTrackBehind(r, st, p)
+                            && !(IsAheadOf(r, p) && !MayOvertake(p, r, st))
                             && basePlans.TryGetValue(p, out var pp) && pp.DepAt.TryGetValue(z, out var d2))
                             Max(d2);
                 return m;

@@ -106,6 +106,13 @@ public sealed partial class RouteEngine
 
                 // 着く順: もう着いている列車（始発・在線）→ 駅間にいる列車（近い順）→ 手前の駅を出た順
                 var present = here.Where(x => x.S.IsStart || (x.R.Front - z) * step >= 0).OrderBy(x => x.D).ToList();
+                // 着いている列車（始発を除く）どうしは、先に着いた順に並べ直す（始発の列車の位置はそのまま）
+                var arrivedSlots = present.Select((x, i) => (x, i)).Where(p => !p.x.S.IsStart).Select(p => p.i).ToList();
+                var arrivedByHere = present.Where(x => !x.S.IsStart).ToList();
+                for (var i = 0; i < arrivedByHere.Count; i++) // 前を走る列車を前へ（IsAheadOf。前後が分からなければダイヤの発の順のまま）
+                    for (var j = i + 1; j < arrivedByHere.Count; j++)
+                        if (IsAheadOf(arrivedByHere[j].R, arrivedByHere[i].R)) (arrivedByHere[i], arrivedByHere[j]) = (arrivedByHere[j], arrivedByHere[i]);
+                for (var i = 0; i < arrivedSlots.Count; i++) present[arrivedSlots[i]] = arrivedByHere[i];
                 var coming = here.Except(present)
                     .OrderBy(x => departed.ContainsKey(x.R) ? 1 : 0)
                     .ThenBy(x => departed.TryGetValue(x.R, out var k) ? k : -(x.R.Front * step + x.R.Fraction))
@@ -160,6 +167,17 @@ public sealed partial class RouteEngine
                         var dep = x.Ends ? arr : Math.Max(x.D + shift[x.R], arr + (x.D - x.A));
                         if (!x.Ends && _central.OpenAt(x.R.Train, station.Id) is { } open) dep = Math.Max(dep, ToSec(open));
                         if (floor.TryGetValue(x.R, out var f)) dep = Math.Max(dep, f);
+                        // 前を走る列車（先に番線に入る・着いている列車。始発・終わる列車を除く）より先には出ない。
+                        // 遅れで順番が入れ替わっていても、ダイヤ・司令員が決めた追い越しでなければ、追い越さない（AheadHold と同じ）
+                        if (!x.Ends && kind != 2 && !x.S.IsStart)
+                            foreach (var (y, ykind) in sequence)
+                            {
+                                if (y.R == x.R) break;
+                                if (ykind == 2 || y.S.IsStart || y.Ends || !times.TryGetValue(y.R, out var yt)) continue;
+                                if (!IsAheadOf(y.R, x.R)) continue;
+                                if (PlanMayOvertake(x.R, y.R, station.Id, manual)) continue;
+                                dep = Math.Max(dep, yt.Dep + OrderHeadwaySeconds);
+                            }
                         times[x.R] = new OrderTimes(arr, dep, isComing ? leader : null, trackLeader);
                         if (x.Track is { } t2 && !x.Ends) lastOnTrack[t2] = (x.R.Train, dep); // 終わる列車がいつ番線を空けるかは分からないので数えない
                         if (isComing) (leader, leaderArr) = (x.R.Train, arr);
@@ -205,6 +223,16 @@ public sealed partial class RouteEngine
         }
 
         return plan;
+    }
+
+    /// <summary>運転順序の計画で、後ろを走る x が前の y を追い越してよいか（ダイヤの追い越し・司令員が決めた順序・y の◆をずらした）。</summary>
+    private bool PlanMayOvertake(TrainRun x, TrainRun y, string stationId, IReadOnlyList<string>? manual)
+    {
+        if (DiaOvertakes(x, y, stationId) || _central.OpenAt(y.Train, stationId) != null) return true;
+        if (manual == null) return false;
+        var list = manual.ToList();
+        var (xi, yi) = (list.IndexOf(x.Train), list.IndexOf(y.Train));
+        return xi >= 0 && yi >= 0 && xi < yi;
     }
 
     /// <summary>
