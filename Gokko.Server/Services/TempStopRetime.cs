@@ -14,14 +14,14 @@ namespace Gokko.Server.Services;
 ///   関わる列車も、ひな形の列車と area の駅の時刻が同じだけずれた列車を探す（見つからなければ、その列車は動かさない）
 /// ・当てはまるひな形がない特急は、rule で特急の時刻だけ変える
 /// ・浜園は時刻表では通過のまま（停車・通過は臨時停車の指示で決まる）。着・発の時刻だけ書く
-/// ・ひな形は1時間ずつずらして当てはめる（記事の待避・接続の分の数字がそのまま使える）
-/// ・関わる列車がそろわない時間帯（パターンが少し違う）は、特急の浜園の記事（接続）は写さない
+/// ・ひな形は1時間ずつずらして当てはめる（:00 発と :30 発は時刻の形が同じでも、関わる列車が違う）
+/// ・変えるのは時刻だけ。記事（待避・接続）は所定のまま
 /// </summary>
 public sealed class TempStopRetime
 {
     public const string FileName = "TempStopRetime.json";
 
-    private sealed record StopEdit(string St, bool SetArr, string? Arr, bool SetDep, string? Dep, string? Note);
+    private sealed record StopEdit(string St, bool SetArr, string? Arr, bool SetDep, string? Dep);
     private sealed record TrainEdit(string Number, string? Turn, List<StopEdit> Stops);
     private sealed record Rule(int Before, int Arr, int Dep, int After);
 
@@ -85,8 +85,7 @@ public sealed class TempStopRetime
             foreach (var s in ss.EnumerateArray())
                 stops.Add(new StopEdit(Str(s, "st") ?? "",
                     s.TryGetProperty("arr", out _), Str(s, "arr"),
-                    s.TryGetProperty("dep", out _), Str(s, "dep"),
-                    Str(s, "note")));
+                    s.TryGetProperty("dep", out _), Str(s, "dep")));
         return new TrainEdit(RailData.NormalizeTrain(Str(e, "number")), Str(e, "turn"), stops);
     }
 
@@ -117,12 +116,8 @@ public sealed class TempStopRetime
                     }
                     plan.Add(Shift(e, y.Number, delta));
                 }
-                // 関わる列車がそろわない時間帯は、パターンが少し違う。特急の記事（浜園の接続）は写さない
                 if (missing.Count > 0)
-                {
-                    plan = plan.Select(e => e.Number == b.Number ? e with { Stops = e.Stops.Select(s => s with { Note = null }).ToList() } : e).ToList();
                     _log?.LogInformation("臨時停車の時刻: {Train}（{Case} の形）で動かす列車のうち、{Missing} に当たる列車がありません（動かしません）", b.Number, a.Number, string.Join("・", missing));
-                }
                 fromCase++;
                 break;
             }
@@ -173,8 +168,7 @@ public sealed class TempStopRetime
             e.Stops.Select(s => s with
             {
                 Arr = s.SetArr ? Format(Sec(s.Arr), delta, true) : null,
-                Dep = s.SetDep ? Format(Sec(s.Dep), delta, true) : null,
-                Note = s.Note
+                Dep = s.SetDep ? Format(Sec(s.Dep), delta, true) : null
             }).ToList());
     }
 
@@ -190,12 +184,12 @@ public sealed class TempStopRetime
             if (s.StationId == null) continue;
             if (i == si)
             {
-                stops.Add(new StopEdit(s.StationId, true, Format(pass, r.Arr, true), true, Format(pass, r.Dep, true), null));
+                stops.Add(new StopEdit(s.StationId, true, Format(pass, r.Arr, true), true, Format(pass, r.Dep, true)));
                 continue;
             }
             var off = i < si ? r.Before : r.After;
             if (off == 0) continue;
-            stops.Add(new StopEdit(s.StationId, s.Arr != null, Format(Sec(s.Arr), off, true), s.Dep != null, Format(Sec(s.Dep), off, true), null));
+            stops.Add(new StopEdit(s.StationId, s.Arr != null, Format(Sec(s.Arr), off, true), s.Dep != null, Format(Sec(s.Dep), off, true)));
         }
         return new TrainEdit(d.Number, null, stops);
     }
@@ -262,8 +256,7 @@ public sealed class TempStopRetime
             n.Stops.Add(x == null ? s : s with
             {
                 Arr = x.SetArr ? x.Arr : s.Arr,
-                Dep = x.SetDep ? x.Dep : s.Dep,
-                Note = x.Note != null ? (x.Note.Length > 0 ? x.Note : null) : s.Note
+                Dep = x.SetDep ? x.Dep : s.Dep
             });
         }
         foreach (var (k, v) in d.Stations) n.Stations[k] = v;
