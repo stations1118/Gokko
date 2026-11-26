@@ -171,8 +171,8 @@
 
   window.addEventListener("resize", tellHeight);
   let polling = false; const poll = async () => { if (polling) return; polling = true; try { await refresh(); } finally { polling = false; } }; // 前の読み込みが終わっていなければ重ねて投げない（サーバーが遅いとき、要求が積み重なって配信まで詰まるため）
-  GokkoClock.ready.then(() => { poll(); setInterval(() => { if (!document.hidden) poll(); }, 1000); });
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); }); // 見える所に戻ったら、すぐ読む
+  // この画面は、裏にあっても読み続ける（◆の窓は別の窓なので、この画面が後ろに隠れている間も中身を新しくする）
+  GokkoClock.ready.then(() => { poll(); setInterval(poll, 1000); });
 })();
 </script>
 </body>

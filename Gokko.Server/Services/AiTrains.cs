@@ -662,6 +662,9 @@ public sealed class AiTrains : BackgroundService
     private void Step(Train t, double dt, DateTime utcNow, bool protectedStop)
     {
         if (!_clock.IsRunning) dt = 0; // ロープレ時刻が止まっている間は止まる
+        // ダイヤの表が差し替わったら（臨時停車の時刻・臨時列車の適用で「終点のあと」を差し替えた列車など）、新しい表の列車を読む。
+        // 進路の判断（RouteEngine）は毎周期読み直しているので、こちらだけ古い「終点のあと」で折り返さないようにする
+        if (_rail.Dia.TryGetValue(t.Dia.Number, out var curDia) && !ReferenceEquals(curDia, t.Dia)) t.Dia = curDia;
         Extend(t);
         if (!t.Shunting) RefreshEventStops(t);
         if (!t.Shunting) ApplyCut(t);

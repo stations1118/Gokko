@@ -219,7 +219,8 @@ public sealed partial class RouteEngine
         else
         {
             var stop = _data.DiaOf(after)?.Stops.FirstOrDefault(x => x.StationId == st.St.Id);
-            passed = ParseDiaTime(stop?.Arr ?? stop?.Dep) is not { } due || NowSec() >= due;
+            // 日をまたぐ時刻（0時〜4時の臨時列車・終夜運転）でも正しく比べる（Until）
+            passed = ParseDiaTime(stop?.Arr ?? stop?.Dep) is not { } due || Until(due) <= 0;
         }
         if (passed)
         {
