@@ -17,6 +17,7 @@ namespace Gokko.Server.Services;
 ///         駅に同時にいるなら、その駅から単線に入るときだけその駅に書く。
 ///         複線の区間ですれ違ったなら、単線から出てきた列車（<see cref="CrossWindowSeconds"/> 秒以内）を、次に単線に入る駅に書く。
 ///         始発の列車は、発の <see cref="OriginHoldSeconds"/> 秒前から駅にいるとみる
+/// ・試運転（走るかどうかわからない）は、ほかの列車の記事には書かない。試運転の列車の記事にだけ、相手の列車を書く
 /// ・接続「(接)」（待つもの。ConnectionTable が使う）・灰色などの記事は変えない
 /// ・作り直すときは、手書きの記事のうち、時刻を変えた列車に関わる (待)(連)× を読み直す（相手の時刻が変われば分を書き直し、
 ///   待避・連絡・交換でなくなれば消す）。決まりで選ぶ相手が変わったら、前の相手を消して新しい相手を書き足す
@@ -336,6 +337,7 @@ public static class DiaNotes
         if (tb.Crossings(t).TryGetValue(i, out var cs))
             foreach (var (u, j) in cs)
             {
+                if (Hidden(t, u)) continue;
                 var up = u.Stops[j];
                 var (sec, how) = !up.Stops ? (up.Pass!.Value, "通") : up.Arr is { } ua ? (ua, "着") : (up.Dep!.Value, "発");
                 r.TryAdd(u.Number, Text("×", u, up, sec, how));
@@ -347,18 +349,27 @@ public static class DiaNotes
         if (s.Arr is { } a && s.Dep is { } d)
             foreach (var (u, j) in tb.At(s.Key))
             {
-                if (u == t || u.Dir != t.Dir || u.Stops[j].Stops || u.Stops[j].Pass is not { } p) continue;
+                if (u == t || u.Dir != t.Dir || Hidden(t, u) || u.Stops[j].Stops || u.Stops[j].Pass is not { } p) continue;
                 if (Wrap(p - a) >= 0 && Wrap(d - p) >= 0) r.TryAdd(u.Number, Text("待", u, u.Stops[j], p, "通"));
             }
 
         // 連絡
-        if (i > 0 && connStations.Contains(s.Key) && !NoConnect(t.Train.Type) && s.At is { } ta
+        if (i > 0 && connStations.Contains(s.Key) && !NoConnect(t.Train) && s.At is { } ta
             && FirstConnection(tb, t, i, ta) is { } c)
             r.TryAdd(c.V.Number, Text("連", c.V, c.V.Stops[c.J], c.V.Stops[c.J].Dep!.Value, "発"));
         return r;
     }
 
-    private static bool NoConnect(string type) => type is "回送" or "試運転";
+    private static bool NoConnect(DiaTrain d) => d.Type is "回送" or "試運転" || IsTest(d);
+
+    /// <summary>試運転は、試運転でない列車の記事には書かない（走るかどうかわからない）。</summary>
+    private static bool Hidden(View t, View u) => IsTest(u.Train) && !IsTest(t.Train);
+
+    /// <summary>試運転か（ダイヤでは種別を回送として読むので、列番の「試」で見る）。</summary>
+    private static bool IsTest(DiaTrain d) => d.Number.StartsWith("試") || d.TypeLabel == "試運転";
+
+    /// <summary>記事に書く種別の1字（試運転は「試」）。</summary>
+    private static string TypeChar(DiaTrain d) => IsTest(d) ? "試" : d.Type.Length > 0 ? d.Type[..1] : "";
 
     /// <summary>着いてから時間内に出る同じ向きの列車のうち、最初に、止まらない駅へ行くか、先の駅に早く着くもの。</summary>
     private static (View V, int J)? FirstConnection(Table tb, View t, int i, int ta)
@@ -370,7 +381,7 @@ public static class DiaNotes
         var cands = new List<(int Wait, View V, int J)>();
         foreach (var (u, j) in tb.At(t.Stops[i].Key))
         {
-            if (u == t || u.Dir != t.Dir || NoConnect(u.Train.Type) || !u.Stops[j].Stops || u.Stops[j].Dep is not { } ud) continue;
+            if (u == t || u.Dir != t.Dir || NoConnect(u.Train) || !u.Stops[j].Stops || u.Stops[j].Dep is not { } ud) continue;
             var w = Wrap(ud - ta);
             if (w > 0 && w <= ConnectWindowSeconds) cands.Add((w, u, j));
         }
@@ -395,7 +406,7 @@ public static class DiaNotes
         var bestDiff = int.MaxValue;
         foreach (var (u, j) in tb.At(s.Key))
         {
-            if (u == t || !u.Train.Type.StartsWith(ty) || DestChar(u.Train.Dest) != de) continue;
+            if (u == t || TypeChar(u.Train) != ty || DestChar(u.Train.Dest) != de) continue;
             var up = u.Stops[j];
             if (tr.Length > 0 && (up.Track is not { } k || k < 1 || k > Circled.Length || Circled[k - 1].ToString() != tr)) continue;
             var tm = how == "着" ? up.Arr : up.Dep ?? (how == "通" ? up.Arr : null);
@@ -462,7 +473,7 @@ public static class DiaNotes
     {
         var track = p.Track is { } k && k >= 1 && k <= Circled.Length ? Circled[k - 1].ToString() : "";
         var head = kind == "×" ? "×" : $"({kind})";
-        return $"{head}{u.Train.Type[..1]}{DestChar(u.Train.Dest)}{track}{sec / 60 % 60:00}{how}";
+        return $"{head}{TypeChar(u.Train)}{DestChar(u.Train.Dest)}{track}{sec / 60 % 60:00}{how}";
     }
 
     private static DiaTrain Copy(DiaTrain d, List<DiaStop> stops)
