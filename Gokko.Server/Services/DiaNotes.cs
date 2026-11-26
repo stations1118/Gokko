@@ -40,6 +40,9 @@ public static class DiaNotes
     /// <summary>始発の列車が、発の何秒前から駅にいるとみるか（交換を探すとき）。</summary>
     public const int OriginHoldSeconds = 10 * 60;
 
+    /// <summary>終着の列車が、着いてから何秒の間は駅にいるとみるか（交換の相手として）。</summary>
+    public const int TerminalStaySeconds = 3 * 60;
+
     /// <summary>重ねた列車がこの秒数より離れた時刻にしか通らない駅は、記事が変わらないとみて計算しない（連絡の30分・交換の12分より長く）。</summary>
     private const int TouchSeconds = 60 * 60;
 
@@ -141,6 +144,10 @@ public static class DiaNotes
         private readonly Dictionary<string, int> _order = new();   // 駅 → 路線の並びの番号
         private readonly HashSet<string> _short = new();          // 単線にはさまれた複線の駅
 
+        // 同じ列車が列番を変えるので時刻表に2本で載っている所: 変わる先の列車の、この番号までの駅は相手にしない
+        // （回1052 が名田から 1052 になる。1052 にも上吉沢〜名田が書いてあるが、そこを走るのは回1052）
+        private readonly Dictionary<View, int> _hidden = new();
+
         private readonly Table? _base;                            // 所定のダイヤの表（重ねた表のとき）
         private readonly HashSet<string> _overlay = new();        // 重ねた列車の列番（重ねた表のとき）
 
@@ -177,6 +184,7 @@ public static class DiaNotes
                     l.Add((v, i));
                 }
             }
+            FindHidden();
         }
 
         public Table(IEnumerable<DiaTrain> trains)
@@ -204,12 +212,45 @@ public static class DiaNotes
                 var right = order.Skip(i + 1).FirstOrDefault(InGroup);
                 if (left != null && right != null && !SingleBetween(left, right)) _short.Add(order[i]);
             }
+            FindHidden();
         }
+
+        /// <summary>
+        /// 列番を変える列車の重なりを探す。変わる先の列車の、変わる駅までは相手にしない（その駅を着くのは前の列番の列車）。
+        /// ・時刻表に「次の列番」が書いてある列車（回1052 → 名田から 1052）
+        /// ・ある列車の終着の駅で、同じ向きの別の列車が同じ着・発で始まる（703SB が名田で 回703S になる）
+        /// </summary>
+        private void FindHidden()
+        {
+            void Hide(View y, int k)
+            {
+                if (k >= 0 && (!_hidden.TryGetValue(y, out var h) || h < k)) _hidden[y] = k;
+            }
+            foreach (var x in Trains.Values)
+            {
+                if (x.Train.Next is { } nx && Trains.TryGetValue(nx.Number, out var y) && y != x)
+                    Hide(y, y.Stops.FindIndex(p => p.Key == nx.StationId));
+                var lx = x.Stops.FindLastIndex(p => p.At != null);
+                if (lx < 0) continue;
+                var last = x.Stops[lx];
+                foreach (var (z, k) in ByStation.GetValueOrDefault(last.Key) ?? [])
+                    if (z != x && z.Dir == x.Dir && k == z.Stops.FindIndex(p => p.At != null)
+                        && z.Stops[k].Arr == last.Arr && z.Stops[k].Dep == last.Dep)
+                        Hide(z, k);
+            }
+        }
+
+        private bool Hidden(View u, int j) => _hidden.TryGetValue(u, out var h) && j <= h;
+
+        /// <summary>相手にする列車 u の、その駅の番号（列番を変える前の列車が走る所は null）。</summary>
+        private int? PartnerIndex(View u, string key) => u.IndexOf(key) is { } j && !Hidden(u, j) ? j : null;
 
         private static Pt ToPt(DiaStop s) =>
             new(s.StationId ?? s.Name, s.Stop != "通" || (s.Arr != null && s.Dep != null), Sec(s.Arr), Sec(s.Dep), s.Track);
 
-        public IEnumerable<(View V, int I)> At(string key) => ByStation.GetValueOrDefault(key) ?? [];
+        /// <summary>その駅にいる列車（相手にするもの。列番を変える前の列車が走る所は、変わる先の列車を除く）。</summary>
+        public IEnumerable<(View V, int I)> At(string key) =>
+            (ByStation.GetValueOrDefault(key) ?? []).Where(x => !Hidden(x.V, x.I));
 
         /// <summary>
         /// 列車 u がその駅にいる時間。時刻表にその駅がなければ（特急の時刻表にない明神川など）、前後の駅の時刻から割り振った通過時刻。
@@ -217,12 +258,18 @@ public static class DiaNotes
         private (Pt P, int From, int To)? SpanAt(View u, string key)
         {
             if (u.IndexOf(key) is { } j)
-                return u.Span(j, false) is { } s ? (u.Stops[j], s.From, s.To) : null;
+            {
+                if (Hidden(u, j)) return null;
+                if (u.Span(j, false) is not { } s) return null;
+                // 終着の駅: 着いてから少しの間（<see cref="TerminalStaySeconds"/> 秒）は駅にいるとみる
+                if (u.Stops[j].Dep == null && u.NextTimed(j) == null) return (u.Stops[j], s.From, s.From + TerminalStaySeconds);
+                return (u.Stops[j], s.From, s.To);
+            }
             if (!_order.TryGetValue(key, out var x)) return null;
             int? prev = null;
             for (var k = 0; k < u.Stops.Count; k++)
             {
-                if (u.Stops[k].At == null || !_order.TryGetValue(u.Stops[k].Key, out var ok)) continue;
+                if (u.Stops[k].At == null || Hidden(u, k) || !_order.TryGetValue(u.Stops[k].Key, out var ok)) continue;
                 if (prev is { } pk && _order[u.Stops[pk].Key] is var op && Math.Min(op, ok) < x && x < Math.Max(op, ok)
                     && u.Span(pk, false) is { } a && u.Span(k, false) is { } b)
                 {
@@ -309,7 +356,7 @@ public static class DiaNotes
                 var lineEnd = LineEnd(t, m);
                 if (lineEnd && SpanAt(u, t.Stops[timed[0]].Key) is { } u0 && t.Span(timed[0], true) is { } t0 && Wrap(u0.From - t0.From) < 0)
                     return false; // この列車が走り始める前に、もうすれ違っていた
-                if (u.IndexOf(t.Stops[m].Key) is { } jm && u.PrevTimed(jm) is { } up
+                if (PartnerIndex(u, t.Stops[m].Key) is { } jm && u.PrevTimed(jm) is { } up
                     && SingleBetween(u.Stops[up].Key, u.Stops[jm].Key)
                     && t.Span(m, true) is { } tm && u.Span(jm, false) is { } um
                     && Wrap(tm.From - um.To) is var gap && gap >= 0 && gap <= (lineEnd ? LineEndWindowSeconds : CrossWindowSeconds))
