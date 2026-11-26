@@ -1757,10 +1757,13 @@ public sealed class CrewRoster
     /// <summary>行路番号から、その行路の所属（道・駒）。どちらも入っていなければ null。</summary>
     private static string? DepotOfDuty(string duty) => Depots.Select(d => d[..1]).FirstOrDefault(duty.Contains);
 
-    /// <summary>いま誰か（担当・臨変）が持っている行路の列車（自動割り当てで、同じ列車を2人に持たせないため）。</summary>
+    /// <summary>行路の行のうち、列車の重なりに数えるもの（休憩と便乗は数えない。便乗は乗るだけなので、何人でも同じ列車に乗れる）。</summary>
+    private static bool IsDriving(DutyItem x) => x.Kind != "休憩" && x.Kind != "便乗";
+
+    /// <summary>いま誰か（担当・臨変）が乗務する列車（自動割り当て・出勤簿で、同じ列車を2人に持たせないため。便乗は除く）。</summary>
     private HashSet<string> TakenTrains(DutyRoster roster) =>
         _assign.Keys.Concat(_extras.Select(x => x.Duty)).Select(roster.DutyById).OfType<Duty>()
-            .SelectMany(d => d.Items.Where(x => x.Kind != "休憩").Select(x => x.Train)).ToHashSet();
+            .SelectMany(d => d.Items.Where(IsDriving).Select(x => x.Train)).ToHashSet();
 
     /// <summary>
     /// u に空いている行路を1つランダムに割り当てる（ロックの中で呼ぶ）。選べなければ null。
@@ -1772,7 +1775,7 @@ public sealed class CrewRoster
     {
         var taken = TakenTrains(roster);
         var free = roster.Duties.Where(d => !_assign.ContainsKey(d.Id) && !_extras.Any(x => x.Duty == d.Id)
-                                            && !d.Items.Any(x => x.Kind != "休憩" && taken.Contains(x.Train))).ToList();
+                                            && !d.Items.Any(x => IsDriving(x) && taken.Contains(x.Train))).ToList();
         var mine = u.Depot.Length > 0 ? u.Depot[..1] : "";
         var tiers = new[]
         {
@@ -1846,7 +1849,7 @@ public sealed class CrewRoster
         {
             var taken = TakenTrains(roster);
             return roster.Duties.Where(d => !_assign.ContainsKey(d.Id) && !_extras.Any(x => x.Duty == d.Id)
-                                            && !d.Items.Any(x => x.Kind != "休憩" && taken.Contains(x.Train)))
+                                            && !d.Items.Any(x => IsDriving(x) && taken.Contains(x.Train)))
                 .Select(d => d.Id).ToHashSet();
         }
     }
@@ -1867,7 +1870,7 @@ public sealed class CrewRoster
             if (_assign.ContainsKey(duty.Id) || _extras.Any(x => x.Duty == duty.Id))
                 return (null, $"行路 {duty.Id} は、ほかの人が先に選びました。ほかの行路を選んでください");
             var taken = TakenTrains(roster);
-            if (duty.Items.FirstOrDefault(x => x.Kind != "休憩" && taken.Contains(x.Train)) is { } clash)
+            if (duty.Items.FirstOrDefault(x => IsDriving(x) && taken.Contains(x.Train)) is { } clash)
                 return (null, $"行路 {duty.Id} の {clash.Train} は、ほかの人の行路と重なっています。ほかの行路を選んでください");
 
             _attend.TryAdd(u.Id, DateTime.UtcNow);
@@ -1917,7 +1920,7 @@ public sealed class CrewRoster
             var taken = TakenTrains(roster);
             var mine = u.Depot.Length > 0 ? u.Depot[..1] : "";
             var free = candidates.Where(d => !_assign.ContainsKey(d.Id) && !_extras.Any(x => x.Duty == d.Id)
-                                             && !d.Items.Any(x => x.Kind != "休憩" && taken.Contains(x.Train)))
+                                             && !d.Items.Any(x => IsDriving(x) && taken.Contains(x.Train)))
                 .OrderBy(d => DepotOfDuty(d.Id) == mine ? 0 : DepotOfDuty(d.Id) == null ? 1 : 2).ToList();
             string msg, picked;
             if (free.Count > 0)
