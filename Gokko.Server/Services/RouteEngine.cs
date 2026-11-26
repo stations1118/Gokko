@@ -4008,7 +4008,7 @@ public sealed partial class RouteEngine
                     unyo = r.Dia != null ? _data.Turns.UnyoOf(r.Dia) : null,
                     turn = DiaMode && r.Dia != null ? _data.Turns.View(r.Dia) : null
                 };
-            }).Cast<object>().Concat(PendingDiagram(now, runs)).ToList();
+            }).Cast<object>().Concat(PendingDiagram(now, runs, plans)).ToList();
         }
     }
 
@@ -4016,11 +4016,12 @@ public sealed partial class RouteEngine
     public Func<IReadOnlyList<AiTrains.PendingTrain>> PendingTrains { get; set; } = () => [];
 
     /// <summary>
-    /// ダイヤグラムに出す、出現前の列車（ダイヤ運転中だけ）。線はダイヤの時刻（◆で決めた発車時刻・遅れの分だけずらす）、◆は始発駅だけ。
+    /// ダイヤグラムに出す、出現前の列車（ダイヤ運転中だけ）。線はダイヤの時刻（◆で決めた発車時刻・遅れの分だけずらす。単線区間では走っている対向列車を待つ）。
+    /// ◆は、始発駅と、その先の進路を扱う駅。
     /// ◆の窓で、出る前から発車時刻・抑止・番線を入れておける（CentralControl は列番で覚えるので、出たあともそのまま効く）。
     /// _lock の中で呼ぶ（PendingTrains はロックを取らずに読める）
     /// </summary>
-    private IEnumerable<object> PendingDiagram(DateTime now, List<TrainRun> runs)
+    private IEnumerable<object> PendingDiagram(DateTime now, List<TrainRun> runs, Dictionary<TrainRun, PlanResult> plans)
     {
         if (!DiaMode) yield break;
         var nowSec = NowSec();
@@ -4036,21 +4037,67 @@ public sealed partial class RouteEngine
             var leave = Math.Max(due, nowSec); // 時刻を過ぎても出せていなければ、今から
             var shift = leave - diaDep;
 
-            // 線: 始発駅の発車から、ダイヤの時刻をずらして
+            // 線: 始発駅の発車から、ダイヤの時刻をずらして。
+            // 単線区間へ出る駅では、反対向きの走っている列車が区間にいる・この列車より先に区間に入る見込みなら、
+            // その列車がこの駅に着くまで待つ（走っている列車の線と、単線区間の中で交差させない）
             var forecast = new List<object>();
             var tracks = new List<object>();
+            var stationMarks = new List<object>(); // 始発駅の先の、進路を扱う駅の◆
             for (var i = from; i < dia.Stops.Count; i++)
             {
                 var s = dia.Stops[i];
                 if (s.StationId == null || _data.Line.ZoneOfStation(s.StationId) is var z && z < 0) continue;
-                if (i == from) forecast.Add(new { t = UtcOf(leave), y = (double)z });
-                else
+                double? arrSec = i == from ? null : DaySec(s.Arr) + shift;
+                var depBase = i == from ? leave : DaySec(s.Dep) + shift;
+                var depSec = depBase;
+                if (depSec != null && SingleTrackWait(dia, i, z, info.Dir, depSec.Value, shift, plans, runs, UtcOf, speed) is { } wait && wait > 0)
                 {
-                    if (DaySec(s.Arr) is { } arr) forecast.Add(new { t = UtcOf(arr + shift), y = (double)z });
-                    if (DaySec(s.Dep) is { } dep && dep != DaySec(s.Arr)) forecast.Add(new { t = UtcOf(dep + shift), y = (double)z });
+                    shift += wait;
+                    depSec += wait;
                 }
-                var track = i == from ? p.Track : s.Track;
+                if (i == from) forecast.Add(new { t = UtcOf(leave), y = (double)z });
+                else if (arrSec is { } arr) forecast.Add(new { t = UtcOf(arr), y = (double)z });
+                if (depSec is { } dep && dep != (i == from ? leave : arrSec)) forecast.Add(new { t = UtcOf(dep), y = (double)z });
+                var track = i == from ? p.Track : _central.TrackOverride(p.Number, s.StationId) ?? s.Track;
                 if (track != null) tracks.Add(new { y = z, track });
+
+                // ◆: 始発駅の先の、進路を扱う駅にも置く（出る前から番線・発車時刻・抑止を入れておける。列番と駅で覚えるので、出たあとも効く）
+                if (i == from || !_data.Stations.TryGetValue(s.StationId, out var ms) || !ms.RouteControl || s.Stop == "運停") continue;
+                var mTime = arrSec ?? depBase;
+                if (mTime == null) continue;
+                var terminal = s.StationId == dia.TerminalId;
+                var mNext = dia.Stops.Skip(i + 1).Select(x => x.StationId)
+                    .FirstOrDefault(id => id != null && _data.Stations.TryGetValue(id, out var nd) && nd.RouteControl);
+                var mOptions = ms.Routes[info.Dir].Arrive.Keys.Concat(ms.Routes[info.Dir].Depart.Keys).Distinct().Order().ToList();
+                var mHold = _central.Hold(p.Number, s.StationId);
+                var mOverride = _central.TrackOverride(p.Number, s.StationId);
+                stationMarks.Add(new
+                {
+                    stationId = s.StationId,
+                    name = ms.Name,
+                    passingStation = _data.PassingStations.ContainsKey(s.StationId),
+                    y = (double)z,
+                    t = (DateTime?)UtcOf(mTime.Value),
+                    source = s.Stop == "停" || terminal ? "出現前・到着予想" : "出現前・通過予想",
+                    openAt = (DateTime?)null,
+                    openSource = "見込み",
+                    editable = true,
+                    draggable = !terminal,
+                    departAt = _central.OpenAt(p.Number, s.StationId),
+                    held = mHold != HoldKind.None,
+                    holdArrive = (mHold & HoldKind.Arrive) != 0,
+                    holdDepart = (mHold & HoldKind.Depart) != 0,
+                    stopOverride = _central.StopOverride(p.Number, s.StationId),
+                    terminal,
+                    stopType = s.Stop == "停" ? "停車" : "通過",
+                    manual = new List<object>(),
+                    singleNext = mNext != null && _data.IsSingleTrack(s.StationId, mNext) ? mNext : null,
+                    status = $"出現前（{st.Name}に出す前の列車）",
+                    track = mOverride ?? s.Track,
+                    trackSource = mOverride != null ? "集中" : "ダイヤ",
+                    options = mOptions,
+                    changeable = mOptions.Count > 1
+                });
             }
             if (forecast.Count < 2) continue;
 
@@ -4097,11 +4144,47 @@ public sealed partial class RouteEngine
                 history = new List<object>(),
                 forecast,
                 tracks,
-                markers = new[] { marker },
+                markers = new List<object> { marker }.Concat(stationMarks).ToList(),
                 unyo = _data.Turns.UnyoOf(dia),
                 turn = _data.Turns.View(dia)
             };
         }
+    }
+
+    /// <summary>
+    /// 出現前の列車が、ダイヤの i 番目の駅（ゾーン z）から単線区間へ出るとき、反対向きの走っている列車を待つ秒（ロープレ時刻）。待たなくてよければ null。
+    /// 反対向きの列車が区間にいる・この列車がその先の駅に着くより前に区間へ入る見込みで、この駅に着くのがこの列車の発車より後なら、着くまで待つ。
+    /// depSec はこの駅の発車（ロープレ時刻の秒）、shift はダイヤからのずれ（その先の駅の着に足す）
+    /// </summary>
+    private double? SingleTrackWait(DiaTrain dia, int i, int z, Dir dir, double depSec, double shift, Dictionary<TrainRun, PlanResult> plans,
+        List<TrainRun> runs, Func<double, DateTime> utcOf, double speed)
+    {
+        var sid = dia.Stops[i].StationId!;
+        if (!_data.Stations.TryGetValue(sid, out var a) || !a.RouteControl) return null;
+        var j = dia.Stops.FindIndex(i + 1, x => x.StationId != null && _data.Stations.TryGetValue(x.StationId, out var b) && b.RouteControl);
+        if (j < 0 || !_data.IsSingleTrack(sid, dia.Stops[j].StationId!)) return null;
+        var zb = _data.Line.ZoneOfStation(dia.Stops[j].StationId!);
+        if (DaySec(dia.Stops[j].Arr ?? dia.Stops[j].Dep) is not { } arrB) return null;
+        var (lo, hi) = (Math.Min(z, zb), Math.Max(z, zb));
+
+        double wait = 0;
+        for (var guard = 0; guard < 10; guard++)
+        {
+            var dep = utcOf(depSec + wait);
+            var arrive = utcOf(arrB + shift + wait);
+            DateTime? until = null;
+            foreach (var r in runs.Where(r => r.Dir != dir && r.HasPosition))
+            {
+                if (!plans.TryGetValue(r, out var pl) || !pl.ArrAt.TryGetValue(z, out var rArr) || rArr <= dep) continue;
+                // 区間に入るのが、この列車が先の駅に着くより前か（もう区間にいる・先の駅を出る見込みが早い）
+                var inSection = r.Player.Zones.Any(x => x > lo && x < hi);
+                var enters = inSection || (pl.DepAt.TryGetValue(zb, out var rDep) && rDep < arrive);
+                if (enters && (until == null || rArr > until)) until = rArr;
+            }
+            if (until == null) break;
+            wait += (until.Value - dep).TotalSeconds * speed;
+        }
+        return wait > 0 ? wait : null;
     }
 
     private sealed record PlanResult(List<object> Points, Dictionary<int, DateTime> ArrAt, Dictionary<int, DateTime> DepAt);
