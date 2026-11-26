@@ -110,6 +110,9 @@ public sealed class EventStops
         return before ?? after;
     }
 
+    /// <summary>列車 → 所定のダイヤの同じ列車（時刻を変えていないもの）。Program.cs で RailData.BaseDia を渡す。</summary>
+    public Func<DiaTrain, DiaTrain?>? BaseOf { get; set; }
+
     /// <summary>この列車の、時刻表の index 番目の駅が、催物用臨停設定で臨時停車になるか。</summary>
     public bool Applies(DiaTrain dia, int index)
     {
@@ -124,7 +127,9 @@ public sealed class EventStops
             if (_rules.Count == 0) return false;
             rules = _rules.Where(r => r.Station == s.StationId).ToList();
         }
-        if (rules.Count == 0 || PassSec(dia, index) is not { } sec) return false;
+        // 時間帯は所定の通過時刻で見る（臨時停車用に時刻を変えた列車でも、入るかどうかが変わらないように）
+        var baseDia = BaseOf?.Invoke(dia) is { } bd && bd.Stops.Count == dia.Stops.Count ? bd : dia;
+        if (rules.Count == 0 || PassSec(baseDia, index) is not { } sec) return false;
         var dir = RouteEngine.TrainInfo(dia.Number)?.Dir;
         return rules.Any(r => rank >= Array.IndexOf(KindOrder, r.Kind) && (r.Dir == null || r.Dir == dir)
                               && sec >= r.FromSec && (r.ToSec is not { } to || sec <= to));
@@ -136,11 +141,14 @@ public sealed class EventStops
     /// <summary>
     /// 臨時停車になるなら、その駅の着・発（"HH:mm:ss"）。発＝通過時刻、着＝通過時刻 − 停車時間。
     /// 通過時刻が書かれていない駅は、どちらも null（スタフでは「臨時停車」とだけ書く）。臨時停車でなければ null。
+    /// 臨時停車用に時刻を変えた列車（着も発も書いてある）は、その着・発。
     /// </summary>
     public (string? Arr, string? Dep)? Times(DiaTrain dia, int index)
     {
         if (!Applies(dia, index)) return null;
         var s = dia.Stops[index];
+        // 臨時停車用に時刻を変えた列車（TempStopRetime）は、着も書いてあるので、それを使う
+        if (s.Arr != null && s.Dep != null) return (s.Arr, s.Dep);
         var dep = s.Dep ?? s.Arr;
         return (StopSec(dep) is { } t ? FormatStopTime(t - DwellSeconds) : null, dep);
     }
