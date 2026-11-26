@@ -921,9 +921,18 @@
     }
     function planLine(out, pts, color, name, L) {
       out.push(`<polyline points="${pts.map((p) => `${L.x(p.t).toFixed(1)},${p.y.toFixed(1)}`).join(" ")}" fill="none" stroke="${color}" stroke-width="1.1"/>`);
-      // 列番は、見えている範囲のいちばん左の点のそば
+      // 列番は、線の傾きに沿って斜めに: 見えている所で最初の斜めの所の始まりに置く（止まっているだけの線なら、いちばん左の点のそばに水平）
       const first = pts.find((p) => p.t >= L.t0 && p.t <= L.t1);
-      if (first) out.push(`<text x="${L.x(first.t) + 4}" y="${first.y - 3}" font-size="9" fill="${color}">${esc(name)}</text>`);
+      if (!first) return;
+      let at = first, ang = 0;
+      for (let i = pts.indexOf(first); i + 1 < pts.length; i++) {
+        const a = pts[i], b = pts[i + 1], dx = L.x(b.t) - L.x(a.t), dy = b.y - a.y;
+        if (a.t > L.t1) break;
+        if (a.t < L.t0 || Math.abs(dy) < 3 || dx <= 0) continue;
+        at = a; ang = Math.atan2(dy, dx) * 180 / Math.PI;
+        break;
+      }
+      out.push(`<text transform="translate(${(L.x(at.t) + 4).toFixed(1)},${(at.y - 3).toFixed(1)})${ang ? ` rotate(${ang.toFixed(1)})` : ""}" font-size="9" fill="${color}">${esc(name)}</text>`);
     }
 
     function render(d) {
@@ -1095,17 +1104,19 @@
         const a = P[i - 1], b = P[i];
         if (Math.max(a.x, b.x) < L.left || Math.min(a.x, b.x) > L.w - RIGHT) continue;
         const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy);
-        if (len < 2 * half + 4) continue; // 1本のまっすぐな所に収まるときだけ
+        // 止まっている所（横の線）と、ごく短い所には置かない。列番より短い斜めの所は、その真ん中に線の傾きで置く（はみ出す分は少し後回し）
+        if (len < 12 || Math.abs(dy) < 3) continue;
+        const short = len < 2 * half + 4;
         const ux = dx / len, uy = dy / len, nx = uy, ny = -ux; // 線の向きと、線の上側
-        for (let k = half + 2; k <= len - half - 2; k += 8) {
+        for (let k = short ? len / 2 : half + 2; k <= (short ? len / 2 : len - half - 2); k += 8) {
           const cx = a.x + ux * k + nx * 10, cy = a.y + uy * k + ny * 10; // 線から少し離す（線の上の◆にかからないように）
           const c = { cx, cy, x1: cx - ux * half, y1: cy - uy * half, x2: cx + ux * half, y2: cy + uy * half, ang: Math.atan2(dy, dx) * 180 / Math.PI };
           if (Math.min(c.x1, c.x2) < L.left + 2 || Math.max(c.x1, c.x2) > L.w - RIGHT - 2) continue;
           const top = Math.min(c.y1, c.y2) - r, bottom = Math.max(c.y1, c.y2) + r;
           const inGap = L.gaps.some(([g1, g2]) => top >= g1 + 1 && bottom <= g2 - 1);
-          // 通常表示は駅の間隔が狭く、斜めの列番が駅の間に収まらないことが多いので、駅の線にかかる所にも置く（駅の間に収まる所を先に）
-          if (!inGap && view.split) continue;
-          c.score = Math.abs(cx - nowX) + (cx < nowX ? 40 : 0) + (inGap ? 0 : 150); // 今より先（見込みの線）を少し優先。駅の線にかかる所は、近くに駅の間がなければ
+          // 駅の間隔が狭いと、斜めの列番が駅の間に収まらないことが多いので、駅の線・番線の段にかかる所にも置く（駅の間に収まる所を先に）。
+          // 列番は基本、線に沿って斜めに出す（水平にするのは、斜めに置ける所がまったくないときだけ）
+          c.score = Math.abs(cx - nowX) + (cx < nowX ? 40 : 0) + (inGap ? 0 : 150) + (short ? 80 : 0); // 今より先（見込みの線）を少し優先
           cands.push(c);
         }
       }
@@ -1115,7 +1126,13 @@
         obstacles.push({ x1: c.x1, y1: c.y1, x2: c.x2, y2: c.y2, r });
         return text(c.cx, c.cy, c.ang);
       }
-      // 置けなければ、今いる所の右上（重なるなら少しずつ上へ）
+      // どこもほかの列番・◆と重なるなら、いちばんよい所に斜めのまま置く（重なりは少しがまんする）
+      if (cands.length) {
+        const c = cands[0];
+        obstacles.push({ x1: c.x1, y1: c.y1, x2: c.x2, y2: c.y2, r });
+        return text(c.cx, c.cy, c.ang);
+      }
+      // 斜めの所がない（止まっているだけの列車など）ときは、今いる所の右上（重なるなら少しずつ上へ）
       for (let dy = 0; dy < 60; dy += 12) {
         const cx = q.at.x + 6 + half, cy = q.at.y - 9 - dy;
         const c = { x1: cx - half, y1: cy, x2: cx + half, y2: cy };
