@@ -1060,7 +1060,8 @@ public sealed partial class MainForm : Form
             _routeMessage.Text = state?.RouteMessage ?? (_diaLock ? "ダイヤ運転中は、番線・進路はダイヤどおりに自動で扱います（列車からは変えられません）"
                 : state?.Plan.Count > 0 ? "番線は、手前の駅を通過するまで選べます" : "この先に、進路を扱う駅はありません");
             UpdatePlan(state?.Plan ?? new List<StationPlanView>());
-            _departButton.Enabled = state?.CanRequestDeparture == true && _role == CrewRole.Driver; // 出発要求は運転士が出す
+            // 出発要求は運転士が出す（車掌でも、自動運転の間はサーバーが運転士と同じに数えているので出せる）
+            _departButton.Enabled = state?.CanRequestDeparture == true && (_role == CrewRole.Driver || (_role == CrewRole.Conductor && _crewPanel?.AutoDriving == true));
             _departButton.Text = state?.DepartureLabel ?? "出発要求";
             _departButton.BackColor = _departButton.Enabled ? Color.SeaGreen : SystemColors.Control;
             _departButton.ForeColor = _departButton.Enabled ? Color.White : SystemColors.GrayText;

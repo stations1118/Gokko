@@ -179,7 +179,8 @@ public sealed partial class GameHub(
     [HubMethodName(Protocol.RequestDeparture)]
     public string RequestDeparture()
     {
-        if (relay.IsConductor(Context.ConnectionId) || relay.IsRider(Context.ConnectionId)) return "出発要求は運転士が出します";
+        // 車掌・添乗は出せない（自動運転の車掌は運転士と同じに在線に数えているので出せる）
+        if ((relay.IsConductor(Context.ConnectionId) && !players.IsJoined(Context.ConnectionId)) || relay.IsRider(Context.ConnectionId)) return "出発要求は運転士が出します";
         var message = routes.RequestDeparture(Context.ConnectionId);
         broadcaster.Trigger();
         return message;
