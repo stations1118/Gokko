@@ -60,6 +60,11 @@ public sealed class TempTrains
         public bool Applied { get; set; }
         /// <summary>司令用管理画面で「走らせない」にした運行番号（適用しても、この運行番号の列車は出さない）。</summary>
         public List<string> OffUnyo { get; set; } = new();
+        /// <summary>
+        /// 終夜運転（終電から始発までの間に走らせる）。4時〜6時の時刻を翌朝（28時〜30時）として扱い、翌6時までのスジを引ける。
+        /// 後運用に翌朝の所定の列車（始発）を選べる。
+        /// </summary>
+        public bool Overnight { get; set; }
         public List<TrainSpec> Trains { get; set; } = new();
 
         /// <summary>走らせる列車（走らせないにした運行番号の列車を除く）。</summary>
@@ -92,6 +97,11 @@ public sealed class TempTrains
         public string TurnVia { get; set; } = "";
         /// <summary>両数（0 なら運行番号ごとの既定。自動運転の列車の長さ・連結の位置に使う）。</summary>
         public int Cars { get; set; }
+        /// <summary>
+        /// 前運用: 留置になる所定の列車（滞泊など、終点のあとがない列車）の列番。空ならなし。
+        /// その列車が発駅の同じ番線に着いたあと、そのままこの列車として出る（所定の列車の「終点のあと」を、この列車への折返にする）。
+        /// </summary>
+        public string From { get; set; } = "";
     }
 
     /// <summary>1駅。Stop は「停」か「通」。時刻は "HH:mm:ss"（"HH:mm" でもよい）。Track は番線。</summary>
@@ -170,14 +180,14 @@ public sealed class TempTrains
     private static bool Editable(Group g) => g.Status is Draft or Rejected;
 
     /// <summary>グループを作る・直す（下書き・差戻しのものだけ、作った人が）。うまくいけば (id, 注意) を返す。</summary>
-    public (string? Id, string? Error, List<string> Warnings) Save(string? id, string name, List<TrainSpec> trains, string user, string userName)
+    public (string? Id, string? Error, List<string> Warnings) Save(string? id, string name, List<TrainSpec> trains, string user, string userName, bool overnight = false)
     {
         name = (name ?? "").Trim();
         if (name.Length == 0) return (null, "グループの名前を入れてください", new());
         if (name.Length > 30) return (null, "グループの名前は30文字までにしてください", new());
         if ((trains?.Count ?? 0) > 100) return (null, "1つのグループの列車は100本までにしてください", new());
-        trains = Normalize(trains ?? new());
-        var (errors, warnings) = Check(trains, id);
+        trains = Normalize(trains ?? new(), overnight);
+        var (errors, warnings) = Check(trains, id, overnight);
         if (errors.Count > 0) return (null, string.Join("\n", errors), warnings);
         lock (_lock)
         {
@@ -195,6 +205,7 @@ public sealed class TempTrains
                 if (!Editable(g)) return (null, $"{g.Status}のグループは直せません（取り下げて下書きに戻してください）", warnings);
             }
             g.Name = name;
+            g.Overnight = overnight;
             g.Trains = trains;
             g.UpdatedUtc = DateTime.UtcNow;
             Save();
@@ -219,7 +230,7 @@ public sealed class TempTrains
                     if (!mine) return "作った人だけが申請できます";
                     if (!Editable(g)) return $"{g.Status}のグループは申請できません";
                     if (g.Trains.Count == 0) return "列車がありません";
-                    var (errors, _) = Check(g.Trains, g.Id);
+                    var (errors, _) = Check(g.Trains, g.Id, g.Overnight);
                     if (errors.Count > 0) return string.Join("\n", errors);
                     g.Status = Pending;
                     g.Comment = "";
@@ -234,7 +245,7 @@ public sealed class TempTrains
                 case "approve":
                     if (!approver) return "運転課課長代理だけが承認できます";
                     if (g.Status != Pending) return "申請中のグループだけ承認できます";
-                    var (errs, _) = Check(g.Trains, g.Id);
+                    var (errs, _) = Check(g.Trains, g.Id, g.Overnight);
                     if (errs.Count > 0) return string.Join("\n", errs);
                     g.Status = Approved;
                     g.ApprovedBy = user;
@@ -330,9 +341,19 @@ public sealed class TempTrains
     private string? ApplyLayer()
     {
         var extra = new List<DiaTrain>();
+        var replace = new List<DiaTrain>();
         foreach (var g in _groups.Where(g => g.Applied))
-            extra.AddRange(Build(g.Running().ToList()));
-        var skipped = _rail.SetExtraTrains("催物", extra);
+        {
+            var (e, r) = Build(g.Running().ToList(), g.Overnight);
+            extra.AddRange(e);
+            replace.AddRange(r);
+        }
+        // 終夜運転: 同じ所定の列車を、2つの臨時列車の前運用・後運用にしない
+        var twice = replace.GroupBy(d => d.Number).Where(x => x.Count() > 1).Select(x => x.Key)
+            .Concat(extra.Where(d => d.Turn is { Kind: "折返", Number: { } tn } && _rail.BaseDia.ContainsKey(tn)).GroupBy(d => d.Turn!.Number!).Where(x => x.Count() > 1).Select(x => x.Key)).ToList();
+        if (twice.Count > 0)
+            return $"所定の列車 {string.Join("、", twice)} を、2本の臨時列車でつないでいます（ほかの適用中のグループと重なっています）";
+        var skipped = _rail.SetExtraTrains("催物", extra, replace);
         return skipped.Count > 0 ? $"所定のダイヤにある列番は足せませんでした: {string.Join("、", skipped)}" : null;
     }
 
@@ -442,21 +463,25 @@ public sealed class TempTrains
         var m = TimeRe.Match(s.Normalize(System.Text.NormalizationForm.FormKC).Trim());
         if (!m.Success) return null;
         int h = int.Parse(m.Groups[1].Value), mi = int.Parse(m.Groups[2].Value), se = m.Groups[3].Success ? int.Parse(m.Groups[3].Value) : 0;
-        if (h > 27 || mi > 59 || se > 59) return null;
+        if (h > 29 || mi > 59 || se > 59) return null; // 終夜運転は翌6時（30時）の手前まで
         return $"{h % 24:00}:{mi:00}:{se:00}";
     }
 
     /// <summary>運転日の秒（4時前は翌日）。</summary>
-    private static double? DaySec(string? s)
+    private static double? DaySec(string? s) => DaySecAt(s, false);
+
+    /// <summary>運転日の秒。ふだんは4時前、終夜運転（overnight）は6時前を翌日（24時以降）とする。</summary>
+    private static double? DaySecAt(string? s, bool overnight)
     {
         if (NormTime(s) is not { } t) return null;
         var p = t.Split(':');
         var v = int.Parse(p[0]) * 3600 + int.Parse(p[1]) * 60 + int.Parse(p[2]);
-        return v < 4 * 3600 ? v + 86400 : v;
+        return v < (overnight ? 6 : 4) * 3600 ? v + 86400 : v;
     }
 
-    private List<TrainSpec> Normalize(List<TrainSpec> trains)
+    private List<TrainSpec> Normalize(List<TrainSpec> trains, bool overnight = false)
     {
+        double? DaySec(string? s) => DaySecAt(s, overnight);
         foreach (var t in trains)
         {
             t.Number = RailData.NormalizeTrain(t.Number);
@@ -469,6 +494,7 @@ public sealed class TempTrains
             t.TurnNext = t.TurnHow is "発" or "入換" or "種別変更" or "連結" ? RailData.NormalizeTrain(t.TurnNext) : "";
             t.TurnTime = t.TurnHow == "入換" ? NormTime(t.TurnTime) ?? (string.IsNullOrWhiteSpace(t.TurnTime) ? null : t.TurnTime) : null;
             t.TurnVia = t.TurnHow == "入換" ? (t.TurnVia ?? "").Trim() : "";
+            t.From = RailData.NormalizeTrain(t.From);
             t.Stops ??= new();
             foreach (var s in t.Stops)
             {
@@ -494,6 +520,22 @@ public sealed class TempTrains
         };
     }
 
+    /// <summary>所定の列車の前の列車（所定の時刻表で、折り返し・途中で列番が変わってその列車になる列車）。なければ null。</summary>
+    private string? BasePred(string number) =>
+        _rail.BaseDia.Values.FirstOrDefault(d => d.Turn is { Kind: "折返", Number: { } tn } && tn == number || d.Next?.Number == number)?.Number;
+
+    /// <summary>所定の列車を写して、「終点のあと」だけ差し替えたもの（終夜運転で、留置になる列車を臨時列車につなぐ）。</summary>
+    private static DiaTrain WithTurn(DiaTrain d, DiaTurn turn)
+    {
+        var c = new DiaTrain
+        {
+            Number = d.Number, Type = d.Type, TypeLabel = d.TypeLabel, Dest = d.Dest, TerminalId = d.TerminalId, Next = d.Next, Unyo = d.Unyo, Cars = d.Cars, Turn = turn
+        };
+        c.Stops.AddRange(d.Stops);
+        foreach (var (k, v) in d.Stations) c.Stations[k] = v;
+        return c;
+    }
+
     /// <summary>
     /// 構内入換: 1駅だけの列車で、このグループの列車の終点のあと「入換」の後運用になっているもの（その列車の終点と同じ駅）。
     /// 江ノ原信号場の 10番線 → 13番線 → 11番線 のように、駅の中で番線を移るのに使う（入換1回が1列車）。
@@ -517,8 +559,9 @@ public sealed class TempTrains
     /// 入力を確かめる。errors があれば保存・申請・承認できない。warnings は知らせるだけ。
     /// 確かめること: 列番の形（種別・向き）・列番のかぶり・駅の並び・時刻の順・停車駅の番線
     /// </summary>
-    public (List<string> Errors, List<string> Warnings) Check(List<TrainSpec> trains, string? groupId)
+    public (List<string> Errors, List<string> Warnings) Check(List<TrainSpec> trains, string? groupId, bool overnight = false)
     {
+        double? DaySec(string? s) => DaySecAt(s, overnight);
         var errors = new List<string>();
         var warnings = new List<string>();
         var downUp = DownIncreasing();
@@ -611,6 +654,26 @@ public sealed class TempTrains
                 }
             }
 
+            // 前運用（終夜運転など）: 留置になる所定の列車が、発駅の同じ番線に着いたあと、そのままこの列車として出る
+            if (t.From.Length > 0)
+            {
+                var first = t.Stops[0];
+                var fname = StationName(first.St);
+                if (!_rail.BaseDia.TryGetValue(t.From, out var fd)) errors.Add($"{n}: 前運用の {t.From} は所定の時刻表にありません");
+                else if (fd.Turn is { Kind: not "滞泊" } || fd.Next != null) errors.Add($"{n}: 所定の {t.From} は終点のあとも走る列車です（前運用にできるのは、留置になる列車だけです）");
+                else if (fd.Stops.LastOrDefault() is not { } fl || fl.StationId != first.St) errors.Add($"{n}: 所定の {t.From} は{fname}で終わる列車ではありません");
+                else
+                {
+                    if (fl.Track != null && first.Track != null && fl.Track != first.Track)
+                        errors.Add($"{n}: 所定の {t.From} は{fname} {fl.Track}番線に着きます。この列車も {fl.Track}番線から出してください");
+                    if (DaySec(fl.Arr ?? fl.Dep) is { } fa && DaySec(first.Dep) is { } fdp && fdp < fa)
+                        errors.Add($"{n}: 所定の {t.From} が{fname}に着くより前に出ることになっています");
+                    if (trains.Any(x => x != t && x.From == t.From)) errors.Add($"{n}: 所定の {t.From} は、ほかの列車の前運用にもなっています");
+                    if (trains.Any(x => x != t && x.TurnHow is "発" or "入換" or "種別変更" && x.TurnNext == n))
+                        errors.Add($"{n}: このグループの列車の後運用になっている列車には、前運用を決められません");
+                }
+            }
+
             // 増結車（連結）: 待つ駅（終点）に止まる後運用の列車に、あとから入ってきてもらって連結する（増結車が先に番線で待つ）
             if (t.TurnHow == "連結")
             {
@@ -644,8 +707,12 @@ public sealed class TempTrains
             {
                 var end = t.Stops[^1];
                 var endName = StationName(end.St);
-                var next = trains.FirstOrDefault(x => x.Number == t.TurnNext);
-                if (t.TurnNext.Length == 0 || next == null) errors.Add($"{n}: 後運用の列番{(t.TurnNext.Length > 0 ? $" {t.TurnNext}" : "")}がこのグループにありません");
+                // 終夜運転なら、翌朝の所定の列車（前の列車がない始発）も後運用にできる（そのまま折返・入換だけ）
+                var next = trains.FirstOrDefault(x => x.Number == t.TurnNext)
+                    ?? (overnight && t.TurnHow is "発" or "入換" && !trains.Any(x => x.Number == t.TurnNext) ? FindTrain(t.TurnNext, trains) : null);
+                if (next != null && !trains.Contains(next) && BasePred(next.Number) is { } bp)
+                    errors.Add($"{n}: 所定の {next.Number} は、所定の {bp} から続けて走る列車です（後運用にできるのは、前の列車がない所定の列車だけです）");
+                if (t.TurnNext.Length == 0 || next == null) errors.Add($"{n}: 後運用の列番{(t.TurnNext.Length > 0 ? $" {t.TurnNext}" : "")}がこのグループに{(overnight ? "も所定の時刻表にも" : "")}ありません");
                 else if (next == t) errors.Add($"{n}: 後運用に自分は選べません");
                 else if (next.Stops.Count == 0 || next.Stops[0].St != end.St) errors.Add($"{n}: 後運用 {next.Number} は{endName}から出る列車ではありません");
                 else
@@ -742,9 +809,12 @@ public sealed class TempTrains
 
     /// <summary>入力した列車を、ダイヤの列車に直す。同じ運行番号で、終点から次の列車が出るなら折返でつなぐ。</summary>
     /// <summary>手で決めた終点のあと（発・入換）。自動・なし・後運用がないときは null。</summary>
-    private static DiaTurn? TurnOf(TrainSpec t, List<TrainSpec> trains)
+    private DiaTurn? TurnOf(TrainSpec t, List<TrainSpec> trains, bool overnight)
     {
-        if (t.TurnHow is not ("発" or "入換") || trains.FirstOrDefault(x => x.Number == t.TurnNext) is not { } next || next.Stops.Count == 0) return null;
+        double? DaySec(string? s) => DaySecAt(s, overnight);
+        // 終夜運転なら、後運用は翌朝の所定の列車でもよい
+        if (t.TurnHow is not ("発" or "入換") || (trains.FirstOrDefault(x => x.Number == t.TurnNext) ?? (overnight ? FindTrain(t.TurnNext, trains) : null)) is not { } next
+            || next.Stops.Count == 0) return null;
         var dep = NormTime(next.Stops[0].Dep);
         if (t.TurnHow == "発") return new DiaTurn("折返", next.Number, dep, "発");
         // 構内入換（後運用が1駅だけで発の時刻がない）: 入換の時刻が空なら、後運用の着の時刻（入換で番線に入る時刻）
@@ -759,9 +829,14 @@ public sealed class TempTrains
         return $"{v / 3600:00}:{v / 60 % 60:00}:{v % 60:00}";
     }
 
-    private List<DiaTrain> Build(List<TrainSpec> trains)
+    /// <summary>
+    /// 入力した列車を、ダイヤの列車に直す。Replace は差し替える所定の列車（前運用にした、留置になる所定の列車の「終点のあと」を、その臨時列車への折返にしたもの）。
+    /// </summary>
+    private (List<DiaTrain> Extra, List<DiaTrain> Replace) Build(List<TrainSpec> trains, bool overnight)
     {
+        double? DaySec(string? s) => DaySecAt(s, overnight);
         var list = new List<DiaTrain>();
+        var replace = new List<DiaTrain>();
         var byUnyo = trains.Where(t => t.Unyo.Length > 0).GroupBy(t => t.Unyo).ToList();
         foreach (var g in byUnyo)
         {
@@ -788,11 +863,13 @@ public sealed class TempTrains
                 // 増結車: 時刻表の 連777 と同じく、終点（待つ駅）で後運用の列車に「併結」する
                 else if (t.TurnHow == "連結" && t.TurnNext.Length > 0)
                     d.Turn = new DiaTurn("併結", t.TurnNext, NormTime(FindTrain(t.TurnNext, trains)?.Stops.FirstOrDefault(s => s.St == last)?.Dep), null);
-                else d.Turn = TurnOf(t, trains) ?? (t.TurnHow.Length == 0 && i + 1 < ordered.Count && ordered[i + 1].Stops.FirstOrDefault() is { } nf && nf.St == last
+                else d.Turn = TurnOf(t, trains, overnight) ?? (t.TurnHow.Length == 0 && i + 1 < ordered.Count && ordered[i + 1].Stops.FirstOrDefault() is { } nf && nf.St == last
                     ? new DiaTurn("折返", ordered[i + 1].Number, NormTime(nf.Dep), "発") : null);
                 list.Add(d);
+                if (t.From.Length > 0 && t.Stops.Count > 0 && _rail.BaseDia.TryGetValue(t.From, out var fd))
+                    replace.Add(WithTurn(fd, new DiaTurn("折返", t.Number, NormTime(t.Stops[0].Dep), "発")));
             }
         }
-        return list;
+        return (list, replace);
     }
 }

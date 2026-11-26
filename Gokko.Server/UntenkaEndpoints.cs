@@ -9,8 +9,8 @@ namespace Gokko.Server;
 /// </summary>
 public static class UntenkaEndpoints
 {
-    public sealed record SaveRequest(string? Id, string? Name, List<TempTrains.TrainSpec>? Trains);
-    public sealed record CheckRequest(string? Id, List<TempTrains.TrainSpec>? Trains);
+    public sealed record SaveRequest(string? Id, string? Name, List<TempTrains.TrainSpec>? Trains, bool Overnight = false);
+    public sealed record CheckRequest(string? Id, List<TempTrains.TrainSpec>? Trains, bool Overnight = false);
     public sealed record ActRequest(string? Id, string? Action, string? Comment);
     public sealed record UnyoRunRequest(string? Id, string? Unyo, bool On);
 
@@ -112,6 +112,8 @@ public static class UntenkaEndpoints
                 type = t.Type,
                 trial = RailData.IsTrial(t), // 試運転（画面では「試運転を表示」のときだけ出す）
                 turn = t.Turn is { Kind: "折返", Number: { } tn } ? tn : t.Next?.Number, // 運行のつなぎ（折り返し・途中で列番が変わる列車）
+                unyo = t.Unyo,
+                stay = t.Next == null && t.Turn is null or { Kind: "滞泊" }, // 終点のあとがない（滞泊など、留置になる）列車。終夜運転の臨時列車の前運用にできる
                 // 入換して折り返す列車: 入換の時刻と入る線（引上線などの名前。null なら後運用の発車の番線へそのまま移る）。図で入換先の段に線を引く
                 shunt = t.Turn is { Kind: "折返", How: "入換" } st ? new { time = st.Time, via = st.Via ?? DefaultVia(rail, t) } : null,
                 // 路線の外の駅も、駅の並びにあれば描く（描ける端まで）
@@ -124,14 +126,14 @@ public static class UntenkaEndpoints
 
         g.MapPost("/check", (CheckRequest req, TempTrains temp) =>
         {
-            var (errors, warnings) = temp.Check(req.Trains?.Select(Copy).ToList() ?? new(), req.Id);
+            var (errors, warnings) = temp.Check(req.Trains?.Select(Copy).ToList() ?? new(), req.Id, req.Overnight);
             return Results.Ok(new { errors, warnings });
         });
 
         g.MapPost("/groups", (SaveRequest req, HttpContext ctx, CrewRoster crew, TempTrains temp) =>
         {
             var me = Me(ctx, crew);
-            var (id, error, warnings) = temp.Save(req.Id, req.Name ?? "", req.Trains?.Select(Copy).ToList() ?? new(), me, crew.InfoOf(me)?.Name ?? "");
+            var (id, error, warnings) = temp.Save(req.Id, req.Name ?? "", req.Trains?.Select(Copy).ToList() ?? new(), me, crew.InfoOf(me)?.Name ?? "", req.Overnight);
             return error != null ? Results.BadRequest(new { ok = false, message = error, warnings }) : Results.Ok(new { ok = true, id, warnings });
         });
 
@@ -193,7 +195,7 @@ public static class UntenkaEndpoints
     private static TempTrains.TrainSpec Copy(TempTrains.TrainSpec t) => new()
     {
         Unyo = t.Unyo ?? "", Number = t.Number ?? "", Type = t.Type ?? "", Label = t.Label ?? "", Dest = t.Dest ?? "",
-        TurnHow = t.TurnHow ?? "", TurnNext = t.TurnNext ?? "", TurnTime = t.TurnTime, TurnVia = t.TurnVia ?? "", Cars = t.Cars,
+        TurnHow = t.TurnHow ?? "", TurnNext = t.TurnNext ?? "", TurnTime = t.TurnTime, TurnVia = t.TurnVia ?? "", Cars = t.Cars, From = t.From ?? "",
         Stops = (t.Stops ?? new()).Take(80).Select(s => new TempTrains.StopSpec { St = s.St ?? "", Stop = s.Stop ?? "通", Arr = s.Arr, Dep = s.Dep, Track = s.Track }).ToList()
     };
 }

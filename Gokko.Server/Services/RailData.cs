@@ -307,6 +307,8 @@ public sealed class RailData
 
     // 所定のダイヤに重ねる列車（出どころ → 列車。催物用の臨時列車・特発臨など）
     private readonly Dictionary<string, List<DiaTrain>> _extra = new();
+    // 所定の列車の差し替え（出どころ → 列車。終夜運転で、留置になる所定の列車の「終点のあと」を臨時列車につなぐなど）
+    private readonly Dictionary<string, List<DiaTrain>> _replace = new();
     private readonly object _extraLock = new();
 
     /// <summary>
@@ -314,18 +316,24 @@ public sealed class RailData
     /// どの出どころにも列車がなければ、所定のダイヤに戻す。
     /// 所定のダイヤは変えず、足した表を新しく作って参照を切り替えるだけなので、読んでいる途中の処理はそのまま古い表を読み終える。
     /// 表は、ほかの出どころを先に足し、この出どころを最後に足す。所定のダイヤ・ほかの出どころにある列番は足さない（この出どころの足せなかった列番を返す）。
+    /// replace は、所定の列車を差し替えるもの（同じ列番の所定の列車があるものだけ。中身は呼ぶ側が所定の列車を写して作る）。
     /// </summary>
-    public List<string> SetExtraTrains(string source, IReadOnlyCollection<DiaTrain> extra)
+    public List<string> SetExtraTrains(string source, IReadOnlyCollection<DiaTrain> extra, IReadOnlyCollection<DiaTrain>? replace = null)
     {
         var skipped = new List<string>();
         lock (_extraLock)
         {
             if (extra.Count == 0) _extra.Remove(source);
             else _extra[source] = extra.ToList();
-            if (_extra.Count == 0) _dia = null;
+            if (replace is not { Count: > 0 }) _replace.Remove(source);
+            else _replace[source] = replace.ToList();
+            if (_extra.Count == 0 && _replace.Count == 0) _dia = null;
             else
             {
                 var d = new Dictionary<string, DiaTrain>(_baseDia);
+                foreach (var list in _replace.Values)
+                    foreach (var t in list)
+                        if (_baseDia.ContainsKey(t.Number)) d[t.Number] = t;
                 foreach (var (src, list) in _extra)
                     if (src != source)
                         foreach (var t in list) d.TryAdd(t.Number, t);

@@ -686,7 +686,7 @@ public sealed class AiTrains : BackgroundService
             if (!t.Plan.Skip(t.DwellIndex + 1).Any()) ChainNext(t);
             var stopNow = t.Plan[t.DwellIndex];
             var depAt = stopNow.Dep ?? stopNow.Arr;
-            var ready = (utcNow - t.ArrivedUtc).TotalSeconds * _clock.Speed >= MinDwellSeconds && (depAt == null || nowGame == null || nowGame >= depAt);
+            var ready = (utcNow - t.ArrivedUtc).TotalSeconds * _clock.Speed >= MinDwellSeconds && (depAt == null || nowGame == null || IsLater(nowGame.Value, depAt.Value));
             var terminal = !t.Plan.Skip(t.DwellIndex + 1).Any();
             if (terminal)
             {
@@ -704,7 +704,7 @@ public sealed class AiTrains : BackgroundService
                         return;
                     }
 
-                    if (ready && (depAt == null || nowGame == null || nowGame - depAt > TimeSpan.FromSeconds(60))) t.FinishedUtc ??= utcNow - TerminalLinger;
+                    if (ready && (depAt == null || nowGame == null || Wrap(nowGame.Value - depAt.Value) > TimeSpan.FromSeconds(60))) t.FinishedUtc ??= utcNow - TerminalLinger;
                     t.Status = ready ? $"{stopNow.Name} で出発の進路待ち（この先は線区の外）" : $"{stopNow.Name} に停車中（{(depAt is { } d0 ? d0.ToString(@"hh\:mm\:ss") : "")}発。この先は線区の外）";
                     UpdateInfo(t);
                     return;
@@ -746,7 +746,7 @@ public sealed class AiTrains : BackgroundService
                     // 自動進路構成が扱う駅がもうない（入換の進路を開けない）まま、
                     // 次の列番の発車1分前になったら、この列車は消す（次の列番は、その時刻にダイヤの番線へ出す）
                     if (t.PlanDetail == null && nowGame is { } ng1 && _rail.DiaOf(sn)?.Stops.FirstOrDefault(s => s.StationId == stopNow.StationId) is { } ns
-                        && Time(ns.Dep ?? ns.Arr) is { } nsDep && ng1 >= nsDep - TimeSpan.FromSeconds(60))
+                        && Time(ns.Dep ?? ns.Arr) is { } nsDep && Wrap(ng1 - nsDep) >= -TimeSpan.FromSeconds(60))
                     {
                         t.FinishedUtc ??= utcNow - TerminalLinger;
                         t.Status = $"{stopNow.Name} で入換の進路が開かないので終わり（{sn} は {stopNow.Name} の番線に出します）";
@@ -763,7 +763,7 @@ public sealed class AiTrains : BackgroundService
                 if (t.Number.StartsWith("連") && t.Number[1..] is { Length: > 0 } cn)
                 {
                     if (nowGame is { } ng2 && _rail.DiaOf(cn)?.Stops.FirstOrDefault(s => s.StationId == stopNow.StationId) is { } cs
-                        && Time(cs.Dep ?? cs.Arr) is { } cdep && ng2 > cdep + TimeSpan.FromMinutes(10))
+                        && Time(cs.Dep ?? cs.Arr) is { } cdep && Wrap(ng2 - cdep) > TimeSpan.FromMinutes(10))
                     {
                         t.FinishedUtc ??= utcNow - TerminalLinger;
                         t.Status = $"{stopNow.Name} で {cn} が来ないので終わり";
@@ -825,7 +825,7 @@ public sealed class AiTrains : BackgroundService
         {
             if (next != null && (next.Arr ?? next.Dep) is { } due)
             {
-                var remain = (due - ng).TotalSeconds;
+                var remain = Wrap(due - ng).TotalSeconds;
                 var dist = stopX is { } x ? x - t.Head : EstimateDistance(t, next);
                 if (dist is { } dd && dd > 0)
                     cruise = remain <= 10 ? 110 / 3.6 : Math.Clamp(dd / remain * 1.1, 35 / 3.6, 110 / 3.6);
@@ -836,7 +836,7 @@ public sealed class AiTrains : BackgroundService
             foreach (var pass in t.Plan.Skip(t.PlanIndex).TakeWhile(p => p != next).Where(p => !p.Stops))
             {
                 if ((pass.Dep ?? pass.Arr) is not { } pdue || EstimateDistance(t, pass) is not { } pd || pd <= 0) continue;
-                var prem = (pdue - ng).TotalSeconds;
+                var prem = Wrap(pdue - ng).TotalSeconds;
                 if (prem > 10) cruise = Math.Min(cruise, Math.Max(35 / 3.6, pd / prem * 1.1));
             }
         }
@@ -1465,8 +1465,9 @@ public sealed class AiTrains : BackgroundService
             return x;
         }
 
-        // 表にない: 軌道回路の中に収める
-        if (platform != null) return Math.Max(platform.Start + 1, platform.End - Margin);
+        // 表にない: 軌道回路の中に収める。出発信号機が停止なら、その手前（止まれる所）を越えない
+        // （越えると、信号機の手前で止まったまま着いたことにならない。赤山町の下り 1番線に着く 2351 が、3L の手前で止まり続けた）
+        if (platform != null) return Math.Min(Math.Max(platform.Start + 1, platform.End - Margin), t.Blocked ? t.PathEnd - SignalMargin : double.MaxValue);
         if (st == null || !st.RouteControl)
         {
             var zone = _rail.Line.ZoneOfStation(p.StationId);
@@ -2170,6 +2171,14 @@ public sealed class AiTrains : BackgroundService
     }
 
     /// <summary>a が b と同じか後の時刻か（日をまたぐ所は、12時間以内の差で見る）。</summary>
+    /// <summary>時刻の差を ±12時間に収める（0時をまたぐ: 23:46 から見た 00:30 発は 44分後。終夜運転の列車など）。</summary>
+    private static TimeSpan Wrap(TimeSpan d)
+    {
+        while (d > TimeSpan.FromHours(12)) d -= TimeSpan.FromDays(1);
+        while (d < TimeSpan.FromHours(-12)) d += TimeSpan.FromDays(1);
+        return d;
+    }
+
     private static bool IsLater(TimeSpan a, TimeSpan b)
     {
         var d = (a - b).TotalHours;
