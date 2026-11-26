@@ -60,7 +60,7 @@ public static class DiaNotes
     // 行き先 → 記事の1字（書いていない行き先は、行き先の最初の字）
     private static readonly Dictionary<string, string> DestShort = new()
     {
-        ["大手橋"] = "手", ["大道寺"] = "道", ["新野崎"] = "野", ["大路"] = "路", ["新長野公園"] = "公"
+        ["大手橋"] = "手", ["大道寺"] = "道", ["新野崎"] = "野", ["大路"] = "路", ["新大路"] = "大", ["新長野公園"] = "公"
     };
 
     /// <summary>行き先の1字（大手橋 → 手、館浜 → 館）。</summary>
