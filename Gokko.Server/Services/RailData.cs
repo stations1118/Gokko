@@ -366,7 +366,13 @@ public sealed class RailData
         Turns.DiaChanged();
     }
 
-    /// <summary>所定のダイヤに、時刻の差し替えと臨時列車を重ねた表を作り直す（_extraLock の中で）。source の出どころの足せなかった列番を返す。</summary>
+    /// <summary>記事（待避・連絡・交換）を作り直せなかったときの理由（なければ null）。</summary>
+    public string? NotesError { get; private set; }
+
+    /// <summary>
+    /// 所定のダイヤに、時刻の差し替えと臨時列車を重ねた表を作り直す（_extraLock の中で）。source の出どころの足せなかった列番を返す。
+    /// 重ねた列車と、その相手の列車の待避・連絡・交換の記事も作り直す（<see cref="DiaNotes"/>）。
+    /// </summary>
     private List<string> Rebuild(string? source)
     {
         var skipped = new List<string>();
@@ -387,6 +393,19 @@ public sealed class RailData
         if (source != null && _extra.TryGetValue(source, out var mine))
             foreach (var t in mine)
                 if (!d.TryAdd(t.Number, t)) skipped.Add(t.Number);
+
+        // 待避・連絡・交換の記事を、時刻を変えた列車・臨時列車と、その相手の列車だけ作り直す（DiaNotes）
+        var overlay = new Dictionary<string, DiaTrain>();
+        foreach (var (n, t) in d)
+            if (!ReferenceEquals(t, _baseDia.GetValueOrDefault(n))) overlay[n] = t;
+        try
+        {
+            foreach (var (n, t) in DiaNotes.Rewrite(_baseDia, overlay)) d[n] = t;
+        }
+        catch (Exception ex)
+        {
+            NotesError = ex.Message; // 記事が作れなくても、表は差し替える（記事は所定のまま）
+        }
         _dia = d;
         return skipped;
     }
