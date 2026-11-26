@@ -1182,8 +1182,7 @@
       if (p.sh.pts.length < 2) continue;
       const out = rel.has(p.name) ? strong : faint, color = DC[p.type] || "#e6e8eb";
       out.push(`<polyline points="${ptsStr(L, p.sh.pts)}" fill="none" stroke="${color}" stroke-width="${rel.has(p.name) ? 1.3 : 1.1}"/>`);
-      const a = p.sh.pts[0];
-      out.push(`<text x="${L.x(a.t) + 4}" y="${L.y(a.z, a.track) - 3}" font-size="9" fill="${color}">${esc(p.name)}</text>`);
+      out.push(`<text ${labelAt(L, p.sh.pts, 3)} font-size="9" fill="${color}">${esc(p.name)}</text>`);
       const nx = p.turn && byNo.get(p.turn);
       if (nx && nx.sh.pts.length) {
         // 入換して折り返す列車は、入換先の段（5番線・Y線・E線など）を通る
@@ -1228,8 +1227,7 @@
     for (const m of mine) {
       const color = DC[m.type] || "#e6e8eb", sel = m.i === curTrain;
       if (m.sh.pts.length >= 2) mineP.push(`<polyline points="${ptsStr(L, m.sh.pts)}" fill="none" stroke="${color}" stroke-width="${sel ? 2.4 : 1.6}"/>`);
-      const a = m.sh.pts[0];
-      mineP.push(`<text x="${L.x(a.t) + 4}" y="${L.y(a.z, a.track) - 5}" font-size="11" font-weight="600" fill="${color}" paint-order="stroke" stroke="#2b2f36" stroke-width="3">${esc(m.name)}</text>`);
+      mineP.push(`<text ${labelAt(L, m.sh.pts, 5)} font-size="11" font-weight="600" fill="${color}" paint-order="stroke" stroke="#2b2f36" stroke-width="3">${esc(m.name)}</text>`);
     }
     P.push(`<g clip-path="url(#dgClip)" pointer-events="none">${mineP.join("")}</g>`);
     // ◆（このグループの列車の駅ごと）。途中の停車駅は着（左半分）と発（右半分）に分ける（離せば長く停車できる）。
@@ -1280,6 +1278,18 @@
     $("relations").innerHTML = !mine.length ? "" : lines.length
       ? lines.map((l) => `<li><b class="mono">${esc(l.me)}</b> × <span class="mono" style="color:${TYPE_COLORS[l.o.type] || "#000"}">${esc(l.o.name)}</span>（${esc(l.o.type)}）: ${esc(l.w)}</li>`).join("")
       : `<li class="muted">関係する列車はありません</li>`;
+  }
+
+  // 列番の置き場所: 線の傾きに沿って斜めに。最初の斜めの所（駅を出てから次の駅まで）の始まりに置く。止まっているだけの線（1駅だけ）は水平
+  function labelAt(L, pts, up) {
+    let at = pts[0], ang = 0;
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const a = pts[i], b = pts[i + 1], dx = L.x(b.t) - L.x(a.t), dy = L.y(b.z, b.track) - L.y(a.z, a.track);
+      if (Math.abs(dy) < 3 || dx <= 0) continue;
+      at = a; ang = Math.atan2(dy, dx) * 180 / Math.PI;
+      break;
+    }
+    return `transform="translate(${(L.x(at.t) + 4).toFixed(1)},${(L.y(at.z, at.track) - up).toFixed(1)})${ang ? ` rotate(${ang.toFixed(1)})` : ""}"`;
   }
 
   // 運行のつなぎ線: 着いた駅で、次の列車が出るまで横に引く（番線が変わるなら、出る1分前に移る）。駅が違えば点線でつなぐ。
