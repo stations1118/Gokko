@@ -116,7 +116,9 @@ public sealed partial class GameHub(
             // 自動運転の車掌（同じ列番に運転士がいないとき）: その間だけ運転士と同じに在線に数える（進路・信号・自動運転列車の引き継ぎ）
             var conn = Context.ConnectionId;
             var train = (report.TrainNumber ?? "").Trim();
-            var drives = report.AutoDriving && train.Length > 0 && !players.SnapshotWithoutVirtualTrains().Any(p => p.ConnectionId != conn && p.TrainNumber == train);
+            // ほかの運転士は、つながっている人だけ数える（継続乗務で残した在線は数えない。同じ番線なら、在線に入るときにその在線を引き継ぐ）
+            var drives = report.AutoDriving && train.Length > 0
+                         && !players.SnapshotWithoutVirtualTrains().Any(p => p.ConnectionId != conn && !PlayerRegistry.IsVirtual(p.ConnectionId) && p.TrainNumber == train);
             if (drives)
             {
                 var started = !players.IsJoined(conn);
@@ -132,7 +134,7 @@ public sealed partial class GameHub(
             }
             else if (players.IsJoined(conn))
             {
-                players.Remove(conn);
+                players.Remove(conn, leaveGhost: false); // 運転士が入った・自動運転を切った: 在線は残さない（同じ列番が2本にならないように）
                 radio.Remove(conn);
                 logger.LogInformation("自動運転おわり {ConnectionId}（車掌に戻る）", conn);
                 broadcaster.Trigger();
