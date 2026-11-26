@@ -429,12 +429,6 @@ public sealed class TempTrains
     /// <summary>駅名 → 駅 ID（路線の外の駅も）。</summary>
     public string? StationIdByName(string name) => _rail.Line.StationIdByName(name) ?? Stations.FirstOrDefault(s => s.Name == name)?.Id;
 
-    /// <summary>適用中の列番（司令用管理画面の一覧）。</summary>
-    public HashSet<string> AppliedNumbers()
-    {
-        lock (_lock) return _groups.Where(g => g.Applied).SelectMany(g => g.Running()).Select(t => t.Number).ToHashSet();
-    }
-
     // =========================================================================================
     // 入力の確かめ・ダイヤの列車に直す
     // =========================================================================================

@@ -13,12 +13,18 @@ namespace Gokko.Server.Services;
 /// 種類ごとの回数と時間を数える（どこが重いかを見るため。直近1分の多い順を画面に、1分ごとに上位12（配信の内訳の5つが入っても、画面の API が押し出されないように）をファイルに）。
 /// 直近1時間ぶんを画面用に持ち、1分ごとにまとめた1行（平均と最大）をファイルに書く。1行 300 バイトほどで、1日で 400KB くらい。
 /// </summary>
-public sealed class ServerLoad(PlayerRegistry players) : BackgroundService
+public sealed class ServerLoad(PlayerRegistry players, ILogger<ServerLoad>? logger = null) : BackgroundService
 {
     private static readonly TimeSpan SampleInterval = TimeSpan.FromSeconds(5);
     private const int HistoryCount = 720; // 5秒 × 720 = 1時間
     private const int WorkHistoryCount = 12; // 5秒 × 12 = 1分
     private const long MaxBytesPerDay = 10L * 1024 * 1024;
+
+    /// <summary>
+    /// 1分の平均がこれを超えたら、サーバーの記録（journal）に警告を出す（ふだんは配信 10〜20ms・進路の処理 3〜6ms）。
+    /// 負荷の記録（logs/load-*.log）を見に行かないと、重くなっていることに気づけなかったため。
+    /// </summary>
+    private const double SlowBroadcastMs = 100, SlowTickMs = 30;
 
     public sealed record Sample(
         DateTime Utc, double CpuPercent, double ProcessMb, double GcHeapMb, int Threads,
@@ -43,9 +49,9 @@ public sealed class ServerLoad(PlayerRegistry players) : BackgroundService
     private Dictionary<string, WorkSum> _work = new();
     private readonly Queue<Dictionary<string, WorkSum>> _workHistory = new(); // 画面用の直近1分
     private readonly List<Dictionary<string, WorkSum>> _workMinute = new(); // ファイルに書く1分ぶん
-    private string _fileDay = "";
-    private long _fileBytes;
-    private bool _full;
+    private readonly DailyLog _file = new("load", MaxBytesPerDay,
+        "# 時刻 CPU%(平均/最大) プロセスMB(平均/最大) GCヒープMB マシンの空きMB/全体MB ロードアベレージ 配信ms(平均/最大) 参加者 にぎやかし" +
+        " 進路の処理ms(平均) 送信待ちms(平均) API・ハブ(回数/合計ms) 上位(名前=回数/合計ms)" + Environment.NewLine);
 
     /// <summary>配信1回にかかった時間（StateBroadcaster から呼ぶ）。tickMs はそのうち進路の処理、sendMs は送り終わるのを待った時間</summary>
     public void RecordBroadcast(double ms, double tickMs = 0, double sendMs = 0)
@@ -212,21 +218,6 @@ public sealed class ServerLoad(PlayerRegistry players) : BackgroundService
         try
         {
             var at = m[0].Utc.ToLocalTime();
-            var day = at.ToString("yyyyMMdd");
-            var dir = Path.Combine(AppContext.BaseDirectory, "logs");
-            var path = Path.Combine(dir, $"load-{day}.log");
-            if (day != _fileDay)
-            {
-                Directory.CreateDirectory(dir);
-                _fileDay = day;
-                _fileBytes = File.Exists(path) ? new FileInfo(path).Length : 0;
-                _full = false;
-                if (_fileBytes == 0)
-                    Append(path, "# 時刻 CPU%(平均/最大) プロセスMB(平均/最大) GCヒープMB マシンの空きMB/全体MB ロードアベレージ 配信ms(平均/最大) 参加者 にぎやかし" +
-                                 " 進路の処理ms(平均) 送信待ちms(平均) API・ハブ(回数/合計ms) 上位(名前=回数/合計ms)" + Environment.NewLine);
-            }
-            if (_full) return;
-
             var last = m[^1];
             var bcCount = m.Sum(x => x.Broadcasts);
             var bcAvg = bcCount > 0 ? m.Sum(x => x.BroadcastAvgMs * x.Broadcasts) / bcCount : 0;
@@ -239,12 +230,14 @@ public sealed class ServerLoad(PlayerRegistry players) : BackgroundService
                 $"bc {bcAvg:0.0}/{m.Max(x => x.BroadcastMaxMs):0.0} players {m.Max(x => x.Players)} ai {m.Max(x => x.AiTrains)} " +
                 $"tick {PerBroadcast(x => x.TickAvgMs):0.0} send {PerBroadcast(x => x.SendAvgMs):0.0} work {m.Sum(x => x.WorkCount)}/{m.Sum(x => x.WorkMs):0} " +
                 $"top {top}{Environment.NewLine}");
-            if (_fileBytes > MaxBytesPerDay)
-            {
-                _full = true;
-                line = $"{at:yyyy-MM-dd HH:mm} この日の負荷の記録が {MaxBytesPerDay / 1024 / 1024}MB を超えたので、ここで書くのをやめます{Environment.NewLine}";
-            }
-            Append(path, line);
+            // 重い1分は、サーバーの記録にも警告を出す（時間を使っている上位3つつき）
+            var tickAvg = PerBroadcast(x => x.TickAvgMs);
+            if (bcAvg >= SlowBroadcastMs || tickAvg >= SlowTickMs)
+                logger?.LogWarning("配信が遅れています: 配信1回 平均 {Broadcast:0}ms（最大 {Max:0}ms）・進路の処理 平均 {Tick:0}ms。時間を使っているもの: {Top}",
+                    bcAvg, m.Max(x => x.BroadcastMaxMs), tickAvg,
+                    string.Join("、", Top(work, 3).Select(w => $"{w.Name} {w.Count}回 計{w.TotalMs:0}ms")));
+            _file.Append(m[0].Utc, line,
+                () => $"{at:yyyy-MM-dd HH:mm} この日の負荷の記録が {_file.MaxMb}MB を超えたので、ここで書くのをやめます{Environment.NewLine}");
         }
         catch
         {
@@ -252,11 +245,5 @@ public sealed class ServerLoad(PlayerRegistry players) : BackgroundService
         }
 
         static string Num(double? v, string f = "0") => v is { } x ? x.ToString(f, CultureInfo.InvariantCulture) : "-";
-    }
-
-    private void Append(string path, string text)
-    {
-        File.AppendAllText(path, text);
-        _fileBytes += Encoding.UTF8.GetByteCount(text);
     }
 }

@@ -449,31 +449,6 @@ public sealed class CrewRoster
         });
     }
 
-    private void SaveApplication(CrewApplication application)
-    {
-        ExecuteUpdate((connection, transaction) =>
-        {
-            Execute(connection, transaction, """
-                INSERT INTO applications
-                    (key, discord_hash, discord_name, name, join_year, depot, existing_id, utc)
-                VALUES
-                    ($key, $discord_hash, $discord_name, $name, $join_year, $depot, $existing_id, $utc)
-                ON CONFLICT(key) DO UPDATE SET
-                    discord_hash = excluded.discord_hash,
-                    discord_name = excluded.discord_name,
-                    name = excluded.name,
-                    join_year = excluded.join_year,
-                    depot = excluded.depot,
-                    existing_id = excluded.existing_id,
-                    utc = excluded.utc
-                """,
-                ("$key", application.Key), ("$discord_hash", application.DiscordHash),
-                ("$discord_name", application.DiscordName), ("$name", application.Name),
-                ("$join_year", application.JoinYear), ("$depot", application.Depot),
-                ("$existing_id", application.ExistingId), ("$utc", DateTimeText(application.Utc)));
-        });
-    }
-
     private void DeleteApplication(string key)
     {
         ExecuteUpdate((connection, transaction) =>
@@ -960,12 +935,6 @@ public sealed class CrewRoster
 
     // ---- Discord ----
 
-    /// <summary>その Discord（HMAC）に紐づいた人の社員番号。いなければ null。</summary>
-    public string? UserOfDiscord(string hash)
-    {
-        lock (_lock) return _users.FirstOrDefault(u => u.DiscordHash == hash)?.Id;
-    }
-
     /// <summary>Discord でログインする（紐づけてある人）。合い札を返す。</summary>
     public (string? Id, string? Token) LoginByDiscord(string hash, bool provisional = false)
     {
@@ -1439,6 +1408,21 @@ public sealed class CrewRoster
     public DateTime? AttendedAt(string id)
     {
         lock (_lock) return _attend.TryGetValue(id, out var t) ? t : null;
+    }
+
+    /// <summary>出勤している人が持っている行路の番号（担当と臨変。並びは決まっていない・重なりあり）。</summary>
+    public List<string> AttendedDuties()
+    {
+        lock (_lock)
+            return _assign.Where(x => _attend.ContainsKey(x.Value)).Select(x => x.Key)
+                .Concat(_extras.Where(x => _attend.ContainsKey(x.User)).Select(x => x.Duty)).ToList();
+    }
+
+    /// <summary>出勤している人（社員番号 → 出勤した時刻 UTC。社員番号の順）。</summary>
+    public Dictionary<string, DateTime> Attended()
+    {
+        lock (_lock)
+            return _users.Where(u => _attend.ContainsKey(u.Id)).OrderBy(u => u.Id, StringComparer.Ordinal).ToDictionary(u => u.Id, u => _attend[u.Id]);
     }
 
     /// <summary>その行路を自動で割り当てたか。</summary>

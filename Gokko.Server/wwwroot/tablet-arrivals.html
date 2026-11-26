@@ -164,7 +164,7 @@
 
   let busy = false, timer = null;
   async function refresh() {
-    if (busy || !station) return;
+    if (busy || !station || document.hidden) return; // タブが裏にある間は読まない
     busy = true;
     try {
       const res = await fetch("/api/tid/arrivals?station=" + encodeURIComponent(station), { cache: "no-store" });
@@ -178,6 +178,7 @@
     render();
   }
 
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); }); // 見える所に戻ったら、すぐ読む
   (async () => {
     try { stations = await (await fetch("/api/tid/arrivals/stations", { cache: "no-store" })).json(); } catch (e) { stations = []; }
     if (!station || !stations.some((s) => s.id === station)) { station = ""; pickScreen(); return; }

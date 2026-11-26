@@ -97,7 +97,19 @@
   const base = login ? "/api/dispatch" : admin ? "/api/admin" : "/api/dia";
   const header = login ? "X-Crew-Token" : admin ? "X-Admin-Key" : "X-Dia-Key";
 
+  // 埋め込んだとき: 親の画面（司令用管理画面・管理画面）が毎秒読んでいる /diagram の答えを使う（同じものを2か所から読まない）。
+  // 自分で操作した直後（◆をずらしたなど）は、すぐ見えるように自分で読み直す。親の答えが古い・ないときも自分で読む
+  let freshUntil = 0;
+  function sharedDiagram() {
+    if (!embed || window.parent === window || Date.now() < freshUntil) return null;
+    try {
+      const s = window.parent.gokkoDiagram;
+      return s && Date.now() - s.at < 2500 ? structuredClone(s.data) : null;
+    } catch (e) { return null; }
+  }
+
   async function api(method, path, body) {
+    if (method !== "GET") freshUntil = Date.now() + 3000;
     const res = await fetch(base + path, {
       method,
       // 司令用管理画面に埋め込んだとき（scope=dia）は、合言葉がなくても司令員のログイン（このタブの合い札）で入れる
@@ -147,7 +159,7 @@
       if (!login.token()) { needLogin(""); return; }
     } else if (!keyOf()) { $("error").textContent = admin ? "管理キーを保存すると、図を出します" : "合言葉を保存すると、図を出します"; tellHeight(); return; }
     try {
-      diagramView.update(await api("GET", "/diagram"));
+      diagramView.update(sharedDiagram() || await api("GET", "/diagram"));
       if ($("error").textContent.endsWith("図を出します")) $("error").textContent = "";
       $("main").hidden = false;
     } catch (e) {
@@ -159,7 +171,8 @@
 
   window.addEventListener("resize", tellHeight);
   let polling = false; const poll = async () => { if (polling) return; polling = true; try { await refresh(); } finally { polling = false; } }; // 前の読み込みが終わっていなければ重ねて投げない（サーバーが遅いとき、要求が積み重なって配信まで詰まるため）
-  GokkoClock.ready.then(() => { poll(); setInterval(poll, 1000); });
+  GokkoClock.ready.then(() => { poll(); setInterval(() => { if (!document.hidden) poll(); }, 1000); });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); }); // 見える所に戻ったら、すぐ読む
 })();
 </script>
 </body>

@@ -77,6 +77,9 @@ public sealed partial class MainForm : Form
     private readonly DataGridView _planGrid = new();
     private readonly Button _departButton = new() { Text = "出発要求" };
 
+    // 入換で動かす（X線入換・E線入換）: X線に止まっていると「X線入換」、ゲームの中だけで走っている間は「X線停車中」（E線も同じ）。サーバーが出すときだけ見せる
+    private readonly Button _shuntButton = new() { Text = "X線入換", Visible = false };
+
     // 継続乗務: 押している間に運転画面を出ると、サーバーが最後の在線位置を5分間残す（同じ番線から次のシナリオを始めると、その列番で続ける）
     private readonly CheckBox _continueButton = new() { Text = "継続乗務", Appearance = Appearance.Button, TextAlign = ContentAlignment.MiddleCenter };
     private readonly CheckBox _allowConductorButton = new() { Text = "車掌乗務を許可", Appearance = Appearance.Button, TextAlign = ContentAlignment.MiddleCenter };
@@ -155,6 +158,13 @@ public sealed partial class MainForm : Form
         {
             _departButton.Enabled = false;
             ShowMessage(await _server.RequestDepartureAsync());
+        };
+
+        _shuntButton.Font = new Font(Font.FontFamily, 11f, FontStyle.Bold);
+        _shuntButton.Click += async (_, _) =>
+        {
+            _shuntButton.Enabled = false;
+            ShowMessage(await _server.ShuntMoveAsync());
         };
 
         Controls.Add(BuildLayout());
@@ -325,7 +335,13 @@ public sealed partial class MainForm : Form
         bottom.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, showAllow ? 50 : 72));
         if (showAllow) bottom.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 26));
         bottom.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, showAllow ? 24 : 28));
-        bottom.Controls.Add(_departButton, 0, 0);
+        // 出発要求の欄の右に、入換で動かすボタン（出すときだけ）
+        var departCell = new Panel { Dock = DockStyle.Fill, Margin = new Padding(3) };
+        _shuntButton.Dock = DockStyle.Right;
+        _shuntButton.Width = 130;
+        departCell.Controls.Add(_departButton);
+        departCell.Controls.Add(_shuntButton);
+        bottom.Controls.Add(departCell, 0, 0);
         if (showAllow) bottom.Controls.Add(_allowConductorButton, 1, 0);
         bottom.Controls.Add(_continueButton, showAllow ? 2 : 1, 0);
         routeLayout.Controls.Add(bottom);
@@ -1034,6 +1050,7 @@ public sealed partial class MainForm : Form
             _planGrid.Rows.Clear();
             _planKey = "";
             _departButton.Enabled = false;
+            _shuntButton.Visible = false;
         }
         else
         {
@@ -1047,6 +1064,15 @@ public sealed partial class MainForm : Form
             _departButton.Text = state?.DepartureLabel ?? "出発要求";
             _departButton.BackColor = _departButton.Enabled ? Color.SeaGreen : SystemColors.Control;
             _departButton.ForeColor = _departButton.Enabled ? Color.White : SystemColors.GrayText;
+            var shuntLabel = _role == CrewRole.Driver ? state?.ShuntButtonLabel : null; // 入換で動かすのは運転士が扱う
+            _shuntButton.Visible = shuntLabel != null;
+            if (shuntLabel != null)
+            {
+                _shuntButton.Text = shuntLabel;
+                _shuntButton.Enabled = state?.ShuntButtonEnabled == true;
+                _shuntButton.BackColor = _shuntButton.Enabled ? Color.DarkOrange : SystemColors.Control;
+                _shuntButton.ForeColor = _shuntButton.Enabled ? Color.White : SystemColors.GrayText;
+            }
         }
 
         // ダイヤ運転中は継続乗務を常に入（ボタンは押せない）。フリー運転に戻ったら、元の入・切に戻す

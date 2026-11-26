@@ -74,14 +74,22 @@ public sealed class StationDirRoutes
 /// 始発の入換1つ。元は番線（From）か、番線のない線路の軌道回路（FromCircuit）で書く。
 /// 同じ元・同じ番線への入換が複数あれば、書いた順に優先する。RequireFree の回路に他の列車がいれば、その入換は使わない
 /// （例: 大道寺 Y線→E線→番線 を既定にし、E線がふさがっていれば Y線から直接）。
+/// Then は、途中の線（大道寺の X線・Y線）で向きを変えてから開ける2つ目の進路（大道寺 5番線 → X線 → 2番線 の 31LB）。なければ空。
 /// </summary>
-public sealed record ShuntDef(string FromLabel, int? From, string? FromCircuit, int To, List<RouteDef> Routes, List<string> RequireFree, string? Via);
+public sealed record ShuntDef(string FromLabel, int? From, string? FromCircuit, int To, List<RouteDef> Routes, List<string> RequireFree, string? Via, List<RouteDef>? Then = null)
+{
+    public List<RouteDef> ThenRoutes => Then ?? [];
+}
 
 /// <summary>
 /// 終着の列車の入換1つ（番線 From から、Label の線路へ）。同じ番線・同じ行き先（Label）が複数あれば、まとめて1つの選択肢とし、
 /// 書いた順に優先する。RequireFree の回路に他の列車がいれば次の候補（大道寺 番線→E線→Y線 を既定にし、E線がふさがっていれば直接）。
+/// Then は、引き上げた線（大道寺の X線）で向きを変えてから開ける2つ目の進路（大道寺 3番線 → X線 → 5番線 の 31L5。留置線へ入れるとき）。なければ空。
 /// </summary>
-public sealed record ShuntOutDef(int From, string Label, List<RouteDef> Routes, List<string> RequireFree, string? Via);
+public sealed record ShuntOutDef(int From, string Label, List<RouteDef> Routes, List<string> RequireFree, string? Via, List<RouteDef>? Then = null)
+{
+    public List<RouteDef> ThenRoutes => Then ?? [];
+}
 
 public sealed class StationDef
 {
@@ -206,8 +214,11 @@ public sealed class DiaTrain
 /// 終点のあと。Kind は 折返（Number の列車として折り返す。Time はその発車・入換の時刻、How は「発」か「入換」）、
 /// 引継（同じ列番のまま線区の外へ）、滞泊（その駅で夜を越す）。
 /// Via は、入換で折り返すときに引き上げる線（TrackRoutes.json の shuntOut の label。"X線" など）。書かれていなければ既定の線。
+/// 留置線に置いてから出すとき（大道寺 3番線 → X線 → 5番線）は、Via が留置線（"5番線"）で、Out はそこから番線へ出るときに通る線
+/// （"X線"・"Y線"。TrackRoutes.json の shunt の via）、After は留置線から出る前に通り過ぎるのを待つ列車（2121A など）。
+/// Time は留置線から出る入換の時刻。
 /// </summary>
-public sealed record DiaTurn(string Kind, string? Number, string? Time, string? How, string? Via = null);
+public sealed record DiaTurn(string Kind, string? Number, string? Time, string? How, string? Via = null, string? Out = null, string? After = null);
 
 /// <summary>時刻表の1駅（StationId は路線の外の駅なら null。Stop は 停・通・運停）。</summary>
 public sealed record DiaStop(string Name, string? StationId, string Stop, string? Arr, string? Dep, int? Track = null, string? Note = null);
@@ -471,12 +482,12 @@ public sealed class RailData
                             var label = Str(sh, "fromLabel") is { Length: > 0 } fl ? fl : from != null ? $"{from}番線" : fromCircuit ?? "?";
                             var via = Str(sh, "via") is { Length: > 0 } v ? v : null;
                             target.Shunts.Add(new ShuntDef(label, from, fromCircuit, sh.GetProperty("to").GetInt32(), Resolve(List(sh, "routes")),
-                                List(sh, "requireFree"), via));
+                                List(sh, "requireFree"), via, Resolve(List(sh, "then"))));
                         }
                     if (e.TryGetProperty("shuntOut", out var outs))
                         foreach (var so in outs.EnumerateArray())
                             target.ShuntOuts.Add(new ShuntOutDef(so.GetProperty("from").GetInt32(), Str(so, "label"), Resolve(List(so, "routes")),
-                                List(so, "requireFree"), Str(so, "via") is { Length: > 0 } sov ? sov : null));
+                                List(so, "requireFree"), Str(so, "via") is { Length: > 0 } sov ? sov : null, Resolve(List(so, "then"))));
                     foreach (var (prop, map) in new[] { ("arrive", target.Arrive), ("depart", target.Depart) })
                     {
                         if (!e.TryGetProperty(prop, out var arr)) continue;
@@ -632,7 +643,8 @@ public sealed class RailData
                 if (t.TryGetProperty("turn", out var tn) && tn.ValueKind == JsonValueKind.Object && Str(tn, "kind") is { Length: > 0 } turnKind)
                     cur.Turn = new DiaTurn(turnKind, NormalizeTrain(Str(tn, "number")) is { Length: > 0 } tno ? tno : null,
                         Str(tn, "time") is { Length: > 0 } ttime ? ttime : null, Str(tn, "how") is { Length: > 0 } thow ? thow : null,
-                        Str(tn, "via") is { Length: > 0 } tvia ? tvia : null);
+                        Str(tn, "via") is { Length: > 0 } tvia ? tvia : null, Str(tn, "out") is { Length: > 0 } tout ? tout : null,
+                        NormalizeTrain(Str(tn, "after")) is { Length: > 0 } tafter ? tafter : null);
 
                 if (cur.Stops.Count == 0)
                     foreach (var s in t.GetProperty("stops").EnumerateArray())

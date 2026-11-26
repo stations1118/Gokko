@@ -1037,8 +1037,9 @@
       const rows = {};
       // 番線を使わずに通れる本線のある駅（江ノ原信号場など）は、いちばん上に「本線」の段（番線のない通過はここ）
       const main = tracks.length && s.rules && Object.values(s.rules).some((r) => r.through);
-      // 入換で入る線（大道寺の Y線・E線・X線など）も段にする（番線の名前の線は番線の段）
-      const vias = [...new Set(Object.values(s.rules || {}).flatMap((r) => r.shuntOuts.map((o) => viaKey(o.label))).filter((k) => typeof k === "string" && k !== "main"))].sort();
+      // 入換で入る線（大道寺の Y線・E線・X線など）も段にする（番線の名前の線は番線の段。留置線の番線（大道寺の5番線）は、番線の段になければ足す）
+      const vias = [...new Set(Object.values(s.rules || {}).flatMap((r) => r.shuntOuts.map((o) => viaKey(o.label)))
+        .filter((k) => k != null && k !== "main" && (typeof k === "string" || !tracks.includes(k))))].sort();
       const keys = [...(main ? ["main"] : []), ...tracks, ...(tracks.length ? vias : [])];
       keys.forEach((t, i) => { rows[t] = y + i * dv.trackPx; });
       const bottom = keys.length ? y + (keys.length - 1) * dv.trackPx : y;

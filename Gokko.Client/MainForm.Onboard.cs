@@ -11,7 +11,6 @@ public sealed partial class MainForm
 {
     internal static readonly Color InsideColor = Color.FromArgb(37, 99, 235);
     internal static readonly Color OutsideColor = Color.FromArgb(217, 119, 6);
-    internal static readonly Color IntercomColor = Color.FromArgb(22, 163, 74);
 
     /// <summary>押されている（入の）ボタンの色（車内・車外・連絡で共通の水色）と、その上の文字の色。「入」とは書かず、色だけで見せる。</summary>
     internal static readonly Color PressedColor = Color.FromArgb(56, 189, 248);

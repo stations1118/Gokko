@@ -334,7 +334,7 @@
   const queue = GokkoDia.queuePanel({ el: $("queue"), api });
   const continues = GokkoDia.continuePanel({ el: $("continues"), act });
   // 自動運転列車（にぎやかし）。管理画面では走っている速さも出す
-  GokkoDia.aiTrainPanel({ el: $("aiTrains"), api, showSpeed: true, onMessage: (m) => { $("error").textContent = m; } });
+  GokkoDia.aiTrainPanel({ el: $("aiTrains"), api, showSpeed: true });
   const blockSignals = GokkoDia.blockSignalPanel({ el: $("blockSignals"), api, act });
   const mode = GokkoDia.modePanel({ el: $("mode"), act });
   const trainSettings = GokkoDia.trainEditor({ el: $("trains"), act });
@@ -355,7 +355,9 @@
       render(s);
       lastRoutes = await api("GET", "/routes");
       trainSettings.update(lastRoutes.trains);
-      renderDiagram(await api("GET", "/diagram"));
+      const diagram = await api("GET", "/diagram");
+      window.gokkoDiagram = { at: Date.now(), data: diagram }; // 埋め込んだダイヤグラムが、同じ答えをもう一度読まないように渡す
+      renderDiagram(diagram);
       manual.update(lastRoutes.trains);
     } catch (e) {
       $("conn").textContent = "接続できません"; $("conn").className = "status ng";

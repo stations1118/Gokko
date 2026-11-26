@@ -117,9 +117,7 @@ public sealed class OccupancyLog(GameClock clock)
     private readonly object _lock = new();
     private readonly Dictionary<string, string> _last = new(StringComparer.Ordinal); // 接続ID → 「列番 回路…」
     private readonly List<string> _recent = new();
-    private string _fileDay = "";
-    private long _fileBytes;
-    private bool _full;
+    private readonly DailyLog _file = new("occupancy", MaxBytesPerDay);
 
     public List<string> View()
     {
@@ -176,36 +174,11 @@ public sealed class OccupancyLog(GameClock clock)
 
     private void Write(DateTime now, string game, List<string> lines)
     {
-        try
-        {
-            var local = now.ToLocalTime();
-            var day = local.ToString("yyyyMMdd");
-            var dir = Path.Combine(AppContext.BaseDirectory, "logs");
-            var path = Path.Combine(dir, $"occupancy-{day}.log");
-            if (day != _fileDay)
-            {
-                Directory.CreateDirectory(dir);
-                _fileDay = day;
-                _fileBytes = File.Exists(path) ? new FileInfo(path).Length : 0;
-                _full = false;
-            }
-
-            if (_full) return;
-            var sb = new StringBuilder();
-            foreach (var l in lines) sb.Append($"{local:yyyy-MM-dd HH:mm:ss} {game} {l}{Environment.NewLine}");
-            if (_fileBytes > MaxBytesPerDay)
-            {
-                _full = true;
-                sb.Clear().Append($"{local:yyyy-MM-dd HH:mm:ss} {game} この日の在線の記録が {MaxBytesPerDay / 1024 / 1024}MB を超えたので、ここで書くのをやめます{Environment.NewLine}");
-            }
-
-            var text = sb.ToString();
-            File.AppendAllText(path, text);
-            _fileBytes += Encoding.UTF8.GetByteCount(text);
-        }
-        catch
-        {
-            // 書けなくても配信は続ける
-        }
+        // 書けなくても配信は続ける（DailyLog は例外を出さない）
+        var local = now.ToLocalTime();
+        var sb = new StringBuilder();
+        foreach (var l in lines) sb.Append($"{local:yyyy-MM-dd HH:mm:ss} {game} {l}{Environment.NewLine}");
+        _file.Append(now, sb.ToString(),
+            () => $"{local:yyyy-MM-dd HH:mm:ss} {game} この日の在線の記録が {_file.MaxMb}MB を超えたので、ここで書くのをやめます{Environment.NewLine}");
     }
 }

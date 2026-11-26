@@ -174,8 +174,6 @@ public sealed class RouteKey
 /// <summary>サーバーからクライアントへ配信する状態。クライアントごとに中身が違う（理由の表示範囲など）。</summary>
 public sealed class ClientState
 {
-    public DateTimeOffset ServerTime { get; set; }
-
     /// <summary>ダイヤ運転中か（false ならフリー運転）。ダイヤ運転中は列車番号の手入力が要り、継続乗務は常に入。</summary>
     public bool DiaMode { get; set; }
 
@@ -202,9 +200,6 @@ public sealed class ClientState
 
     /// <summary>運転士へ: 自分の列車に乗っている車掌の人数。</summary>
     public int Conductors { get; set; }
-
-    /// <summary>車掌へ: 同じ列番の運転士が参加しているか。いなければ、進路・信号は届かない。</summary>
-    public bool DriverPresent { get; set; }
 
     /// <summary>運転士・車掌へ: 自分の列車に添乗している人数。</summary>
     public int Riders { get; set; }
@@ -253,6 +248,15 @@ public sealed class ClientState
 
     /// <summary>進路についての、ユーザーへのお知らせ。</summary>
     public string? RouteMessage { get; set; }
+
+    /// <summary>
+    /// 入換で動かすボタン（X線入換など）の表示。null なら出さない。X線に止まっていると「X線入換」、押したあとは取り消し、
+    /// ゲームの中だけで動かしている間は「X線停車中」（押すと、残した在線につなぎ直す）。
+    /// </summary>
+    public string? ShuntButtonLabel { get; set; }
+
+    /// <summary>入換で動かすボタンを押せるか。</summary>
+    public bool ShuntButtonEnabled { get; set; }
 
     /// <summary>
     /// 浅い複製（サーバーが、運転士への配信を車掌・添乗へ回すときに使う）。一覧は複製元と同じものを指すので、
@@ -360,7 +364,4 @@ public sealed class StationPlanView
 
     /// <summary>運転士に見せる状態: 「出発要求待ち」（入換なら「入換要求待ち」）「進路確定」「進路未確定」の3段階だけ。</summary>
     public string Status { get; set; } = "";
-
-    /// <summary>詳しい状態（待ちの理由など。管理・試験用。クライアントの画面には出さない）。</summary>
-    public string Detail { get; set; } = "";
 }

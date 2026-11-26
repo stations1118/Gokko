@@ -116,9 +116,7 @@ public sealed class AiTrains : BackgroundService
         now + TimeSpan.FromTicks((long)((utc - DateTime.UtcNow).Ticks * (_clock.Speed > 0 ? _clock.Speed : 1)));
     private readonly HashSet<string> _takeOverLogged = new(); // 引き継げなかったことを記録した継続乗務の在線（同じものを何度も書かない）
     private const long StatusLogMaxBytesPerDay = 20L * 1024 * 1024; // 状態の記録の1日の上限
-    private string _statusLogDay = "";
-    private long _statusLogBytes;
-    private bool _statusLogFull;
+    private readonly DailyLog _statusFile = new("ai", StatusLogMaxBytesPerDay);
 
     public AiTrains(string dataDir, RailData rail, PlayerRegistry players, GameClock clock, RouteEngine routes, CentralControl central,
         IncidentManager log, CrewRoster crew, DutyRosters duties, CrewRelay relay, ProtectionRadio protectionRadio,
@@ -196,6 +194,60 @@ public sealed class AiTrains : BackgroundService
         static string? Hm(string? hms) => hms is { Length: >= 5 } ? hms[..5] : hms;
     }
 
+    /// <summary>手で出せる列車の候補（列番・種別・出す駅と発車時刻・行き先・両数・自動で出る予定か）。</summary>
+    public sealed record CandidateView(string Train, string Type, string Station, string Dep, string Dest, int Cars, bool Pending);
+
+    /// <summary>
+    /// 手で出せる列車の候補: 走っていないダイヤの列車で、これから発車する駅（手で出すときに列番だけで選ばれる駅）の時刻が
+    /// 今から PendingHorizon までのもの。発車の早い順。ユーザーの列車・走っている列車が続けて走る列番・特発臨・走らせない試運転は入れない。
+    /// </summary>
+    public List<CandidateView> Candidates()
+    {
+        var list = new List<(TimeSpan Dep, CandidateView View)>();
+        if (_clock.Now is not { } now) return [];
+        var users = new HashSet<string>(_userTrains);
+        users.UnionWith(_userInGame);
+        HashSet<string> running, covered, pending;
+        lock (_lock)
+        {
+            running = _trains.Values.Select(t => t.Number).ToHashSet();
+            covered = new HashSet<string>();
+            foreach (var t in _trains.Values) CoverChain(t.Dia, covered);
+            pending = _pending.Select(p => p.Number).ToHashSet();
+        }
+
+        foreach (var dia in _rail.Dia.Values)
+        {
+            var number = RailData.NormalizeTrain(dia.Number);
+            if (running.Contains(number) || users.Contains(number) || covered.Contains(number) || number.StartsWith("解")) continue;
+            if (Rinji?.IsRinji(number) == true || _rail.IsIdleTrial(dia)) continue;
+            if (_routes.DirOfTrain(number) is not { } dir) continue;
+            // 出す駅は Add で駅を指定しなかったときと同じ選び方
+            var stops = dia.Stops.Where(s => s.StationId != null && _rail.Stations.TryGetValue(s.StationId, out var sd) && sd.RouteControl).ToList();
+            var start = stops.Take(Math.Max(0, stops.Count - 1))
+                .FirstOrDefault(s => Time(s.Dep ?? s.Arr) is { } t && t >= now && !PassesWithoutTrack(s, dir));
+            if (start == null || Time(start.Dep ?? start.Arr) is not { } dep || dep > now + PendingHorizon) continue;
+            var hms = start.Dep ?? start.Arr ?? "";
+            list.Add((dep, new CandidateView(number, dia.TypeLabel, start.Name, hms.Length >= 5 ? hms[..5] : hms,
+                dia.Dest.Length > 0 ? dia.Dest : dia.Stops[^1].Name, CarsOf(number), pending.Contains(number))));
+        }
+
+        return list.OrderBy(c => c.Dep).ThenBy(c => c.View.Train, StringComparer.Ordinal).Select(c => c.View).ToList();
+    }
+
+    /// <summary>走っている列車 d が、このあと続けて・折り返して走る列番（と切り離す車両）を covered に足す。</summary>
+    private void CoverChain(DiaTrain? d, HashSet<string> covered)
+    {
+        for (var k = 0; k < 10 && d != null; k++)
+        {
+            if (_rail.DiaOf("解" + d.Number) is { } split && covered.Add(split.Number)) CoverChain(split, covered);
+            var nextNo = d.Next?.Number ?? (_rail.Turns.TurnOf(d) is { Kind: "折返", Number: { Length: > 0 } tn } ? tn : null);
+            if (nextNo == null) break;
+            covered.Add(RailData.NormalizeTrain(nextNo));
+            d = _rail.DiaOf(nextNo);
+        }
+    }
+
     /// <summary>
     /// 試運転を走らせる運行番号を決める（空なら1本も出さない）。外した運行番号の試運転が自動運転で走っていれば消す。
     /// ユーザーが運転している試運転はそのまま（ユーザーの列車は自動運転で出さない、の決まりは変えない）。
@@ -235,7 +287,7 @@ public sealed class AiTrains : BackgroundService
     private (bool Ok, string Message) Add(string number, int cars, string? stationName, bool auto, int? forceTrack = null, PlayerInfo? takesOver = null)
     {
         number = RailData.NormalizeTrain(number);
-        if (!auto && UserTrains(_players.Snapshot()).Contains(number)) return (false, $"{number} はユーザーの列車です（出勤した行路の列車・入力された列番）");
+        if (!auto && UserTrains(_players.SnapshotWithoutVirtualTrains()).Contains(number)) return (false, $"{number} はユーザーの列車です（出勤した行路の列車・入力された列番）");
         if (_rail.DiaOf(number) is not { } dia) return (false, $"{number}: ダイヤにない列車です");
         if (!auto && takesOver == null && _rail.IsIdleTrial(dia)) return (false, $"{number} は走らせない試運転です（試運転のプルダウンで運行 {dia.Unyo} を選んでください）");
         var dir = _routes.DirOfTrain(number);
@@ -364,7 +416,7 @@ public sealed class AiTrains : BackgroundService
     // サーバーからの「配信」（プレイヤーのクライアントが受け取るものと同じ）
     // =========================================================================================
 
-    public void Receive(string id, ClientState state)
+    public void Receive(string id, ClientState state, string? planDetail)
     {
         lock (_lock)
         {
@@ -387,7 +439,7 @@ public sealed class AiTrains : BackgroundService
             t.CanRequestDeparture = state.CanRequestDeparture;
             t.RouteMessage = state.RouteMessage;
             // この先の駅の状態（進路待ちの理由など。プレイヤーには出さない詳しい状態）。止まっているときの理由に出す
-            t.PlanDetail = state.Plan.Where(x => !string.IsNullOrEmpty(x.Detail)).Select(x => $"{x.Name}: {x.Detail}").FirstOrDefault();
+            t.PlanDetail = planDetail;
         }
     }
 
@@ -416,7 +468,8 @@ public sealed class AiTrains : BackgroundService
             try
             {
                 // ユーザーの列車（RouteEngine などのロックの中から呼ばないように、自分のロックの外で集める）
-                var snapshot = _players.Snapshot();
+                // 自動運転の列車（自分の列車）は要らないので、複製しない
+                var snapshot = _players.SnapshotWithoutVirtualTrains();
                 var users = UserTrains(snapshot);
                 var inGame = snapshot.Where(p => !PlayerRegistry.IsVirtual(p.ConnectionId) && p.InGame && p.TrainNumber.Length > 0)
                     .Select(p => RailData.NormalizeTrain(p.TrainNumber)).ToHashSet();
@@ -549,37 +602,13 @@ public sealed class AiTrains : BackgroundService
     /// </summary>
     private void StatusLog(DateTime now, List<string> lines)
     {
-        try
-        {
-            var local = now.ToLocalTime();
-            var day = local.ToString("yyyyMMdd");
-            var dir = Path.Combine(AppContext.BaseDirectory, "logs");
-            var path = Path.Combine(dir, $"ai-{day}.log");
-            if (day != _statusLogDay)
-            {
-                Directory.CreateDirectory(dir);
-                _statusLogDay = day;
-                _statusLogBytes = File.Exists(path) ? new FileInfo(path).Length : 0;
-                _statusLogFull = false;
-            }
-            if (_statusLogFull) return;
-
-            var game = _clock.TextAt(now);
-            var sb = new StringBuilder();
-            foreach (var l in lines) sb.Append($"{local:yyyy-MM-dd HH:mm:ss} {game} {l}{Environment.NewLine}");
-            if (_statusLogBytes > StatusLogMaxBytesPerDay)
-            {
-                _statusLogFull = true;
-                sb.Clear().Append($"{local:yyyy-MM-dd HH:mm:ss} {game} この日の状態の記録が {StatusLogMaxBytesPerDay / 1024 / 1024}MB を超えたので、ここで書くのをやめます{Environment.NewLine}");
-            }
-            var text = sb.ToString();
-            File.AppendAllText(path, text);
-            _statusLogBytes += Encoding.UTF8.GetByteCount(text);
-        }
-        catch
-        {
-            // 書けなくても列車は動かし続ける
-        }
+        // 書けなくても列車は動かし続ける（DailyLog は例外を出さない）
+        var local = now.ToLocalTime();
+        var game = _clock.TextAt(now);
+        var sb = new StringBuilder();
+        foreach (var l in lines) sb.Append($"{local:yyyy-MM-dd HH:mm:ss} {game} {l}{Environment.NewLine}");
+        _statusFile.Append(now, sb.ToString(),
+            () => $"{local:yyyy-MM-dd HH:mm:ss} {game} この日の状態の記録が {_statusFile.MaxMb}MB を超えたので、ここで書くのをやめます{Environment.NewLine}");
     }
 
     private static bool ShouldStopForProtection(Train t, HashSet<(int First, int Last)> active)
@@ -636,6 +665,12 @@ public sealed class AiTrains : BackgroundService
 
         // 番線への入換が出発と反対向きだった（大道寺の X線 → 1番線）: 番線に入って止まったら、向きを変える
         if (!t.Dwelling && t.FromShunt && t.ShuntMoved && t.Speed == 0 && t.PlanIndex == 0 && next != null && ReverseInPlatform(t, next, utcNow))
+        {
+            UpdateInfo(t);
+            return;
+        }
+        // 留置線から番線への入換で、途中の線（大道寺の X線・Y線）まで来た: 向きを変える
+        if (!t.Dwelling && t.FromShunt && t.ShuntMoved && t.Speed == 0 && t.PlanIndex == 0 && next != null && MidShuntReverse(t, next))
         {
             UpdateInfo(t);
             return;
@@ -872,6 +907,33 @@ public sealed class AiTrains : BackgroundService
     {
         var here = t.ShuntStation ?? t.Plan[t.DwellIndex];
         var turn = _rail.Turns.TurnOf(t.Dia);
+
+        // 留置線へ入れる引上げ（大道寺 3番線 → X線 → 5番線）: 引き上げた線では列番を変えず、向きを変えて留置線への進路を待つ。
+        // 留置線に入って止まったら（もう一度ここに来る）、そこで列番を変える。
+        // 引き上げた線・留置線のほかで止まったとき（番線の中で、引上げの進路が開く前に止まった）は、何もしない（進路を待つ）
+        if (!inPlace && turn?.Via is { } via && _rail.Stations.TryGetValue(here.StationId, out var sst)
+            && sst.Routes[t.Dir].ShuntOuts.FirstOrDefault(o => o.Label == via && o.ThenRoutes.Count > 0) is { } stable)
+        {
+            var at = t.Path.SelectMany(s => s.Circuits).LastOrDefault(c => c.Start < t.Head)?.Name;
+            var mid = stable.Routes.LastOrDefault()?.Circuits.LastOrDefault();
+            var dest = stable.ThenRoutes.LastOrDefault()?.Circuits.LastOrDefault();
+            if (at != (t.StableTurned ? dest : mid))
+            {
+                t.Status = t.StableTurned ? $"{here.Name} {via}への入換中" : $"{here.Name} で入換（引上げ）の進路待ち";
+                return;
+            }
+            if (!t.StableTurned)
+            {
+                Reverse(t);
+                t.StableTurned = true;
+                t.ShuntStartHead = t.Head;
+                t.Status = $"{here.Name} の引上げた線で向きを変えました。{via}への入換待ち";
+                _log.Note($"にぎやかし: {t.Number} は {here.Name} の引上げた線で向きを変えました（{via}へ）");
+                return;
+            }
+        }
+        var stabled = t.StableTurned;
+        t.StableTurned = false;
         t.Shunting = false;
         if (turn?.Number is not { Length: > 0 } number || _rail.DiaOf(number) is not { } nd || _routes.DirOfTrain(number) is not { } dir)
         {
@@ -900,21 +962,19 @@ public sealed class AiTrains : BackgroundService
         }
 
         // 今いる軌道回路（引上線）から、反対向きに道筋を作り直す
-        var circuit = t.Path.SelectMany(s => s.Circuits).LastOrDefault(c => c.Start < t.Head)?.Name ?? t.Info.TrackCircuits.LastOrDefault() ?? "";
-        var len = Math.Max(LengthOf(circuit), t.Length + 10);
-        t.Path.Clear();
-        t.Path.Add(new Seg(null, null, 0, len, [new SegCircuit(circuit, 0, len)]));
-        t.Head = len;
-        t.StartHead = t.Head;
-        t.Speed = 0;
+        t.ShuntOrigin = Reverse(t);
+        t.MidTurned = false;
         t.PlanIndex = 0;
         t.Dwelling = false;
-        t.Blocked = true;
-        t.EndSignal = null;
         t.Info.TrainNumber = number;
-        t.Info.GameRoutes.Clear();
         t.Info.Stops = t.Plan.Select(p => new StopInfo { Name = p.Name, StopType = p.Stops ? "StopForPassenger" : "Passing" }).ToList();
         t.Info.LastCenter = null;
+        if (stabled)
+        {
+            t.Status = $"{here.Name} の留置線に入りました（{old} → {number}）。番線への入換待ち";
+            _log.Note($"にぎやかし: {old} は {here.Name} の留置線に入って {number} になりました");
+            return;
+        }
         if (inPlace)
         {
             t.Status = $"{here.Name} {here.Track}番線で列番変更（{old} → {number}）。入換待ち";
@@ -923,6 +983,41 @@ public sealed class AiTrains : BackgroundService
         }
         t.Status = $"引上線で折り返し（{old} → {number}）。番線への入換待ち";
         _log.Note($"にぎやかし: {old} は {here.Name} の引上線で折り返して {number} になりました");
+    }
+
+    /// <summary>今いる軌道回路から、反対向きに道筋を作り直す（列番・停車駅はそのまま）。その軌道回路を返す。</summary>
+    private string Reverse(Train t)
+    {
+        var circuit = t.Path.SelectMany(s => s.Circuits).LastOrDefault(c => c.Start < t.Head)?.Name ?? t.Info.TrackCircuits.LastOrDefault() ?? "";
+        var len = Math.Max(LengthOf(circuit), t.Length + 10);
+        t.Path.Clear();
+        t.Path.Add(new Seg(null, null, 0, len, [new SegCircuit(circuit, 0, len)]));
+        t.Head = len;
+        t.StartHead = t.Head;
+        t.Speed = 0;
+        t.Blocked = true;
+        t.EndSignal = null;
+        t.Info.GameRoutes.Clear();
+        t.Info.LastCenter = null;
+        return circuit;
+    }
+
+    /// <summary>
+    /// 留置線から番線への入換の途中（大道寺 5番線 → X線 → 2番線 の X線）で止まったら、向きを変える。
+    /// 番線への2つ目の進路は、自動進路構成が開ける（開いたら、その進路で番線に入る）。
+    /// </summary>
+    private bool MidShuntReverse(Train t, PlanStop p)
+    {
+        if (t.MidTurned || t.ShuntOrigin is not { } origin || t.PathEnd - t.Head > SignalMargin + 3) return false;
+        if (!_rail.Stations.TryGetValue(p.StationId, out var st)) return false;
+        var here = t.Path.SelectMany(s => s.Circuits).LastOrDefault(c => c.Start < t.Head)?.Name;
+        if (here == null || !st.Routes[t.Dir].Shunts.Any(s => s.ThenRoutes.Count > 0 && s.FromCircuit == origin && s.Routes.LastOrDefault()?.Circuits.LastOrDefault() == here))
+            return false;
+        Reverse(t);
+        t.MidTurned = true;
+        t.ShuntMoved = false;
+        t.Status = $"{st.Name} の入換の途中で向きを変えました。番線への入換待ち";
+        return true;
     }
 
     /// <summary>
@@ -1638,9 +1733,9 @@ public sealed class AiTrains : BackgroundService
         foreach (var c in _relay.Conductors())
             if (c.TrainNumber.Length > 0) set.Add(RailData.NormalizeTrain(c.TrainNumber));
         var roster = _duties.Current;
-        foreach (var (duty, user) in _crew.Assignments().Concat(_crew.Extras()))
+        foreach (var duty in _crew.AttendedDuties())
         {
-            if (_crew.AttendedAt(user) == null || roster.DutyById(duty) is not { } d) continue;
+            if (roster.DutyById(duty) is not { } d) continue;
             foreach (var item in d.Items)
                 if (item.Train.Length > 0) set.Add(RailData.NormalizeTrain(item.Train));
         }
@@ -1666,7 +1761,8 @@ public sealed class AiTrains : BackgroundService
     {
         if (!_central.DiaMode) return;
         var now = DateTime.UtcNow;
-        foreach (var g in _players.Ghosts().Where(g => now - g.SinceUtc >= GhostTakeOverAfter))
+        // 入換で動かすために残した在線（X線入換など）は引き継がない（ユーザーがゲームの中だけで動かしている間）
+        foreach (var g in _players.Ghosts().Where(g => g.Info.ShuntMove != ShuntMoveState.Parked && now - g.SinceUtc >= GhostTakeOverAfter))
         {
             if (_players.TakeGhost(g.Id) is not { } taken) continue;
             var (ok, message) = TakeOver(taken);
@@ -1833,38 +1929,23 @@ public sealed class AiTrains : BackgroundService
             // 走っている列車が、このあと続けて・折り返して走る列番
             // 切り離す列車（解874 など）と、その先の列番（回933）も、元の列車（874）が走っていれば出さない（切り離したときに出る）
             var covered = new HashSet<string>();
-            void Cover(DiaTrain? d)
-            {
-                for (var k = 0; k < 10 && d != null; k++)
-                {
-                    if (_rail.DiaOf("解" + d.Number) is { } split && covered.Add(split.Number)) Cover(split);
-                    var nextNo = d.Next?.Number ?? (_rail.Turns.TurnOf(d) is { Kind: "折返", Number: { Length: > 0 } tn } ? tn : null);
-                    if (nextNo == null) break;
-                    covered.Add(RailData.NormalizeTrain(nextNo));
-                    d = _rail.DiaOf(nextNo);
-                }
-            }
-            foreach (var t in _trains.Values) Cover(t.Dia);
+            foreach (var t in _trains.Values) CoverChain(t.Dia, covered);
             // ユーザーの列車が切り離す車両も（ユーザーの列車の折り返しは、今までどおり自動で出す）
             foreach (var u in users)
-                if (_rail.DiaOf("解" + u) is { } usplit && covered.Add(usplit.Number)) Cover(usplit);
+                if (_rail.DiaOf("解" + u) is { } usplit && covered.Add(usplit.Number)) CoverChain(usplit, covered);
 
             var pending = new List<PendingTrain>();
-            foreach (var dia in _rail.Dia.Values)
+            var runningNumbers = _trains.Values.Select(t => t.Number).ToHashSet();
+            foreach (var (dia, number, startDir, cands, firstDep) in SpawnPlans())
             {
-                var number = RailData.NormalizeTrain(dia.Number);
-                if (_spawned.Contains(number) || users.Contains(number) || covered.Contains(number) || _trains.Values.Any(t => t.Number == number)) continue;
+                if (_spawned.Contains(number) || users.Contains(number) || covered.Contains(number) || runningNumbers.Contains(number)) continue;
                 if (Rinji?.IsRinji(number) == true) continue; // 特発臨は出さない（元の列車が発駅で列番を変えて走る）
                 if (_rail.IsIdleTrial(dia)) continue; // 選ばれていない運行番号の試運転は走らない
-                var stops = dia.Stops.Where(s => s.StationId != null && _rail.Stations.TryGetValue(s.StationId, out var sd) && sd.RouteControl).ToList();
-                if (stops.Count < 2) continue;
                 // 出す駅は始発駅（線区の外から来る列車は、線区に入る最初の駅）だけ。終着と、番線を使わずに通過する駅には出さない。
                 // 始発駅で出せなければ、出せるまでそこで待つ（遅れた列車として出す）。先の駅に飛ばして出すと、単線区間を越えて急に現れ、
                 // ほかの列車との順番が崩れて詰まる。
                 // アリにした・ロープレ時刻を飛ばした時刻（_catchUpAt）に、もう始発駅を出ているはずの列車だけは、そのとき走っているはずの所の次の駅を始発駅とみなす
-                var startDir = _routes.DirOfTrain(number);
-                var cands = stops.Take(stops.Count - 1).Where(s => !(startDir is { } sd2 && PassesWithoutTrack(s, sd2))).ToList();
-                if (cands.Count == 0 || Time(cands[0].Dep ?? cands[0].Arr) is not { } firstDep) continue;
+                // （始発駅の候補と最初の発車時刻は、ダイヤが変わるまで変わらないので SpawnPlans で作り置く）
                 var start = _catchUpAt is { } cu && firstDep < cu - TimeSpan.FromSeconds(30)
                     ? cands.FirstOrDefault(s => Time(s.Dep ?? s.Arr) is { } t && t >= cu - TimeSpan.FromSeconds(30))
                     : cands[0];
@@ -1892,6 +1973,30 @@ public sealed class AiTrains : BackgroundService
         }
 
         foreach (var (number, station, track) in todo) Add(number, CarsOf(number), station, true, track);
+    }
+
+    // ダイヤの列車ごとの、出す駅の候補（進路を扱う駅のうち、終着と、番線を使わずに通過する駅を除いたもの）と、最初の候補の発車時刻。
+    // 列番・駅の並び・時刻の文字はダイヤが変わるまで同じなので、2秒ごとに全ダイヤを読み直さないよう、ダイヤ（臨時列車の足し外し）が
+    // 変わったときだけ作り直す。出せない列車（進路を扱う駅が2つない・候補がない・時刻が書かれていない）は入れない
+    private (Dictionary<string, DiaTrain>? Dia, List<(DiaTrain Dia, string Number, Dir? StartDir, List<DiaStop> Cands, TimeSpan FirstDep)> List) _spawnPlans = (null, new());
+
+    private List<(DiaTrain Dia, string Number, Dir? StartDir, List<DiaStop> Cands, TimeSpan FirstDep)> SpawnPlans()
+    {
+        var all = _rail.Dia;
+        if (ReferenceEquals(_spawnPlans.Dia, all)) return _spawnPlans.List;
+        var list = new List<(DiaTrain, string, Dir?, List<DiaStop>, TimeSpan)>();
+        foreach (var dia in all.Values)
+        {
+            var number = RailData.NormalizeTrain(dia.Number);
+            var stops = dia.Stops.Where(s => s.StationId != null && _rail.Stations.TryGetValue(s.StationId, out var sd) && sd.RouteControl).ToList();
+            if (stops.Count < 2) continue;
+            var startDir = RouteEngine.TrainInfo(number)?.Dir; // 列車の向きは列番で決まる（走っている列車の向きも同じ）
+            var cands = stops.Take(stops.Count - 1).Where(s => !(startDir is { } sd2 && PassesWithoutTrack(s, sd2))).ToList();
+            if (cands.Count == 0 || Time(cands[0].Dep ?? cands[0].Arr) is not { } firstDep) continue;
+            list.Add((dia, number, startDir, cands, firstDep));
+        }
+        _spawnPlans = (all, list);
+        return list;
     }
 
     /// <summary>最後尾が抜けた進路は、ゲームと同じく解く（道筋からも外す）。</summary>
@@ -2183,6 +2288,9 @@ public sealed class AiTrains : BackgroundService
         public PlanStop? ShuntStation { get; set; }
         public bool ShuntMoved { get; set; }      // 引上線から番線へ、道筋が延びた
         public bool FromShunt { get; set; }       // 引上線から折り返した（ホームへの入換を待つ。発車時刻まで止まらずに番線へ入る）
+        public bool StableTurned { get; set; }    // 留置線へ入れる引上げで、引き上げた線（大道寺の X線）で向きを変えた（次に止まった所で列番を変える）
+        public string? ShuntOrigin { get; set; }  // 列番を変えた（入換を始める）軌道回路（大道寺の 5番線 TH65_5T）
+        public bool MidTurned { get; set; }       // 留置線から番線への入換で、途中の線（X線・Y線）で向きを変えた
         public bool MidLine { get; set; }         // 駅間など、番線でない所から走り出した（継続乗務の在線を引き継いだ）。最初の駅で発車待ちにしない
         public long EventVersion { get; set; } = -1; // 停車・通過の一覧に入れた催物用臨停設定の版（EventStops.Version）
         public string? CutStation { get; set; }   // 打ち切り（列車別設定・途中折返し）の駅。そこを終着にしている

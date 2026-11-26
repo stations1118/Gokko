@@ -41,18 +41,6 @@ public static partial class Unyo
         return $"{offset + low - low % 2}{letter}";
     }
 
-    /// <summary>列番の時（始発駅の時刻の時）。数字が読めなければ null。300番台は時の1の位しかないので null。</summary>
-    public static int? HourOf(string? train)
-    {
-        if (string.IsNullOrWhiteSpace(train)) return null;
-        var m = NumberPart().Match(train.Normalize(System.Text.NormalizationForm.FormKC).Trim());
-        if (!m.Success || !int.TryParse(m.Groups[1].Value, out var n)) return null;
-        if (n >= 9000) return null;
-        if (n >= 6000) n -= 6000;
-        else if (n >= 3000) n -= 3000;
-        return n / 100;
-    }
-
     /// <summary>
     /// 人が書いた運行番号をそろえる（全角→半角・小文字→大文字・前後の空白と「運行」を取る・頭の0を取る）。
     /// "24"・"２４ｓ"・"24S運行" → "24"・"24S"・"24S"。運行番号の形でなければ null。
