@@ -244,6 +244,11 @@ public sealed partial class MainForm : Form
                 ShowMessage("運転士のキーを保存しました（押すと、乗っている車掌のゲームでも同じボタンを押します）");
             };
             buttons.Controls.Add(driverKeys);
+
+            // 運転台の車掌スイッチ（自分のゲームのドア・ブザーを扱う。ワンマンや、運転台側からドアを扱うとき）
+            var driverPanel = new Button { Size = new Size(110, 30), Margin = new Padding(8, 3, 0, 3), Text = "車掌スイッチ" };
+            driverPanel.Click += (_, _) => _crewPanel.ToggleDriverPanel();
+            buttons.Controls.Add(driverPanel);
         }
 
         AddWide(buttons, SizeType.Absolute, 40);
@@ -318,7 +323,9 @@ public sealed partial class MainForm : Form
                 ? "継続乗務: このまま運転画面を出ると、在線位置を5分間残します。同じ番線から次のシナリオを始めると、この列番で続けます"
                 : "継続乗務を取り消しました");
         };
-        var bottom = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Margin = Padding.Empty };
+        var bottom = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
+        // 行の高さを決めておく（決めていないと、ボタンが欄より高く（100px）なり、真ん中に描く文字が欄の外に出て見えなくなっていた）
+        bottom.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         // 運転士: 「車掌乗務を許可」を入れているときだけ、車掌の乗務の申し込みが届く（車掌・特発のみのモードでは出さない）
         _allowConductorButton.Dock = DockStyle.Fill;
         _allowConductorButton.Font = new Font(Font.FontFamily, 9.5f, FontStyle.Bold);

@@ -19,18 +19,20 @@ namespace Gokko.Client;
 public sealed class AutoDriver
 {
     private const int MaxBrake = 7;            // 常用最大（B8 は直通非常なので使わない）
-    private const int HoldBrake = 4;           // 止まっている間のブレーキ
+    private const int HoldBrake = 5;           // 止まっている間のブレーキ（止まりきってから入れる。発車のときは力行に移るときにゆるむ）
     private const int MaxPower = 5;            // 力行の一番強い段の見込み
+    private const double ShuntSpeed = 25;      // 入換で動くときの速度の上限（km/h）
     private const double LimitMargin = 2;      // 制限速度・ATS の速度より、これだけ下を上限にする（km/h）
     private const double PlanDecel = 2.0;      // 先の制限・停止信号まで減速しきれるかを見るときの減速度（km/h/s）
     private const double PlanMargin = 20;      // 同じく、減速しきるのに要る距離に足す余裕（m）
-    private const double PatternDecel = 2.6;   // 減速しきる点まで、この減速度が要るようになったらブレーキを入れ始める（km/h/s。B5 の目安 2.8 に少し余裕）
+    private const int PatternNotch = 5;        // この段の目安の減速度（2.8km/h/s）が要るようになったら入れ始める（停目からの距離で決まるので両数によらない。4両停目なら 80m 手前 40km/h、6両停目なら 120m 手前 50km/h 前後）。
+                                               // 覚えた効き方が目安より弱い列車は、足りる段（B6 など）を選ぶ（運転士の基本制動 B4＝ゲームの B5、足りなければ1段上げる）
     private const double DefaultLag = 0.8;     // ブレーキが効き始めるまでの遅れ（秒）の目安。見込みの表に形式の値があればそれ
     private const int DefaultHoldMs = 2000;    // 段を変えたら、これだけは保つ（ブレーキシリンダの圧が上がって効ききるまで。行ったり来たりしない）。表に遅れがあれば遅れ＋1.2秒
-    private const double StopTolerance = 1.5;  // 保ったあと、このままの減速度で止まる位置の見込みがこれ以上ずれたら段を変える（m）
-    private const double FinalSpeed = 8;       // この速度（km/h）からは B2 で止める（B1 は抑速ブレーキの列車があるので使わない）
+    private const double StopTolerance = 1.0;  // 保ったあと、このままの減速度で止まる位置の見込みがこれ以上ずれたら段を変える（m）
+    private const double FinalSpeed = 5;       // この速度（km/h）からは B2 で止める（それまでは B5 前後を保つ。人の運転の記録で、10m 手前でも 12km/h・B5）（B1 は抑速ブレーキの列車があるので使わない）
     private const int FinalNotch = 2;
-    private const double SteadyFactor = 1.1;   // 効ききったあとの減速度 ÷ 目安（目安は効き始めの遅れ込みの平均なので、効ききると少し強い）
+    private const double SteadyFactor = 1.0;   // 効ききったあとの減速度 ÷ 目安（本番の記録で、効ききった減速度は目安とほぼ同じだった）
     private const double StepBand = 0.1;       // 段を選ぶときの余裕（km/h/s）
     private const double SignalMargin = 15;    // 停止信号の、これだけ手前に止まる（m）
     private const double RoughMargin = 10;     // シナリオと違う番線で、停目までの残りがおおまかなうちは、これだけ手前をめがける（m。確定すれば外す）
@@ -51,6 +53,9 @@ public sealed class AutoDriver
 
     private int _lastStopIndex = -2;           // 最後に止まった（発車を待っている）停車駅の番号。-2 はまだ決めていない
     private bool _departOk;                    // 発車してよい（ブザーが鳴った・運転停車の発車時刻）
+    private bool _shunting;                    // 終着から入換で動いている
+    private long _shuntMs;                     // 入換で動き始めた時刻
+    private string _dia = "";                  // 今のダイヤ名（変わったら停車駅を数え直す）
     private bool _powering;
     private double _signalCap = double.PositiveInfinity; // 注意・警戒の信号機を過ぎてから、次の信号機が見えるまでの速度の上限
     private bool _stopping;
@@ -86,7 +91,8 @@ public sealed class AutoDriver
     /// 1周期ぶん。返すのは力行・ブレーキの段（どちらかは 0）。
     /// stop: 停目までの残り（<see cref="StopDistance.Update"/> の結果）。departSignal: 車掌のブザーが今鳴り始めた。emergency: 車掌の非常ブレーキが入っている。
     /// </summary>
-    public (int Power, int Brake) Step(TciState s, TrainState raw, IReadOnlyList<SignalInfo> signals, StopDistanceResult stop, bool departSignal, bool emergency, long now)
+    public (int Power, int Brake) Step(TciState s, TrainState raw, IReadOnlyList<SignalInfo> signals, StopDistanceResult stop, bool departSignal, bool emergency, long now,
+        (List<(double Dist, double Kmh)> Actual, List<(double Dist, double Kmh)> Scenario)? routeLimits = null)
     {
         var accel = Accel(now, s.Speed); // km/h/s（減速はマイナス）
         // 停車駅の一覧は途中で届かなくなることがあるので、前に届いたものを使い続ける
@@ -98,6 +104,15 @@ public sealed class AutoDriver
         {
             _profileModel = model;
             _profile = Profiles?.Models.FirstOrDefault(p => p.Model == model);
+        }
+        // ダイヤが変わった（終着で折り返した・入換の列番になった）: 停車駅の並びが変わるので、止まった駅から数え直す
+        if ((raw.diaName ?? "") != _dia)
+        {
+            _dia = raw.diaName ?? "";
+            _lastStopIndex = -2;
+            _stopping = false; // 入換で動いている間は、そのまま（入換の列番に変わることがある）
+            if (raw.stationList is { Count: > 0 } fresh) _stations = fresh.ToList();
+            stations = _stations;
         }
         var pos = raw.TotalLength;
         if (stations.Count == 0) return Hold("停車駅の一覧を待っています", MaxBrake); // 届くまでは走らない（止まる駅が分からない）
@@ -159,7 +174,19 @@ public sealed class AutoDriver
                 return Hold(confirmed ? $"{targetName} に停車（残り {dStop - StopBias:0.0}m）" : $"{targetName} に停車（停目の位置はおおまか）", HoldBrake);
             }
 
-            if (target < 0) return Hold("終点", HoldBrake);
+            if (target < 0)
+            {
+                // 終着: 入換の進路が開いて（いちばん手前の信号機が停止でない）、車掌のブザーが鳴ったら、入換で動く（25km/h まで。停止信号の手前で止まる）。
+                // 止まったら、また進路とブザーを待つ
+                if (_shunting && now - _shuntMs > 5000) _shunting = false;
+                var open = OnRoute(signals).FirstOrDefault() is { } first0 && !IsStop(first0.phase);
+                if (!_shunting && departSignal && s.AllClose && open)
+                {
+                    _shunting = true;
+                    _shuntMs = now;
+                }
+                if (!_shunting) return Hold(open ? "終着（入換の進路が開いています。ブザーで動きます）" : "終着", HoldBrake);
+            }
 
             // 発車を待つ
             if (_lastStopIndex >= 0 && !_departOk)
@@ -209,10 +236,21 @@ public sealed class AutoDriver
         vSignal = Math.Min(vSignal, _signalCap);
 
         // 今出してよい速度（制限速度・ATS・先の制限）
-        var limit = s.SpeedLimit > 0 ? s.SpeedLimit : 120f;
+        // 進路ごとの制限: 入る番線がシナリオと違うと、ゲームの制限はシナリオの番線の進路のもの（分岐の 40km/h など）。
+        // その駅の前後（記録のある範囲）では、ゲームの制限の代わりに、入る番線の記録の制限を使う
+        UpdateZones(stop, routeLimits, pos);
+        var trainLength = (raw.CarStates?.Count ?? 6) * 20.0;
+        var zone = _zones.FirstOrDefault(z => pos >= z.From && pos - trainLength <= z.To);
+        double limit = s.SpeedLimit > 0 ? s.SpeedLimit : 120f;
+        if (zone != null && Math.Min(zone.At(pos), zone.At(pos - trainLength)) is var za && !double.IsInfinity(za)) limit = za; // 最後尾が抜けるまで低い方。記録の手前ならゲームの制限
         if (s.AtsSpeed > 0) limit = Math.Min(limit, s.AtsSpeed);
         var vAllow = limit - LimitMargin;
-        if (s.NextSpeedLimit >= 0 && s.NextSpeedLimitDistance >= 0)
+        foreach (var z in _zones)
+            foreach (var (abs, kmh) in z.Actual)
+                if (abs > pos && abs - pos < 1500)
+                    vAllow = Math.Min(vAllow, Math.Sqrt(Math.Pow(Math.Max(0, kmh - LimitMargin), 2) + 7.2 * PlanDecel * Math.Max(0, abs - pos - PlanMargin)));
+        var nextInZone = s.NextSpeedLimitDistance >= 0 && _zones.Any(z => pos + s.NextSpeedLimitDistance >= z.From - 30 && pos + s.NextSpeedLimitDistance <= z.To + 30);
+        if (s.NextSpeedLimit >= 0 && s.NextSpeedLimitDistance >= 0 && !nextInZone)
         {
             var vn = Math.Max(0, s.NextSpeedLimit - LimitMargin);
             vAllow = Math.Min(vAllow, Math.Sqrt(vn * vn + 7.2 * PlanDecel * Math.Max(0, s.NextSpeedLimitDistance - PlanMargin)));
@@ -230,17 +268,17 @@ public sealed class AutoDriver
         _lastTarget = double.IsInfinity(dTarget) ? double.NaN : dTarget;
         _lastTargetMs = now;
         // 止まり方: 停目の手前の「減速しきる点」（そこから B2 で FinalSpeed から止まりきれる距離 df）までに FinalSpeed へ落とし、そこから B2 で止める。
-        // need は減速しきる点までに要る減速度（効き始めの遅れの間に進む分を引く）。FinalSpeed 以下では停目までに要る減速度
+        // need は減速しきる点までに要る減速度（目安は効き始めの遅れ込みなので、遅れの分は引かない）。FinalSpeed 以下では停目までに要る減速度
         var v = (double)s.Speed;
         var df = FinalSpeed * FinalSpeed / (7.2 * Steady(FinalNotch));
-        var dMain = dTarget - df - v / 3.6 * BrakeLag;
+        var dMain = dTarget - df;
         var need = v > FinalSpeed
             ? (dMain > 0.3 ? (v * v - FinalSpeed * FinalSpeed) / (7.2 * dMain) : 99)
             : (dTarget > 0.1 ? v * v / (7.2 * dTarget) : (v > 0.5 ? 99 : 0));
 
         if (dTarget < -1 && s.Speed > 0.5f) return Hold($"{what}を行き過ぎました", MaxBrake);
 
-        if (!_stopping && !double.IsInfinity(dTarget) && (v > FinalSpeed ? need >= PatternDecel : need >= Steady(FinalNotch) * 0.9))
+        if (!_stopping && !double.IsInfinity(dTarget) && (v > FinalSpeed ? need >= BrakeDecel[PatternNotch] : need >= Steady(FinalNotch) * 0.9))
         {
             // 走ってきた速さのまま、停止パターンに当たったところで入れ始める（最初の段は目安から。ふつうは B5）
             _stopping = true;
@@ -296,7 +334,7 @@ public sealed class AutoDriver
                 var b2 = v * v / (7.2 * Steady(FinalNotch)) + (_brake == 0 ? v / 3.6 * BrakeLag : 0);
                 if (_brake > FinalNotch && b2 <= dTarget + 0.3) SetBrake(FinalNotch, now);
                 else if (_brake == FinalNotch && b2 > dTarget + 1.0 && since >= 1000) SetBrake(FinalNotch + 1, now);
-                else if (_brake == FinalNotch && b2 < dTarget - 1.0 && v > 2 && since >= 1000) SetBrake(0, now); // 手前で止まりそう: 少しゆるめて転がす
+                else if (_brake == FinalNotch && b2 < dTarget - 2.0 && v > 2 && since >= 1000) SetBrake(0, now); // 手前で止まりそう: 少しゆるめて転がす
                 else if (_brake == 0 && b2 >= dTarget - 0.3) SetBrake(FinalNotch, now);
             }
 
@@ -307,6 +345,7 @@ public sealed class AutoDriver
 
         // 間に合う平均の速さから、目指す速度を決める
         var cruise = vAllow;
+        if (_shunting) cruise = Math.Min(cruise, ShuntSpeed); // 入換
         var late = "";
         if (target >= 0 && !double.IsInfinity(dStop))
         {
@@ -351,6 +390,33 @@ public sealed class AutoDriver
 
         Note = string.Create(CultureInfo.InvariantCulture, $"惰行（{targetName}　{late}）");
         return (0, 0);
+    }
+
+    /// <summary>入る番線の制限の記録（走った距離の位置で）。From・To は、入る番線・シナリオの番線どちらかの記録がある範囲。</summary>
+    private sealed record Zone(string Key, List<(double Abs, double Kmh)> Actual, double From, double To)
+    {
+        /// <summary>その位置の制限（範囲の手前は上限なし）。</summary>
+        public double At(double p)
+        {
+            var v = double.PositiveInfinity;
+            foreach (var (abs, kmh) in Actual)
+                if (abs <= p) v = kmh; else break;
+            return v;
+        }
+    }
+
+    private readonly List<Zone> _zones = new();
+
+    /// <summary>入る番線がシナリオと違う駅の、制限の記録を走った距離の位置に直して持つ（発車したあとの出口側にも使うので、通り過ぎるまで残す）。</summary>
+    private void UpdateZones(StopDistanceResult stop, (List<(double Dist, double Kmh)> Actual, List<(double Dist, double Kmh)> Scenario)? limits, double pos)
+    {
+        _zones.RemoveAll(z => z.To + 200 < pos);
+        if (limits is not { } l || l.Actual.Count == 0) return;
+        var key = stop.Dir + stop.Station + stop.Track;
+        var actual = l.Actual.Select(x => (pos + x.Dist, x.Kmh)).OrderBy(x => x.Item1).ToList();
+        var all = actual.Select(x => x.Item1).Concat(l.Scenario.Select(x => pos + x.Dist)).ToList();
+        _zones.RemoveAll(z => z.Key == key);
+        _zones.Add(new Zone(key, actual, all.Min(), all.Max()));
     }
 
     /// <summary>止める・止めたままにする。</summary>

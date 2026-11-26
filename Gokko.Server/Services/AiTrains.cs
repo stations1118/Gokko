@@ -2107,6 +2107,29 @@ public sealed class AiTrains : BackgroundService
     public IEnumerable<(string Station, Dir Dir, int Track, string Signal, double Before, double? After)> StopSignals() =>
         _stops.Select(s => (s.Station, s.Dir, s.Track, s.Signal, s.Before, s.After));
 
+    /// <summary>
+    /// その駅・番線に入るときの制限速度の変わり目（ゲームの自動運転でその番線に入った記録から）。Before は6両停目から手前への距離（m。先はマイナス）、
+    /// Kmh はそこからの制限。6両停目の 800m 手前から 400m 先まで（最初の1つは 800m 手前で効いている制限）。記録がなければ空。
+    /// クライアントの自動運転が、シナリオと違う番線に入るとき、ゲームの制限（シナリオの番線の進路のもの）の代わりに使う。
+    /// </summary>
+    public List<(double Before, double Kmh)> ApproachLimits(string station, Dir dir, int track, string signal, double before, double? after)
+    {
+        for (var i = 0; i < _signalRuns.Count; i++)
+        {
+            if (!_trackRuns[i].TryGetValue(station, out var tr) || tr != track || !_signalRuns[i].TryGetValue(signal, out var at) || _limitRuns[i].Count == 0) continue;
+            var marker = after is { } a ? at + a : at - before;
+            var lims = _limitRuns[i];
+            var result = new List<(double, double)>();
+            var from = marker - 800;
+            var before0 = lims.LastOrDefault(l => l.Pos <= from);
+            if (before0.Kmh > 0) result.Add((800, before0.Kmh));
+            foreach (var (p, kmh) in lims)
+                if (p > from && p <= marker + 400) result.Add((Math.Round(marker - p, 1), kmh));
+            if (result.Count > 0) return result;
+        }
+        return new List<(double, double)>();
+    }
+
     private StopSpec? FindStop(string station, Dir dir, int track) =>
         _stops.FirstOrDefault(s => s.Station == station && s.Dir == dir && s.Track == track)
         ?? (track == 0 ? _stops.FirstOrDefault(s => s.Station == station && s.Dir == dir) : null);

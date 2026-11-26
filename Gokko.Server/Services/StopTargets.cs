@@ -28,6 +28,7 @@ public static class StopTargets
             t.Signal = s.Signal;
             t.Before = s.After == null ? s.Before : null;
             t.After = s.After;
+            t.Limits = ai.ApproachLimits(s.Station, s.Dir, s.Track, s.Signal, s.Before, s.After).Select(l => new StopTargetLimit { Before = l.Before, Kmh = l.Kmh }).ToList();
         }
         foreach (var e in markers.Entries) Row(e.Dir, e.Station, e.Track);
 
