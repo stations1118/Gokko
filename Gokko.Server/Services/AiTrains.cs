@@ -196,6 +196,60 @@ public sealed class AiTrains : BackgroundService
         static string? Hm(string? hms) => hms is { Length: >= 5 } ? hms[..5] : hms;
     }
 
+    /// <summary>手で出せる列車の候補（列番・種別・出す駅と発車時刻・行き先・両数・自動で出る予定か）。</summary>
+    public sealed record CandidateView(string Train, string Type, string Station, string Dep, string Dest, int Cars, bool Pending);
+
+    /// <summary>
+    /// 手で出せる列車の候補: 走っていないダイヤの列車で、これから発車する駅（手で出すときに列番だけで選ばれる駅）の時刻が
+    /// 今から PendingHorizon までのもの。発車の早い順。ユーザーの列車・走っている列車が続けて走る列番・特発臨・走らせない試運転は入れない。
+    /// </summary>
+    public List<CandidateView> Candidates()
+    {
+        var list = new List<(TimeSpan Dep, CandidateView View)>();
+        if (_clock.Now is not { } now) return [];
+        var users = new HashSet<string>(_userTrains);
+        users.UnionWith(_userInGame);
+        HashSet<string> running, covered, pending;
+        lock (_lock)
+        {
+            running = _trains.Values.Select(t => t.Number).ToHashSet();
+            covered = new HashSet<string>();
+            foreach (var t in _trains.Values) CoverChain(t.Dia, covered);
+            pending = _pending.Select(p => p.Number).ToHashSet();
+        }
+
+        foreach (var dia in _rail.Dia.Values)
+        {
+            var number = RailData.NormalizeTrain(dia.Number);
+            if (running.Contains(number) || users.Contains(number) || covered.Contains(number) || number.StartsWith("解")) continue;
+            if (Rinji?.IsRinji(number) == true || _rail.IsIdleTrial(dia)) continue;
+            if (_routes.DirOfTrain(number) is not { } dir) continue;
+            // 出す駅は Add で駅を指定しなかったときと同じ選び方
+            var stops = dia.Stops.Where(s => s.StationId != null && _rail.Stations.TryGetValue(s.StationId, out var sd) && sd.RouteControl).ToList();
+            var start = stops.Take(Math.Max(0, stops.Count - 1))
+                .FirstOrDefault(s => Time(s.Dep ?? s.Arr) is { } t && t >= now && !PassesWithoutTrack(s, dir));
+            if (start == null || Time(start.Dep ?? start.Arr) is not { } dep || dep > now + PendingHorizon) continue;
+            var hms = start.Dep ?? start.Arr ?? "";
+            list.Add((dep, new CandidateView(number, dia.TypeLabel, start.Name, hms.Length >= 5 ? hms[..5] : hms,
+                dia.Dest.Length > 0 ? dia.Dest : dia.Stops[^1].Name, CarsOf(number), pending.Contains(number))));
+        }
+
+        return list.OrderBy(c => c.Dep).ThenBy(c => c.View.Train, StringComparer.Ordinal).Select(c => c.View).ToList();
+    }
+
+    /// <summary>走っている列車 d が、このあと続けて・折り返して走る列番（と切り離す車両）を covered に足す。</summary>
+    private void CoverChain(DiaTrain? d, HashSet<string> covered)
+    {
+        for (var k = 0; k < 10 && d != null; k++)
+        {
+            if (_rail.DiaOf("解" + d.Number) is { } split && covered.Add(split.Number)) CoverChain(split, covered);
+            var nextNo = d.Next?.Number ?? (_rail.Turns.TurnOf(d) is { Kind: "折返", Number: { Length: > 0 } tn } ? tn : null);
+            if (nextNo == null) break;
+            covered.Add(RailData.NormalizeTrain(nextNo));
+            d = _rail.DiaOf(nextNo);
+        }
+    }
+
     /// <summary>
     /// 試運転を走らせる運行番号を決める（空なら1本も出さない）。外した運行番号の試運転が自動運転で走っていれば消す。
     /// ユーザーが運転している試運転はそのまま（ユーザーの列車は自動運転で出さない、の決まりは変えない）。
@@ -1812,21 +1866,10 @@ public sealed class AiTrains : BackgroundService
             // 走っている列車が、このあと続けて・折り返して走る列番
             // 切り離す列車（解874 など）と、その先の列番（回933）も、元の列車（874）が走っていれば出さない（切り離したときに出る）
             var covered = new HashSet<string>();
-            void Cover(DiaTrain? d)
-            {
-                for (var k = 0; k < 10 && d != null; k++)
-                {
-                    if (_rail.DiaOf("解" + d.Number) is { } split && covered.Add(split.Number)) Cover(split);
-                    var nextNo = d.Next?.Number ?? (_rail.Turns.TurnOf(d) is { Kind: "折返", Number: { Length: > 0 } tn } ? tn : null);
-                    if (nextNo == null) break;
-                    covered.Add(RailData.NormalizeTrain(nextNo));
-                    d = _rail.DiaOf(nextNo);
-                }
-            }
-            foreach (var t in _trains.Values) Cover(t.Dia);
+            foreach (var t in _trains.Values) CoverChain(t.Dia, covered);
             // ユーザーの列車が切り離す車両も（ユーザーの列車の折り返しは、今までどおり自動で出す）
             foreach (var u in users)
-                if (_rail.DiaOf("解" + u) is { } usplit && covered.Add(usplit.Number)) Cover(usplit);
+                if (_rail.DiaOf("解" + u) is { } usplit && covered.Add(usplit.Number)) CoverChain(usplit, covered);
 
             var pending = new List<PendingTrain>();
             foreach (var dia in _rail.Dia.Values)

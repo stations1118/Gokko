@@ -360,7 +360,7 @@
   GokkoRinji.panel({ el: $("rinji"), api, act, onMessage: (m) => { $("error").textContent = m; } });
 
   // 自動運転列車（にぎやかし）。速さは管理画面だけに出す
-  GokkoDia.aiTrainPanel({ el: $("aiTrains"), api, onMessage: (m) => { $("error").textContent = m; } });
+  GokkoDia.aiTrainPanel({ el: $("aiTrains"), api });
 
   refresh();
   let polling = false; const poll = async () => { if (polling) return; polling = true; try { await refresh(); } finally { polling = false; } }; // 前の読み込みが終わっていなければ重ねて投げない（サーバーが遅いとき、要求が積み重なって配信まで詰まるため）
