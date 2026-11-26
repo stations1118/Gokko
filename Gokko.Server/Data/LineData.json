@@ -87,7 +87,7 @@
   ],
 
   "sections": {
-    "TH57-TH58": ["TH58_9LT", "TH58_23イT", "TH58_23ロT", "TH58_24T", "TH58_25T"],
+    "TH57-TH58": ["TH57_21T", "AS2T", "AS1T", "TH58_9LT", "TH58_23イT", "TH58_23ロT", "TH58_24T", "TH58_25T"],
     "TH58-TH59": ["NA1T", "NA2T", "TH58_2RT", "TH58_21T", "TH58_22イT", "TH58_22ロT", "TH59_21イT", "TH59_21ロT"],
     "TH59-TH60": ["TH59_12LT", "上り246T", "上り250T", "下り249T"],
     "TH60-TH61": ["TH61_5RT", "上り238T", "下り237T", "下り241T"],
@@ -127,6 +127,8 @@
   },
 
   "yards": {
+    // 三郷: 1番線（12RT・上り）・2番線（14LT・下り）と、上りの出口（13RT）
+    "TH57": ["TH57_12RT", "TH57_14LT", "TH57_13RT"],
     "TH58": ["TH58_2RAT", "TH58_2RBT", "TH58_9LCT", "TH58_DT", "TH58_ET"],
     "TH59": ["TH59_11RT", "TH59_13LT"],
     "TH60": ["上り242T", "下り245T"],
@@ -193,7 +195,7 @@
   ],
 
   "unassigned": [
-    "なし", "AS1T", "AS2T", "JR1LT", "JR1RT", "JR3LT", "JR3RT", "JR上り1T", "JR上り2T", "JR上り3T", "JR上り4T",
+    "なし", "JR1LT", "JR1RT", "JR3LT", "JR3RT", "JR上り1T", "JR上り2T", "JR上り3T", "JR上り4T",
     "JR上り5T", "JR上り浜園手前T", "JR下り1T", "JR下り2T", "JR下り3T", "JR下り4T", "JR下り5T", "KST", "MFT", "NMT", "SNT",
     "TK1T", "TK2T", "TH45_1RAT", "TH45_1RT", "TH45_2RT", "TH45_3RT", "TH45_9LT", "TH45_10LT",
     "TH45_21イT", "TH45_21ロT", "TH45_22イT", "TH45_22ロT", "TH45_23イT", "TH45_23ロT", "TH45_24T",
@@ -207,8 +209,8 @@
     "TH51_21ロT", "TH51_22イT", "TH51_22ロT", "TH52_12RT", "TH52_15LT", "TH52_21T", "TH52_22イT",
     "TH52_22ロT", "TH53_12LT", "TH53_12RT", "TH53_13LT", "TH53_14RT", "TH53_15LT", "TH53_15RT",
     "TH53_21T", "TH53_22T", "TH54_12RT", "TH54_15LT", "TH54_21イT", "TH54_21ロT", "TH54_22イT",
-    "TH54_22ロT", "TH55S_11LT", "TH55S_11RT", "TH55S_21イT", "TH55S_21ロT", "TH57_12RT", "TH57_13RT",
-    "TH57_14LT", "TH57_21T", "TH66S_1T", "TH66S_2T", "TH66S_3T", "TH66S_4T", "TH66S_5T", "TH66S_6T", "TH66S_7T",
+    "TH54_22ロT", "TH55S_11LT", "TH55S_11RT", "TH55S_21イT", "TH55S_21ロT",
+    "TH66S_1T", "TH66S_2T", "TH66S_3T", "TH66S_4T", "TH66S_5T", "TH66S_6T", "TH66S_7T",
     "TH66S_8T", "TH66S_9T", "TH66S_21T", "TH66S_22T", "TH66S_23T", "TH66S_27T", "TH66S_28T",
     "TH66S_29T", "TH66S_30T", "TH66S_61T", "TH66S_69T", "TH66S_70T", "TH66S_71T", "TH66S_72T",
     "TH66S_73T", "TH66S_74T", "TH66S_76T", "上り306T", "上り312T", "上り314T",
