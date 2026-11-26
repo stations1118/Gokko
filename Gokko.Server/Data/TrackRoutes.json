@@ -160,11 +160,11 @@
           // 増結車（連777・連875C）と切り離した車両（回2131）: E線で折り返し、E線から番線へ
           { "fromCircuit": "TH65_ET", "fromLabel": "E線", "to": 3, "routes": ["29LC"] },
           { "fromCircuit": "TH65_ET", "fromLabel": "E線", "to": 4, "routes": ["29LD"] },
-          // X線（藤江方の本線）にいる列車: X線から 1〜6番線へ（駅扱いの入換。3・4番線へは 45T・44T を経て場内の 11L・12L）
+          // X線（藤江方の本線）にいる列車: X線から 1〜6番線へ（駅扱いの入換。3番線へは 31LC から入換の 27L、4番線へは 31LD から入換の 28L）
           { "fromCircuit": "TH65_XT", "fromLabel": "X線", "to": 1, "routes": ["31LA"] },
           { "fromCircuit": "TH65_XT", "fromLabel": "X線", "to": 2, "routes": ["31LB"] },
-          { "fromCircuit": "TH65_XT", "fromLabel": "X線", "to": 3, "routes": ["31LC", "11L"] },
-          { "fromCircuit": "TH65_XT", "fromLabel": "X線", "to": 4, "routes": ["31LD", "12L"] },
+          { "fromCircuit": "TH65_XT", "fromLabel": "X線", "to": 3, "routes": ["31LC", "27L"] },
+          { "fromCircuit": "TH65_XT", "fromLabel": "X線", "to": 4, "routes": ["31LD", "28L"] },
           { "fromCircuit": "TH65_XT", "fromLabel": "X線", "to": 5, "routes": ["31L5"] },
           { "fromCircuit": "TH65_XT", "fromLabel": "X線", "to": 6, "routes": ["31L6"] }
         ],
@@ -200,11 +200,11 @@
           { "fromCircuit": "TH65_YT", "fromLabel": "入換Y線", "to": 2, "routes": ["32LB"] },
           { "fromCircuit": "TH65_YT", "fromLabel": "入換Y線", "to": 3, "routes": ["32LC"] },
           { "fromCircuit": "TH65_YT", "fromLabel": "入換Y線", "to": 4, "routes": ["32LD"] },
-          // X線（藤江方の本線）に引き上げた列車: X線から 1〜6番線へ（3・4番線へは 45T・44T を経て場内の 11L・12L。5・6番線は駅扱いの入換で）
+          // X線（藤江方の本線）に引き上げた列車: X線から 1〜6番線へ（3番線へは 31LC から入換の 27L、4番線へは 31LD から入換の 28L）
           { "fromCircuit": "TH65_XT", "fromLabel": "X線", "to": 1, "routes": ["31LA"] },
           { "fromCircuit": "TH65_XT", "fromLabel": "X線", "to": 2, "routes": ["31LB"] },
-          { "fromCircuit": "TH65_XT", "fromLabel": "X線", "to": 3, "routes": ["31LC", "11L"] },
-          { "fromCircuit": "TH65_XT", "fromLabel": "X線", "to": 4, "routes": ["31LD", "12L"] },
+          { "fromCircuit": "TH65_XT", "fromLabel": "X線", "to": 3, "routes": ["31LC", "27L"] },
+          { "fromCircuit": "TH65_XT", "fromLabel": "X線", "to": 4, "routes": ["31LD", "28L"] },
           { "fromCircuit": "TH65_XT", "fromLabel": "X線", "to": 5, "routes": ["31L5"] },
           { "fromCircuit": "TH65_XT", "fromLabel": "X線", "to": 6, "routes": ["31L6"] },
           // 5番線（留置線）に置いた列車: Y線か X線へ出て、向きを変えてから番線へ（どちらを通るかはダイヤの折返の out。1653 → 2152 は Y線、2051 → 2250 は X線）

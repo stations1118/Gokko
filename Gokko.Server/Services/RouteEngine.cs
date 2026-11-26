@@ -629,6 +629,13 @@ public sealed partial class RouteEngine
         public string ShuntOutWait { get; set; } = "";
         public bool ForceShuntOut { get; set; }
 
+        /// <summary>
+        /// 引き上げた線（大道寺の X線）にいる終着の列車への、駅扱いの入換（その線から To 番線へ。TrackRoutes.json の shunt）。
+        /// 要求がなければ null。開通させたら null に戻す。
+        /// </summary>
+        public ShuntDef? ManualShuntFrom { get; set; }
+        public string ManualShuntFromWait { get; set; } = "";
+
         /// <summary>入換で経由する線路（"E線" など。直接なら null）。</summary>
         public string? ShuntVia { get; set; }
 
@@ -1763,8 +1770,10 @@ public sealed partial class RouteEngine
         var step = run.Dir.Step();
         foreach (var st in run.Stations.Where(s => !s.Done))
         {
-            // 最後尾が駅を抜けたら終わり
-            if ((run.Rear - st.Zone) * step > 0)
+            // 最後尾が駅を抜けたら終わり。終着の列車が、駅間に入れてあるその駅の回路（大道寺の X線）へ引き上げただけなら、まだ終わらない
+            // （上りで着いた列車が X線へ引き上げると、駅を抜けたことになり、X線から番線への入換を扱えなくなる）
+            if ((run.Rear - st.Zone) * step > 0
+                && !(st.Terminal && run.Player.TrackCircuits.Count > 0 && run.Player.TrackCircuits.All(c => c.StartsWith(st.St.Id + "_", StringComparison.Ordinal))))
             {
                 st.Done = true;
                 st.DoneUtc = now;
@@ -2182,7 +2191,23 @@ public sealed partial class RouteEngine
         // 終着の列車の入換（引上げ）
         var outs = ShuntOutOptions(run, st);
         for (var i = 0; i < outs.Count; i++) list.Add(($"shuntout:{i}", $"入換をする（{st.Track}番線→{outs[i].Label}）"));
+
+        // 引き上げた線（大道寺の X線）にいる終着の列車: その線から番線への入換
+        foreach (var sh in ShuntsFromHere(run, st))
+            list.Add(($"shuntfrom:{sh.To}", $"入換 {sh.FromLabel}→{sh.To}番線"));
         return list;
+    }
+
+    /// <summary>
+    /// 終着の列車が今いる線（引上げ先の X線など）から出る入換（上り・下りの shunt。行き先の番線ごとに最初のもの）。
+    /// 列車がその線にいなければ空。始発の入換（ShuntFrom。始発の列車が引上線などにいる）は、ManualOptions の始発の入換で出すので除く。
+    /// </summary>
+    private static List<ShuntDef> ShuntsFromHere(TrainRun run, StationRun st)
+    {
+        if (st.IsStart && st.ShuntFrom != null || !(st.Terminal || IsTurnbackTrack(run, st)) || run.Player.TrackCircuits.Count == 0) return [];
+        return st.St.Routes.Values.SelectMany(r => r.Shunts)
+            .Where(s => s.FromCircuit != null && s.Then is not { Count: > 0 } && s.Via == null && run.Player.TrackCircuits.Contains(s.FromCircuit))
+            .GroupBy(s => s.To).Select(g => g.First()).OrderBy(s => s.To).ToList();
     }
 
     /// <summary>
@@ -2235,6 +2260,10 @@ public sealed partial class RouteEngine
             case "shuntout" when track is { } idx && idx >= 0 && idx < ShuntOutOptions(run, st).Count:
                 // 入換をする: 連動の確認だけで開通させる（列車が番線に入りきる前でも要求できる）
                 (st.ShuntOutChoice, st.ShuntOut, st.ForceShuntOut) = (idx, GroupState.None, true);
+                return;
+            case "shuntfrom" when track is { } shTo && ShuntsFromHere(run, st).FirstOrDefault(s => s.To == shTo) is { } fromHere:
+                // 引き上げた線から番線への入換: 連動の確認だけで開通させる（Process）
+                (st.ManualShuntFrom, st.ManualShuntFromWait) = (fromHere, "");
                 return;
             default:
                 _log.Note($"駅扱い: {run.Train} {st.St.Name} の「{action}」は、この列車では使えません");
@@ -2710,6 +2739,25 @@ public sealed partial class RouteEngine
         if (!st.IsStart && st.ShuntOut == GroupState.Requested && st.ShuntThenPath is { Count: > 0 } outThen && st.ShuntThenAt is { } outAt
             && st.ShuntThen != GroupState.Requested)
             RequestThen(run, st, outThen, outAt, departure: true, occupied, now);
+
+        // 駅扱いの、引き上げた線（X線）から番線への入換。列車がその線を出ていれば取りやめる
+        if (st.ManualShuntFrom is { } msf)
+        {
+            if (msf.FromCircuit is not { } mfc || !run.Player.TrackCircuits.Contains(mfc)) st.ManualShuntFrom = null;
+            else if (InterlockConflict(run, msf.Routes, occupied) is { } msfWait)
+            {
+                ShuntWaitLog(now, run, st, "入換（駅扱い）", st.ManualShuntFromWait, msfWait);
+                st.ManualShuntFromWait = msfWait;
+            }
+            else
+            {
+                RouteLog(now, run, st, "入換（駅扱い）", msf.Routes);
+                foreach (var r in Enumerable.Reverse(msf.Routes))
+                    run.Requests.Add(new RouteReq { Def = r, Id = ++_seq, Station = st, Departure = true, RequestedUtc = now });
+                _log.Note($"入換: {run.Train} {st.St.Name} {msf.FromLabel}→{msf.To}番線（駅扱い。{string.Join("・", msf.Routes.Select(x => x.Name))}）");
+                (st.ManualShuntFrom, st.ManualShuntFromWait) = (null, "");
+            }
+        }
 
         // 前を走る同じ方向の列車がこの駅をまだ通っていないのに、後ろの自分が先に進路を取っていたら、譲る（まだ進路に入っていなければ取り消す）
         // 駅扱い（強制進路）で開通させた進路は譲らない
