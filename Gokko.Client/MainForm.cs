@@ -354,9 +354,11 @@ public sealed partial class MainForm : Form
         bottom.Controls.Add(_continueButton, showAllow ? 2 : 1, 0);
         routeLayout.Controls.Add(bottom);
         _routeTab.Controls.Add(routeLayout);
-        // 窓が低くて入りきらないときは、タブをスクロールする（進路の表と下のボタンがつぶれない高さを残す）
+        // 窓が低くて入りきらないときは、タブをスクロールする（進路の表と下のボタンがつぶれない高さを残す）。
+        // 最小の窓（480×560）でも下のボタン（出発要求・X線入換・継続乗務）が見えるよう、表のほうを縮める
+        // （250 にしていたときは、最小の窓でタブの見える高さが 205〜216 しかなく、下のボタンがスクロールしないと見えなかった）
         _routeTab.AutoScroll = true;
-        _routeTab.AutoScrollMinSize = new Size(0, 250);
+        _routeTab.AutoScrollMinSize = new Size(0, 170);
 
         _tabs.TabPages.Add(incidentPage);
         _tabs.TabPages.Add(_routeTab);
@@ -1078,6 +1080,9 @@ public sealed partial class MainForm : Form
             if (shuntLabel != null)
             {
                 _shuntButton.Text = shuntLabel;
+                // 文字が入りきる幅にする（高 DPI で文字が大きいと 130 に入らないことがある）。出発要求のぶん（60）は残す
+                var width = Math.Max(130, TextRenderer.MeasureText(shuntLabel, _shuntButton.Font).Width + 20);
+                _shuntButton.Width = Math.Min(width, Math.Max(130, (_shuntButton.Parent?.Width ?? width + 60) - 60));
                 _shuntButton.Enabled = state?.ShuntButtonEnabled == true;
                 _shuntButton.BackColor = _shuntButton.Enabled ? Color.DarkOrange : SystemColors.Control;
                 _shuntButton.ForeColor = _shuntButton.Enabled ? Color.White : SystemColors.GrayText;

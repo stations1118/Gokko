@@ -403,7 +403,7 @@ public sealed class PlayerRegistry(GameData data, CentralControl central)
             if (p.ShuntMove == ShuntMoveState.Moving && ShuntSpotOf(p.ShuntSpot) is { } moving)
                 return new ShuntButton($"{moving.Name}停車中", p.InGame && p.TrackCircuits.Contains(moving.Circuit));
             if (p.ShuntMove == ShuntMoveState.Leaving && ShuntSpotOf(p.ShuntSpot) is { } leaving)
-                return new ShuntButton($"{leaving.Name}入換を取消", true);
+                return new ShuntButton($"{leaving.Name}入換取消", true);
             if (p.InGame && p.TrainNumber.Length > 0 && p.AppearReason == null && p.CoupledInto == null && ShuntSpotAt(p) is { } here)
                 return new ShuntButton($"{here.Name}入換", Math.Abs(p.ReportedSpeed) < 1);
             return null;
