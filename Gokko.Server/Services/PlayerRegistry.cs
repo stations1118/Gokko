@@ -32,7 +32,7 @@ public sealed class PlayerInfo
 
     // ---- 在線共有モード ----
     public ShareMode Mode { get; set; }
-    /// <summary>車両ごとの形式（運転士のクライアントが送る。列車位置案内の編成に出す）。</summary>
+    /// <summary>車両ごとの形式（運転士のクライアントが送る。列車走行位置の編成に出す）。</summary>
     public string[] CarModels { get; set; } = [];
     /// <summary>編成平均乗車率（%、表示用の丸め前）。取得できないときは null。</summary>
     public decimal? AverageOccupancy { get; set; }

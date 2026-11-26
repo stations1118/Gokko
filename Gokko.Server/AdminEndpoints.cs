@@ -230,7 +230,7 @@ public static class AdminEndpoints
         });
         dia.MapGet("/load", (ServerLoad load) => Results.Ok(load.View())); // サーバーの負荷（見るだけ）
 
-        // 列車位置案内（passenger.html。お客様向け）。見るだけで、合言葉なしで誰でも見られる。信号場の発車案内は出さない
+        // 列車走行位置（passenger.html。お客様向け）。見るだけで、合言葉なしで誰でも見られる。信号場の発車案内は出さない
         app.MapGet("/api/passenger/train", (string train, RouteEngine engine) =>
             engine.PassengerTrain(train) is { } info ? Results.Ok(info) : Results.NotFound());
         app.MapGet("/api/passenger/positions", (RouteEngine engine, ResponseCache cache) =>

@@ -1232,8 +1232,8 @@ public sealed partial class MainForm : Form
         {
             if (game.InGame && _role == CrewRole.Driver)
             {
-                report.CarModels = _crewPanel?.CarModels.ToArray() ?? []; // 列車位置案内の編成
-                report.AverageOccupancy = _crewPanel?.AverageOccupancyPercent(); // 列車位置案内の乗車率
+                report.CarModels = _crewPanel?.CarModels.ToArray() ?? []; // 列車走行位置の編成
+                report.AverageOccupancy = _crewPanel?.AverageOccupancyPercent(); // 列車走行位置の乗車率
             }
             report.Stops = game.Stops;
             report.TraveledDistance = game.TraveledDistance;

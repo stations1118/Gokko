@@ -382,7 +382,7 @@ public sealed class CentralControl(GameClock clock)
     }
 
     /// <summary>
-    /// 列車位置案内（お客様向け）の「運転整理中」の印を付ける列車: 出発順序・走行順・番線・抑止・開通指示・臨時停車などの指示が出ている列車。
+    /// 列車走行位置（お客様向け）の「運転整理中」の印を付ける列車: 出発順序・走行順・番線・抑止・開通指示・臨時停車などの指示が出ている列車。
     /// </summary>
     public HashSet<string> PassengerAdvisoryTrains()
     {

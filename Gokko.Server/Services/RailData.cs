@@ -183,7 +183,7 @@ public sealed class DiaTrain
     /// <summary>種別表記（C特1・A特・急行 など）。出発信号機の列選に出す。</summary>
     public required string TypeLabel { get; init; }
 
-    /// <summary>時刻表に書かれた行き先（大道寺・江原検 など）。列車位置案内に出す。書かれていなければ空。</summary>
+    /// <summary>時刻表に書かれた行き先（大道寺・江原検 など）。列車走行位置に出す。書かれていなければ空。</summary>
     public string Dest { get; set; } = "";
 
     /// <summary>進路を扱う駅で終わるなら、その駅（江原検 → 江ノ原信号場）。路線の外で終わるなら null。</summary>
