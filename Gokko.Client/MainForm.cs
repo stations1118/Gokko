@@ -244,6 +244,11 @@ public sealed partial class MainForm : Form
                 ShowMessage("運転士のキーを保存しました（押すと、乗っている車掌のゲームでも同じボタンを押します）");
             };
             buttons.Controls.Add(driverKeys);
+
+            // 運転台の車掌スイッチ（自分のゲームのドア・ブザーを扱う。ワンマンや、運転台側からドアを扱うとき）
+            var driverPanel = new Button { Size = new Size(110, 30), Margin = new Padding(8, 3, 0, 3), Text = "車掌スイッチ" };
+            driverPanel.Click += (_, _) => _crewPanel.ToggleDriverPanel();
+            buttons.Controls.Add(driverPanel);
         }
 
         AddWide(buttons, SizeType.Absolute, 40);

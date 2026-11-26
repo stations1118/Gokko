@@ -38,6 +38,12 @@ public sealed class StopTarget
     /// <summary>その番線に入る場内信号機（R でなければ、この番線に入る進路が開いている）。</summary>
     public List<string> ArriveSignals { get; set; } = new();
 
+    /// <summary>
+    /// その番線に入るときの制限速度の変わり目（ゲームの自動運転でその番線に入った記録から。なければ空）。
+    /// ゲームの制限はシナリオの番線の進路のものなので、違う番線に入るときはこちらを使う。
+    /// </summary>
+    public List<StopTargetLimit> Limits { get; set; } = new();
+
     /// <summary>その両数で止まる停目の、6両停目から手前への距離（m）。停目の表がなければ 0。</summary>
     public double OffsetFor(int cars)
     {
@@ -45,6 +51,13 @@ public sealed class StopTarget
         var fit = Markers.Where(m => m.Cars >= cars).OrderBy(m => m.Cars).ThenBy(m => m.Offset).FirstOrDefault();
         return (fit ?? Markers.OrderBy(m => m.Offset).First()).Offset;
     }
+}
+
+/// <summary>制限速度の変わり目（6両停目から Before m 手前で Kmh になる。先はマイナス）。</summary>
+public sealed class StopTargetLimit
+{
+    public double Before { get; set; }
+    public double Kmh { get; set; }
 }
 
 /// <summary>停目1つ（Cars 両停目が、6両停目から Offset m 手前にある）。</summary>

@@ -33,7 +33,7 @@ public enum StopDistanceKind { None, Rough, Confirmed }
 /// そこまでの距離（200m より遠くても、見えていれば入る。見えなければ null）。
 /// </summary>
 public sealed record StopDistanceResult(double Remaining, StopDistanceKind Kind, string Station, string Track, string ScenarioTrack,
-    double Rough = 0, string? Signal = null, double? SignalDistance = null)
+    double Rough = 0, string? Signal = null, double? SignalDistance = null, string Dir = "")
 {
     public static readonly StopDistanceResult Nothing = new(0, StopDistanceKind.None, "", "", "");
 }
@@ -157,13 +157,13 @@ public sealed partial class StopDistance
             var sixCar = actual.After is { } after ? signal.Distance + after : signal.Distance - (actual.Before ?? 0);
             var confirmed = sixCar - actual.OffsetFor(x.Cars);
             _confirmed = (index, track, confirmed + x.Traveled);
-            return new StopDistanceResult(confirmed, StopDistanceKind.Confirmed, station, track, scenarioTrack, rough, signal.Name, signal.Distance);
+            return new StopDistanceResult(confirmed, StopDistanceKind.Confirmed, station, track, scenarioTrack, rough, signal.Name, signal.Distance, dir);
         }
         // 一度信号機から出せた駅・番線は、信号機が見えなくなっても（場内を過ぎた、ゲームの信号機の知らせが途切れた）走った距離で数え続ける
         if (_confirmed is { } c && c.Index == index && c.Track == track)
-            return new StopDistanceResult(c.At - x.Traveled, StopDistanceKind.Confirmed, station, track, scenarioTrack, rough, signal?.Name, signal?.Distance);
+            return new StopDistanceResult(c.At - x.Traveled, StopDistanceKind.Confirmed, station, track, scenarioTrack, rough, signal?.Name, signal?.Distance, dir);
 
-        return new StopDistanceResult(rough, StopDistanceKind.Rough, station, track, scenarioTrack, rough, signal?.Name, signal?.Distance);
+        return new StopDistanceResult(rough, StopDistanceKind.Rough, station, track, scenarioTrack, rough, signal?.Name, signal?.Distance, dir);
     }
 
     /// <summary>実際に入る（入った）番線。自列車の軌道回路 → 開いている場内信号機 → シナリオの番線 の順に見る。</summary>
@@ -183,6 +183,19 @@ public sealed partial class StopDistance
     }
 
     /// <summary>その駅・番線の行。番線の行がなければ、番線のない行。</summary>
+    /// <summary>
+    /// 入る番線とシナリオの番線の、制限速度の変わり目（自列車からの距離 m・km/h）。r は今の残り（<see cref="Update"/> の結果）。
+    /// 番線がシナリオと同じ・どちらかの記録がないときは null（ゲームの制限をそのまま使う）。距離は6両停目を目印にする（シナリオの番線も同じ目印で見る）。
+    /// </summary>
+    public (List<(double Dist, double Kmh)> Actual, List<(double Dist, double Kmh)> Scenario)? RouteLimits(StopDistanceResult r, int cars)
+    {
+        if (r.Kind == StopDistanceKind.None || r.Track == r.ScenarioTrack || r.Track.Length == 0) return null;
+        if (Find(r.Dir, r.Station, r.Track) is not { Limits.Count: > 0 } actual || actual.Track != r.Track) return null;
+        if (Find(r.Dir, r.Station, r.ScenarioTrack) is not { Limits.Count: > 0 } scenario || scenario.Track != r.ScenarioTrack) return null;
+        var six = r.Remaining + actual.OffsetFor(cars); // 6両停目までの残り
+        return (actual.Limits.Select(l => (six - l.Before, l.Kmh)).ToList(), scenario.Limits.Select(l => (six - l.Before, l.Kmh)).ToList());
+    }
+
     private StopTarget? Find(string dir, string station, string track) =>
         track.Length > 0 && _rows.TryGetValue((dir, station, track), out var row) ? row
         : _rows.TryGetValue((dir, station, ""), out var any) ? any : null;

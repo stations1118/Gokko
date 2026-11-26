@@ -283,9 +283,26 @@ public sealed class CrewController
     // 車掌用操作盤
     // =====================================================================================
 
+    /// <summary>
+    /// 運転士: 運転台の車掌スイッチ（車掌用操作盤）を出す・閉じる。扱うのは自分のゲームだけ（車掌のゲームへは送らない）。
+    /// キーは割り当てない（運転のキーとぶつからないように）。
+    /// </summary>
+    public void ToggleDriverPanel()
+    {
+        if (_role != CrewRole.Driver) return;
+        if (_panel != null)
+        {
+            ClosePanel();
+            return;
+        }
+
+        ShowPanel();
+    }
+
     private void ShowPanel()
     {
         if (_panel != null) return;
+        var driver = _role == CrewRole.Driver;
         // 前の既定値（D で左の開など。WASD 移動とぶつかる）のままのキーは、1 度だけ今の既定値（数字 2〜0）に移す（自分で変えたキーは残す）
         if (!_config.ConductorKeysMoved)
         {
@@ -299,6 +316,7 @@ public sealed class CrewController
         var keys = new Dictionary<string, Keys>();
         foreach (var (name, text) in _config.ConductorKeys)
             if (Enum.TryParse<Keys>(text, out var k)) keys[name] = k;
+        if (driver) keys = ConductorPanelForm.DefaultKeys.Keys.ToDictionary(k => k, _ => Keys.None); // 運転士はキーで扱わない
         _panel = new ConductorPanelForm(keys);
         _panel.DoorAction += OnPanelDoor;
         _panel.SetCatchUpMode(CatchUpModeText(CatchUpMode));
@@ -335,7 +353,14 @@ public sealed class CrewController
             UpdateLocalBuzzer(); // 押している間だけ鳴る（自分のゲームにも）
             SendConductor("");
         };
-        _panel.KeysChanged += keys =>
+        if (driver)
+        {
+            _panel.AllowClose = true; // 運転士は閉じるボタンで閉じられる
+            var shown = _panel;
+            _panel.FormClosed += (_, _) => { if (ReferenceEquals(_panel, shown)) ClosePanel(closed: true); };
+            _panel.SetLink("運転台の車掌スイッチ", "自分のゲームのドア・ブザーを扱います", true);
+        }
+        else _panel.KeysChanged += keys =>
         {
             _config.ConductorKeys = keys.ToDictionary(kv => kv.Key, kv => kv.Value.ToString());
             _config.Save();
@@ -346,7 +371,8 @@ public sealed class CrewController
         _panel.Show();
     }
 
-    private void ClosePanel()
+    /// <summary>操作盤を閉じる。closed は、窓がもう閉じられた（運転士が閉じるボタンで閉じた）とき。</summary>
+    private void ClosePanel(bool closed = false)
     {
         if (_panel == null) return;
         var r = _panel.SavedBounds; // 次に出すときも同じ位置・大きさにする
@@ -356,10 +382,12 @@ public sealed class CrewController
         if (_emergency) _tci.SetAtoNotch(0);
         if (_localBuzzerOn) _tci.SetButton("Buzzer", false);
         _emergency = _reOpen = _joukou = _buzzer = _gameBuzzer = _localBuzzerOn = false;
-        _panel.AllowClose = true;
-        _panel.Close();
-        _panel.Dispose();
+        var panel = _panel;
         _panel = null;
+        if (closed) return;
+        panel.AllowClose = true;
+        panel.Close();
+        panel.Dispose();
     }
 
     private void OnPanelDoor(string action)
@@ -431,6 +459,7 @@ public sealed class CrewController
     private void DriverTick(TciState? s)
     {
         var now = Environment.TickCount64;
+        if (s is { InGame: true }) _panel?.SyncDoors(s.AllClose, s.DoorSide); // 運転台の車掌スイッチの絵をゲームのドアに合わせる
         if (s is { InGame: true, IsDriver: true } && _tci.LastRaw is { } raw)
         {
             var signals = _tci.Signals();
@@ -841,7 +870,7 @@ public sealed class CrewController
 
         var signals = _tci.Signals();
         var stop = UpdateStop(s, raw, signals);
-        var (power, brake) = _auto.Step(s, raw, signals, stop, departSignal, _emergency, now);
+        var (power, brake) = _auto.Step(s, raw, signals, stop, departSignal, _emergency, now, _stopDistance.RouteLimits(stop, raw.CarStates?.Count ?? 0));
         Record("auto", s, raw, stop, signals, _auto.Gain, _auto.StopOffset, now);
         _tci.SetReverser(1, resend);
         _tci.SetNotch(power, brake, resend);
@@ -877,6 +906,7 @@ public sealed class CrewController
 
     private void SendConductor(string action, bool? allClose = null)
     {
+        if (_role != CrewRole.Conductor) return; // 運転士の運転台の車掌スイッチは、自分のゲームだけを扱う
         _crew.SendConductorInput(new ConductorInput
         {
             Action = action, AllClose = allClose ?? _ownAllClose ?? true, Emergency = _emergency, ReOpen = _reOpen, Joukou = _joukou,
