@@ -43,6 +43,9 @@ public sealed class CrewRelay(IHubContext<CrewHub> hub, ILogger<CrewRelay> logge
 
     public bool IsConductor(string connectionId) => _conductors.ContainsKey(connectionId);
 
+    /// <summary>車掌の社員番号（車掌でなければ null）。</summary>
+    public string? ConductorCrew(string connectionId) => _conductors.TryGetValue(connectionId, out var c) ? c.CrewId : null;
+
     public void UpdateConductor(string connectionId, ClientReport report)
     {
         if (!_conductors.TryGetValue(connectionId, out var c)) return;

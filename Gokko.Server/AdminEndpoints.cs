@@ -554,6 +554,10 @@ public static class AdminEndpoints
             crew.UnlinkDiscord(req.Id) is { } err ? Results.BadRequest(new { message = err }) : Results.Ok(new { ok = true }));
         // 停止位置目標（Data/StopMarkers.*.csv）を読んだ中身を確かめる。
         // 何も付けなければ全部と読んだときのおかしな所。station と cars を付けると、その駅・番線・向きでその両数が止まる停目（dir は up・down、track は 1・X・引上 など）
+        // ランカーブ（1駅間の走り方の記録）を、日・利用者・形式・駅・自動/手動で選んで返す。points=true で行も含める
+        admin.MapGet("/run-curves", (RunCurves runs, string? date, string? crew, string? model, string? station, string? mode, bool? points, int? limit) =>
+            Results.Ok(runs.Find(date, crew, model, station, mode, points == true, Math.Clamp(limit ?? 500, 1, 5000))));
+
         admin.MapGet("/stop-markers", (StopMarkers markers, string? station, string? dir, string? track, int? cars) =>
         {
             static object View(StopMarkers.Entry e) => new
