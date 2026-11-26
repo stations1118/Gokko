@@ -790,7 +790,8 @@
 
   let polling = false; const poll = async () => { if (polling) return; polling = true; try { await refresh(); } finally { polling = false; } }; // 前の読み込みが終わっていなければ重ねて投げない（サーバーが遅いとき、要求が積み重なって配信まで詰まるため）
   poll();
-  setInterval(poll, 1000);
+  setInterval(() => { if (!document.hidden) poll(); }, 1000); // タブが裏にある間は読まない
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); }); // 見える所に戻ったら、すぐ読む
 })();
 </script>
 </body>

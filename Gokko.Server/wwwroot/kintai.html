@@ -655,7 +655,8 @@
   $("trainFilter").oninput = draw;
   showTab();
   GokkoClock.ready.finally(refresh); // ロープレ時刻を読んでから
-  setInterval(refresh, 3000);
+  setInterval(() => { if (!document.hidden) refresh(); }, 3000); // タブが裏にある間は読まない
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); }); // 見える所に戻ったら、すぐ読む
 </script>
 </body>
 </html>

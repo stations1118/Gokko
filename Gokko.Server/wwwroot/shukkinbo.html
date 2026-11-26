@@ -142,7 +142,8 @@
     $("dutySum").dataset.html = ""; refresh();
   });
   refresh();
-  setInterval(refresh, 5000);
+  setInterval(() => { if (!document.hidden) refresh(); }, 5000); // タブが裏にある間は読まない
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); }); // 見える所に戻ったら、すぐ読む
 </script>
 </body>
 </html>

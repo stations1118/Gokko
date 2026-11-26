@@ -196,23 +196,23 @@
   }
 
 
-  // ---- ロープレ時刻（管理画面と同じ操作。状態は /api/clock から読む） ----
+  // ---- ロープレ時刻（管理画面と同じ操作。状態は gameclock.js が5秒ごとに /api/clock から読んだもの。ここでは読み直さない） ----
   let clockRunning = null, pausedSec = null;
-  async function readClock() {
-    try {
-      const c = await (await fetch("/api/clock", { cache: "no-store" })).json();
-      clockRunning = c.running;
-      pausedSec = !c.running && c.daySec != null ? Math.floor(c.daySec) : null; // 止めているときは、止めた時刻のまま出す
-    } catch (e) {}
+  function readClock() {
+    const c = GokkoClock.raw();
+    if (!c) return; // まだ読めていない・読めなかったときは、前のまま
+    clockRunning = c.running;
+    pausedSec = !c.running && c.daySec != null ? Math.floor(c.daySec) : null; // 止めているときは、止めた時刻のまま出す
   }
   const hms = (s) => [Math.floor(s / 3600), Math.floor(s / 60) % 60, s % 60].map((n) => String(n).padStart(2, "0")).join(":");
   function drawClock() {
+    readClock();
     $("gameTime").textContent = !GokkoClock.isSet() ? "--:--:--" : pausedSec != null ? hms(pausedSec) : GokkoClock.fmt(GokkoClock.now(), true);
     $("clockState").textContent = GokkoClock.isSet() ? (clockRunning ? "進行中" : "停止中") : "未設定";
   }
   async function clockAct(body) {
     await act("POST", "/clock", body);
-    await Promise.all([GokkoClock.sync(), readClock()]);
+    await GokkoClock.sync();
     drawClock();
   }
   $("clockSet").onclick = () => {
@@ -228,8 +228,7 @@
   };
   $("clockPause").onclick = () => clockAct({ running: false });
   $("clockResume").onclick = () => clockAct({ running: true });
-  Promise.all([GokkoClock.ready, readClock()]).then(() => { drawClock(); setInterval(drawClock, 250); });
-  setInterval(readClock, 5000);
+  GokkoClock.ready.then(() => { drawClock(); setInterval(drawClock, 250); });
 
   // ---- ダイヤグラム・順序・進路を取る順番・列車別設定・継続乗務申請・駅の扱い・自動退避設定（diapanel.js の共通部品。管理画面と同じ） ----
   const orders = GokkoDia.orderEditor({ el: $("orders"), act });
@@ -330,7 +329,9 @@
   async function refresh() {
     if (!key && !crewToken) { $("conn").textContent = "合言葉を入力してください（司令員は、乗務メニューでログインしてから開いてください）"; $("conn").className = "status muted"; return; }
     try {
-      renderDiagram(await api("GET", "/diagram"));
+      const diagram = await api("GET", "/diagram");
+      window.gokkoDiagram = { at: Date.now(), data: diagram }; // 埋め込んだダイヤグラムが、同じ答えをもう一度読まないように渡す
+      renderDiagram(diagram);
       const trains = (await api("GET", "/trains")).trains;
       trainSettings.update(trains);
       manual.update(trains);
