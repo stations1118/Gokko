@@ -51,6 +51,12 @@ public sealed class JoinResult
 /// <summary>クライアントからサーバーへ、0.5秒ごとに送る自分の状態。</summary>
 public sealed class ClientReport
 {
+    /// <summary>
+    /// 車掌が自動運転で運転している（運転士のいない列車）。サーバーはその間だけ、この車掌を運転士と同じに在線に数える
+    /// （進路・信号・自動運転列車の引き継ぎがふつうの運転士と同じに動く）。
+    /// </summary>
+    public bool AutoDriving { get; set; }
+
     /// <summary>列車番号（入力欄の値。空ならゲームのダイヤ名）。</summary>
     public string TrainNumber { get; set; } = "";
 

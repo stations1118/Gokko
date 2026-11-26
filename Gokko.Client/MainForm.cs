@@ -1223,6 +1223,7 @@ public sealed partial class MainForm : Form
             ContinueDuty = shared && _continueButton.Checked,
             TrainNumberTyped = _confirmedTrain.Length > 0, // 入力欄の列番か（ダイヤ運転中は手入力が要る）
             Passenger = _role == CrewRole.Rider && _config.Passenger,
+            AutoDriving = _role == CrewRole.Conductor && _crewPanel?.AutoDriving == true,
             Link = _link.Health
         };
         if (shared && gameConnected && game != null)
