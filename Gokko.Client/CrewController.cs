@@ -740,6 +740,9 @@ public sealed class CrewController
     private int _autoPower = int.MinValue, _autoBrake = int.MinValue; // 前の周期に送ったノッチ
     private long _autoMismatchMs; // ゲームのノッチが、送ったノッチと違い始めた時刻（0 なら同じ）
 
+    /// <summary>自動運転が入っているか（サーバーへの報告に載せる。その間はサーバーが運転士と同じに数える）。</summary>
+    public bool AutoDriving => _auto != null;
+
     /// <summary>［自動運転］: 入・切。入れられるのは運転士がいないときだけ。</summary>
     private void ToggleAuto()
     {

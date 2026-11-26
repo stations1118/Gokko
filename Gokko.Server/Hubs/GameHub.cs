@@ -113,6 +113,27 @@ public sealed partial class GameHub(
         if (relay.IsConductor(Context.ConnectionId))
         {
             relay.UpdateConductor(Context.ConnectionId, report);
+            // 自動運転の車掌（同じ列番に運転士がいないとき）: その間だけ運転士と同じに在線に数える（進路・信号・自動運転列車の引き継ぎ）
+            var conn = Context.ConnectionId;
+            var train = (report.TrainNumber ?? "").Trim();
+            var drives = report.AutoDriving && train.Length > 0 && !players.SnapshotWithoutVirtualTrains().Any(p => p.ConnectionId != conn && p.TrainNumber == train);
+            if (drives)
+            {
+                if (!players.IsJoined(conn))
+                {
+                    players.Add(conn, ShareMode.Shared, relay.ConductorCrew(conn) ?? "");
+                    logger.LogInformation("自動運転 {ConnectionId}（車掌が {Train} を運転）", conn, train);
+                }
+                players.ApplyReport(conn, report);
+                broadcaster.Trigger();
+            }
+            else if (players.IsJoined(conn))
+            {
+                players.Remove(conn);
+                radio.Remove(conn);
+                logger.LogInformation("自動運転おわり {ConnectionId}（車掌に戻る）", conn);
+                broadcaster.Trigger();
+            }
             return true;
         }
 
@@ -167,7 +188,8 @@ public sealed partial class GameHub(
     [HubMethodName(Protocol.RequestDeparture)]
     public string RequestDeparture()
     {
-        if (relay.IsConductor(Context.ConnectionId) || relay.IsRider(Context.ConnectionId)) return "出発要求は運転士が出します";
+        // 車掌・添乗は出せない（自動運転の車掌は運転士と同じに在線に数えているので出せる）
+        if ((relay.IsConductor(Context.ConnectionId) && !players.IsJoined(Context.ConnectionId)) || relay.IsRider(Context.ConnectionId)) return "出発要求は運転士が出します";
         var message = routes.RequestDeparture(Context.ConnectionId);
         broadcaster.Trigger();
         return message;
@@ -191,7 +213,8 @@ public sealed partial class GameHub(
     [HubMethodName(Protocol.RouteResult)]
     public void RouteResult(string message)
     {
-        if (relay.IsConductor(Context.ConnectionId) || relay.IsRider(Context.ConnectionId)) return; // 車掌・添乗のゲームの返事は、運転士の進路の判断に混ぜない
+        // 車掌・添乗のゲームの返事は、運転士の進路の判断に混ぜない（自動運転の車掌は運転士と同じに数えているので混ぜる）
+        if ((relay.IsConductor(Context.ConnectionId) && !players.IsJoined(Context.ConnectionId)) || relay.IsRider(Context.ConnectionId)) return;
         if (!string.IsNullOrEmpty(message) && message.Length < 200) routes.ReportResult(Context.ConnectionId, message);
     }
 

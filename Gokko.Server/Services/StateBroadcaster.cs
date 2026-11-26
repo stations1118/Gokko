@@ -126,7 +126,7 @@ public sealed class StateBroadcaster : BackgroundService
         var prepStarted = System.Diagnostics.Stopwatch.GetTimestamp(); // 内訳の記録（どこが重いかを見るため。RecordParts）
         var players = _players.Snapshot();
         _occupancy.Record(players); // 在線の記録（変わった列車だけ logs/occupancy-*.log へ）
-        var conductors = _crew.Conductors();
+        var conductors = _crew.Conductors().Where(c => !_players.IsJoined(c.ConnectionId)).ToList(); // 自動運転の車掌は運転士と同じに送る（下の運転士の配信）
         var riders = _crew.Riders();
         var dispatchers = _trainRadio.Dispatchers();
         // 接続している人の数: 運転士・車掌・司令員（にぎやかしの列車・継続乗務の在線は数えない）
