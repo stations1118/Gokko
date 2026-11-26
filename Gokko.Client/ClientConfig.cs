@@ -102,6 +102,9 @@ public sealed class ClientConfig
     /// <summary>乗務タブレットの窓を、いつも最前面に出すか。</summary>
     public bool TabletTopMost { get; set; } = true;
 
+    /// <summary>乗務タブレットの窓の拡大率（1.0 = 100%）。</summary>
+    public double TabletZoom { get; set; } = 1.0;
+
     /// <summary>ロープレ時計の窓の位置と大きさ（"x,y,幅,高さ"）。空なら画面の右上に出す。</summary>
     public string ClockBounds { get; set; } = "";
 
