@@ -2680,7 +2680,9 @@ public sealed partial class RouteEngine
                 arriveWait = $"待避線ふさがり（{lu.Train}）";
         }
 
-        st.OrderWaiting = st.DepartPath.Count > 0 && st.Depart != GroupState.Requested && OrderHold(run, st, st.DepartPath) != null;
+        // 出発順序待ちの判断は、下の出発の判断でも使う（同じ判断を2回しない）
+        var orderHold = st.DepartPath.Count > 0 && st.Depart != GroupState.Requested ? OrderHold(run, st, st.DepartPath) : null;
+        st.OrderWaiting = orderHold != null;
 
         // 出発（場内より先に送る）。場内を開通できない（先行列車が番線にいるなど）うちは、出発も要求しない
         st.DepartBlocked = false;
@@ -2697,7 +2699,7 @@ public sealed partial class RouteEngine
             else if (needArrive && arriveWait != null && !DepartBeforeArrive(st)) wait = $"場内待ち（{arriveWait}）";
             else if (st.CouplePartner != null || st.CoupleWaiting != null) wait = "連結待ち";
             else if (needArrive && LeadsToSingleTrack(run, st)) wait = "単線区間のため、場内の開通後に判断";
-            else if (OrderHold(run, st, st.DepartPath) is { } ow) wait = ow;
+            else if (orderHold is { } ow) wait = ow;
             else wait = PassingHold(run, st, now)
                         ?? DepartStopHold(run, st, needArrive)
                         ?? LoopDwellHold(run, st, now)
@@ -2939,7 +2941,25 @@ public sealed partial class RouteEngine
     private DiaTrain? SplitOriginOf(string train)
     {
         if (train.StartsWith("解")) return _data.DiaOf(train);
-        return _data.Dia.Values.FirstOrDefault(d => d.Number.StartsWith("解") && _data.Turns.TurnOf(d) is { Number: { } n } && n == train);
+        return SplitSuccessors().GetValueOrDefault(train);
+    }
+
+    // 「解」の列車の後運用の逆引き（後運用の列番 → その「解」のダイヤ）。番線で待つ列車ごとに毎周期、全ダイヤを調べ直さないよう、
+    // ダイヤ（臨時列車の足し外し）か後運用の差し替えが変わったときだけ作り直す（TurnPredecessors と同じ）
+    private (Dictionary<string, DiaTrain>? Dia, int Version, Dictionary<string, DiaTrain> Map) _splitSuccessors = (null, -1, new());
+
+    private Dictionary<string, DiaTrain> SplitSuccessors()
+    {
+        var dia = _data.Dia;
+        var version = _data.Turns.Version;
+        var cache = _splitSuccessors;
+        if (ReferenceEquals(cache.Dia, dia) && cache.Version == version) return cache.Map;
+        var map = new Dictionary<string, DiaTrain>();
+        foreach (var d in dia.Values)
+            if (d.Number.StartsWith("解") && _data.Turns.TurnOf(d) is { Number: { } n })
+                map.TryAdd(n, d); // 同じ後運用の「解」が2本あれば、ダイヤに書かれた順で先のもの
+        _splitSuccessors = (dia, version, map);
+        return map;
     }
 
     /// <summary>

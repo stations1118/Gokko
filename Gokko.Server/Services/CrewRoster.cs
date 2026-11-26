@@ -1441,6 +1441,14 @@ public sealed class CrewRoster
         lock (_lock) return _attend.TryGetValue(id, out var t) ? t : null;
     }
 
+    /// <summary>出勤している人が持っている行路の番号（担当と臨変。並びは決まっていない・重なりあり）。</summary>
+    public List<string> AttendedDuties()
+    {
+        lock (_lock)
+            return _assign.Where(x => _attend.ContainsKey(x.Value)).Select(x => x.Key)
+                .Concat(_extras.Where(x => _attend.ContainsKey(x.User)).Select(x => x.Duty)).ToList();
+    }
+
     /// <summary>出勤している人（社員番号 → 出勤した時刻 UTC。社員番号の順）。</summary>
     public Dictionary<string, DateTime> Attended()
     {
