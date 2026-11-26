@@ -39,6 +39,8 @@ public sealed class RunCurve
     public List<string> StopCircuits { get; set; } = new();
     /// <summary>自動運転だけ: 覚えたブレーキの効き方（実際の減速度 ÷ 目安）。人の運転は 0。</summary>
     public double Gain { get; set; }
+    /// <summary>自動運転だけ: 停目までの残りに足した、駅ごとの補正（m。BrakeProfileTable の Stops から）。集計で、補正なしのずれに戻すのに使う。</summary>
+    public double StopOffset { get; set; }
     public List<RunPoint> Points { get; set; } = new();
 }
 

@@ -674,7 +674,7 @@ public sealed partial class RouteEngine
         public required Dir Dir { get; init; }
 
         /// <summary>ダイヤにある列車なら、その列車（番線・停車・終着・列選の基本）。なければ種別ごとの所定で作る。</summary>
-        public DiaTrain? Dia { get; init; }
+        public DiaTrain? Dia { get; set; }
 
         /// <summary>出発信号機の列選に出す文字（ダイヤの種別表記から）。空ならクライアントがゲームの種別から作る。</summary>
         public string Indicator { get; init; } = "";
@@ -958,6 +958,12 @@ public sealed partial class RouteEngine
                     Dia = dia, Indicator = dia != null ? IndicatorOf(dia.TypeLabel) : ""
                 };
             }
+
+            // 臨時停車で時刻を変えた・戻した列車は、新しい時刻の表を読む（停車駅の一覧はそのまま。時刻だけ変わる）
+            var diaNow = _data.Dia;
+            foreach (var run in _runs.Values)
+                if (run.Dia is { } rd && diaNow.TryGetValue(rd.Number, out var cur) && !ReferenceEquals(cur, rd))
+                    run.Dia = cur;
 
             foreach (var run in _runs.Values) UpdatePosition(run);
 
@@ -4831,7 +4837,7 @@ public sealed partial class RouteEngine
                     name = s.Name,
                     control,
                     stop = special ? "臨停" : s.Stop,
-                    arr = special ? null : s.Arr,
+                    arr = s.Arr, // 臨時停車用に時刻を変えた列車は、臨時停車の駅にも着が書いてある
                     dep = special ? s.Dep ?? s.Arr : s.Dep,
                     track = s.Track ?? (s.StationId != null && dia.Stations.TryGetValue(s.StationId, out var ds) ? ds.Track : null),
                     note = s.Note ?? "",

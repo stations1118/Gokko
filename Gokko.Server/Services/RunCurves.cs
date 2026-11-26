@@ -106,6 +106,26 @@ public sealed class RunCurves(ILogger<RunCurves>? logger = null)
         return result;
     }
 
+    /// <summary>この何日かのランカーブを、古い日から順に読む（集計用。管理用の API から呼ばれたときだけ）。</summary>
+    public IEnumerable<(string Crew, RunCurve Curve)> ReadDays(int days)
+    {
+        var today = DateTime.Now.Date;
+        for (var d = Math.Clamp(days, 1, DailyLog.KeepDays) - 1; d >= 0; d--)
+        {
+            var path = Path.Combine(AppContext.BaseDirectory, "logs", $"runcurve-{today.AddDays(-d):yyyyMMdd}.log");
+            if (!File.Exists(path)) continue;
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = new StreamReader(stream);
+            while (reader.ReadLine() is { } line)
+            {
+                RunCurveRecord? r;
+                try { r = JsonSerializer.Deserialize<RunCurveRecord>(line, Json); }
+                catch (JsonException) { continue; }
+                if (r?.Curve is { } c) yield return (r.Crew, c);
+            }
+        }
+    }
+
     private sealed class RunCurveRecord
     {
         public string Crew { get; set; } = "";

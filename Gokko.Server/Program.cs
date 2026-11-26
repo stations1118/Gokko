@@ -41,6 +41,7 @@ builder.Services.AddSingleton<SignalCalculator>();
 builder.Services.AddSingleton<CentralControl>();
 builder.Services.AddSingleton<TokuhatsuRinji>(); // 特発臨（運転整理のために司令員がその場で立てる臨時列車。メモリだけ）
 builder.Services.AddSingleton<EventStops>(); // 催物用臨停設定（司令用管理画面。再起動で消える）
+builder.Services.AddSingleton(sp => new TempStopRetime(dataDir, rail, sp.GetRequiredService<CentralControl>(), sp.GetRequiredService<EventStops>(), sp.GetService<ILogger<TempStopRetime>>())); // 浜園の特急の臨時停車の時刻（Data/TempStopRetime.json）
 builder.Services.AddSingleton<ConnectionTable>(); // 接続待ちの組（ダイヤの「(接)」から）
 builder.Services.AddSingleton<RouteEngine>();
 builder.Services.AddSingleton<ProtectionRadio>();
@@ -61,6 +62,7 @@ builder.Services.AddSingleton(sp => new AiTrains(dataDir, rail, sp.GetRequiredSe
 builder.Services.AddSingleton(sp => new TempTrains(dataDir, rail, sp.GetService<ILogger<TempTrains>>())); // 催物用の臨時列車（Data/TempTrains.json。運転課で作り、司令用管理画面で適用）
 builder.Services.AddSingleton<ServerLoad>(); // サーバーの負荷（管理画面・logs/load-*.log）
 builder.Services.AddSingleton<RunCurves>(); // ランカーブ（クライアントが駅ごとに送る走り方の記録。logs/runcurve-*.log）
+builder.Services.AddSingleton(sp => new BrakeProfiles(dataDir, sp.GetRequiredService<RunCurves>(), sp.GetService<ILogger<BrakeProfiles>>())); // 自動運転の見込み（Data/BrakeProfiles.json。ランカーブから管理用の API で作り直す）
 builder.Services.AddSingleton<ResponseCache>(); // 何人もの画面が読みに来る API の答えを、少しのあいだ使い回す（ダイヤグラム）
 builder.Services.AddSingleton<StateBroadcaster>();
 builder.Services.AddSingleton<RelayPanels>(); // 信号制御盤（relaypanel.html）。盤の状態はサーバーだけが持ち、開いている全員に配る
@@ -101,6 +103,12 @@ var incidentLog = app.Services.GetRequiredService<IncidentManager>();
 central.Changed += message => incidentLog.Note(message);
 rail.Turns.Changed += message => incidentLog.Note(message);
 app.Services.GetRequiredService<EventStops>().Changed += message => incidentLog.Note(message);
+// 浜園の特急の臨時停車: 指示・催物用臨停設定が変わったら、特急と関わる列車の時刻を臨停用にする・所定に戻す
+app.Services.GetRequiredService<EventStops>().BaseOf = d => rail.BaseDia.GetValueOrDefault(d.Number);
+var retime = app.Services.GetRequiredService<TempStopRetime>();
+retime.Changed += message => incidentLog.Note(message);
+central.StopsChanged += retime.Refresh;
+app.Services.GetRequiredService<EventStops>().Changed += _ => retime.Refresh();
 app.Services.GetRequiredService<PlayerRegistry>().Changed += message => incidentLog.Note(message);
 // 催物用の臨時列車: 起動したときに、適用していたものを重ね直す。取り消したら、走っている自動運転の列車も消す
 var aiTrains = app.Services.GetRequiredService<AiTrains>();

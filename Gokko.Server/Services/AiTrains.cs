@@ -351,7 +351,7 @@ public sealed class AiTrains : BackgroundService
             foreach (var s in dia.Stops.Skip(from))
             {
                 if (s.StationId == null || !InArea(s.StationId)) continue;
-                train.Plan.Add(s == start ? new PlanStop(s.Name, s.StationId, true, s.Track, Time(s.Arr), Time(s.Dep)) : PlanOf(dia, s));
+                train.Plan.Add(s == start ? new PlanStop(s.Name, s.StationId, true, s.Track, Time(s.Arr), Time(s.Dep), dia, s) : PlanOf(dia, s));
             }
 
             // 最初の道筋: 出す番線の軌道回路。停止位置は、番線ごとの表（出発信号機の手前）から
@@ -960,7 +960,7 @@ public sealed class AiTrains : BackgroundService
         {
             if (s.StationId == null || !InArea(s.StationId)) continue;
             var isFirst = t.Plan.Count == 0;
-            t.Plan.Add(isFirst ? new PlanStop(s.Name, s.StationId, true, s.Track, null, Time(s.Dep) ?? Time(turn.Time)) : PlanOf(nd, s));
+            t.Plan.Add(isFirst ? new PlanStop(s.Name, s.StationId, true, s.Track, null, Time(s.Dep) ?? Time(turn.Time), nd, s) : PlanOf(nd, s));
         }
 
         // 今いる軌道回路（引上線）から、反対向きに道筋を作り直す
@@ -2191,13 +2191,26 @@ public sealed class AiTrains : BackgroundService
         hms != null && TimeSpan.TryParseExact(hms, [@"hh\:mm\:ss", @"h\:mm\:ss", @"hh\:mm", @"h\:mm"], CultureInfo.InvariantCulture, out var t) ? t : null;
 
     /// <summary>
-    /// 時刻表の1駅 → 停車・通過の一覧の1駅。催物用臨停設定で臨時停車になる駅（時刻表では通過）は止まる
-    /// （着＝通過時刻 − 停車時間、発＝通過時刻。EventStops.Times）。
+    /// 時刻表の1駅 → 停車・通過の一覧の1駅。
+    /// 列車ごとの指示（司令の臨時停車・臨時通過）が先。臨時停車は、着が書いてあれば着（臨時停車用に時刻を変えた列車）、
+    /// なければ通過時刻 − 停車時間に着き、通過時刻に出る。打ち切りは <see cref="ApplyCut"/> で扱う。
+    /// 指示がなければ、催物用臨停設定で臨時停車になる駅（時刻表では通過）は止まる（EventStops.Times）。
+    /// 始発・終着の駅は、臨時通過にしない。
     /// </summary>
-    private PlanStop PlanOf(DiaTrain dia, DiaStop s) =>
-        _routes.EventStops.Times(dia, dia.Stops.IndexOf(s)) is { } ev
+    private PlanStop PlanOf(DiaTrain dia, DiaStop s)
+    {
+        var ov = s.StationId != null ? _central.StopOverride(dia.Number, s.StationId) : null;
+        if (ov == "停車" && s.Stop == "通")
+        {
+            var dep = Time(s.Dep ?? s.Arr);
+            return new PlanStop(s.Name, s.StationId!, true, s.Track, Time(s.Arr) ?? dep - TimeSpan.FromSeconds(EventStops.DwellSeconds), dep, dia, s);
+        }
+        if (ov == "通過" && s != dia.Stops[0] && s != dia.Stops[^1])
+            return new PlanStop(s.Name, s.StationId!, false, s.Track, null, Time(s.Dep ?? s.Arr), dia, s);
+        return ov == null && _routes.EventStops.Times(dia, dia.Stops.IndexOf(s)) is { } ev
             ? new PlanStop(s.Name, s.StationId!, true, s.Track, Time(ev.Arr), Time(ev.Dep), dia, s)
             : new PlanStop(s.Name, s.StationId!, s.Stop == "停", s.Track, Time(s.Arr), Time(s.Dep), dia, s);
+    }
 
     /// <summary>
     /// 打ち切り（列車別設定の「打ち切り」。途中折返しでも入る）: その駅を終着にし、その先の駅を外す（通過する駅なら止まる駅にする。
@@ -2242,29 +2255,42 @@ public sealed class AiTrains : BackgroundService
     }
 
     /// <summary>
-    /// 催物用臨停設定が変わったら、これから通る駅の停車・通過を作り直す（止まっている駅は変えない）。
+    /// 催物用臨停設定・司令の臨時停車・臨時通過が変わったら、これから通る駅の停車・通過と時刻を作り直す。
+    /// 時刻を変えた列車（浜園の特急の臨時停車の時刻など。<see cref="TempStopRetime"/>）は、新しい表の時刻を読む。
+    /// 止まっている駅は、停車のまま発車時刻だけ読み直す。
     /// 新しく止まる駅が、今の速さではもう止まりきれない所なら、通過のままにする。
     /// </summary>
     private void RefreshEventStops(Train t)
     {
-        var version = _routes.EventStops.Version;
-        if (t.EventVersion == version) return;
-        t.EventVersion = version;
+        var version = (_routes.EventStops.Version, _central.StopVersion, _rail.Turns.Version);
+        if (t.PlanVersion == version) return;
+        t.PlanVersion = version;
         var changed = false;
-        for (var i = t.Dwelling ? t.DwellIndex + 1 : t.PlanIndex; i < t.Plan.Count; i++)
+        var dia = _rail.Dia;
+        for (var i = t.Dwelling ? t.DwellIndex : t.PlanIndex; i >= 0 && i < t.Plan.Count; i++)
         {
             var p = t.Plan[i];
-            if (p.Dia is not { } dia || p.Src is not { Stop: "通" } src) continue;
-            var np = PlanOf(dia, src);
-            if (np.Stops == p.Stops) continue;
-            if (np.Stops)
+            if (p.Dia is not { } pd || p.Src is not { } src) continue;
+            if (dia.GetValueOrDefault(pd.Number) is { } cur && !ReferenceEquals(cur, pd)
+                && cur.Stops.FirstOrDefault(x => x.StationId == src.StationId) is { } cs)
+                (pd, src) = (cur, cs);
+            if (t.Dwelling ? i == t.DwellIndex : i == 0 && t.PlanIndex == 0)
+            {
+                // 止まっている駅・まだ出ていない最初の駅: 発車時刻だけ（臨時停車の駅でも、書いてある発時刻＝通過時刻に出る）
+                t.Plan[i] = p with { Dep = Time(src.Dep) ?? p.Dep, Dia = pd, Src = src };
+                continue;
+            }
+            var np = PlanOf(pd, src);
+            if (np == p) continue;
+            if (np.Stops && !p.Stops)
             {
                 var braking = t.Speed * t.Speed / (2 * Decel) + 10;
                 if ((StopX(t, np) is { } x ? x - t.Head : EstimateDistance(t, np)) is { } dist && dist < braking) continue;
             }
             t.Plan[i] = np;
+            if (np.Stops == p.Stops) continue;
             changed = true;
-            _log.Note($"にぎやかし: {t.Number} {p.Name} を{(np.Stops ? "臨時停車" : "通過")}にしました（催物用臨停設定）");
+            _log.Note($"にぎやかし: {t.Number} {p.Name} を{(np.Stops ? "臨時停車" : "通過")}にしました");
         }
         if (changed && t.Info != null)
             t.Info.Stops = t.Plan.Select(p => new StopInfo { Name = p.Name, StopType = p.Stops ? "StopForPassenger" : "Passing" }).ToList();
@@ -2331,7 +2357,7 @@ public sealed class AiTrains : BackgroundService
         public string? ShuntOrigin { get; set; }  // 列番を変えた（入換を始める）軌道回路（大道寺の 5番線 TH65_5T）
         public bool MidTurned { get; set; }       // 留置線から番線への入換で、途中の線（X線・Y線）で向きを変えた
         public bool MidLine { get; set; }         // 駅間など、番線でない所から走り出した（継続乗務の在線を引き継いだ）。最初の駅で発車待ちにしない
-        public long EventVersion { get; set; } = -1; // 停車・通過の一覧に入れた催物用臨停設定の版（EventStops.Version）
+        public (long, int, int)? PlanVersion { get; set; } // 停車・通過の一覧に入れた催物用臨停設定・司令の臨時停車・ダイヤの版
         public string? CutStation { get; set; }   // 打ち切り（列車別設定・途中折返し）の駅。そこを終着にしている
         public List<PlanStop>? CutRest { get; set; } // 打ち切りで外した、その先の駅（打ち切りを外したら戻す）
         public bool CutWasStop { get; set; }      // 打ち切りの駅は、もとは止まる駅だったか

@@ -39,9 +39,9 @@ public sealed class RunRecorder
         _from = "";
     }
 
-    /// <summary>1周期ぶん。mode は "auto" か "manual"。gain は自動運転の覚えた効き方（人の運転は 0）。</summary>
+    /// <summary>1周期ぶん。mode は "auto" か "manual"。gain は自動運転の覚えた効き方、stopOffset は駅ごとの補正（人の運転はどちらも 0）。</summary>
     public void Step(string mode, TciState s, TrainState raw, StopDistanceResult stop, IReadOnlyList<SignalInfo> signals,
-        IReadOnlyCollection<string> circuits, string train, double gain, long now)
+        IReadOnlyCollection<string> circuits, string train, double gain, double stopOffset, long now)
     {
         if (!s.InGame || s.DiaName != _dia)
         {
@@ -139,6 +139,7 @@ public sealed class RunRecorder
         run.StopSignals = signals.Select(x => new RunSignal { Name = x.name ?? "", Phase = x.phase ?? "", Distance = Math.Round(x.distance, 2) }).ToList();
         run.StopCircuits = circuits.ToList();
         run.Gain = Math.Round(gain, 3);
+        run.StopOffset = Math.Round(stopOffset, 2);
         _run = null;
         _from = stop.Station;
         Completed?.Invoke(run);
