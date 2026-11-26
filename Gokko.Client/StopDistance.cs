@@ -29,8 +29,11 @@ public enum StopDistanceKind { None, Rough, Confirmed }
 /// <summary>
 /// 次に止まる停目までの残り（m。行き過ぎていれば負）。Station はダイヤの駅名、Track は実際に入る（入った）番線、
 /// ScenarioTrack はシナリオの番線（番線のない駅は ""）。Kind が None なら止まる駅がない（Remaining は使わない）。
+/// 記録用: Rough はゲームの距離から出した残り（確定のときも入る。確定との差がずれ）、Signal・SignalDistance は止まる番線の信号機と、
+/// そこまでの距離（200m より遠くても、見えていれば入る。見えなければ null）。
 /// </summary>
-public sealed record StopDistanceResult(double Remaining, StopDistanceKind Kind, string Station, string Track, string ScenarioTrack)
+public sealed record StopDistanceResult(double Remaining, StopDistanceKind Kind, string Station, string Track, string ScenarioTrack,
+    double Rough = 0, string? Signal = null, double? SignalDistance = null)
 {
     public static readonly StopDistanceResult Nothing = new(0, StopDistanceKind.None, "", "", "");
 }
@@ -140,25 +143,27 @@ public sealed partial class StopDistance
         var track = ActualTrack(x, station, dir, scenarioTrack);
         var actual = Find(dir, station, track);
 
-        // (2) 止まる番線の信号機が見えていれば、信号機から出す
-        if (actual is { Signal: { } signal } && x.Signals.FirstOrDefault(s => s.Name == signal && s.Distance <= SignalTrustedWithin) is { } seen)
-        {
-            var sixCar = actual.After is { } after ? seen.Distance + after : seen.Distance - (actual.Before ?? 0);
-            var confirmed = sixCar - actual.OffsetFor(x.Cars);
-            _confirmed = (index, track, confirmed + x.Traveled);
-            return new StopDistanceResult(confirmed, StopDistanceKind.Confirmed, station, track, scenarioTrack);
-        }
-        // 一度信号機から出せた駅・番線は、信号機が見えなくなっても（場内を過ぎた、ゲームの信号機の知らせが途切れた）走った距離で数え続ける
-        if (_confirmed is { } c && c.Index == index && c.Track == track)
-            return new StopDistanceResult(c.At - x.Traveled, StopDistanceKind.Confirmed, station, track, scenarioTrack);
-
-        // (1) ゲームの距離。止まった駅を起点に、その駅間の距離だけ使う
-        var remaining = _anchorScenario is { } a && _anchorTraveled is { } t
+        // (1) ゲームの距離。止まった駅を起点に、その駅間の距離だけ使う（確定のときも、比べられるように Rough に入れて返す）
+        var rough = _anchorScenario is { } a && _anchorTraveled is { } t
             ? stop.TotalLength - a - (x.Traveled - t)
             : stop.TotalLength - x.Traveled;
         if (track != scenarioTrack && Find(dir, station, scenarioTrack) is { } scenario && actual != null)
-            remaining += scenario.OffsetFor(x.Cars) - actual.OffsetFor(x.Cars); // ゲームの値はシナリオの番線の停目。入る番線の停目に直す
-        return new StopDistanceResult(remaining, StopDistanceKind.Rough, station, track, scenarioTrack);
+            rough += scenario.OffsetFor(x.Cars) - actual.OffsetFor(x.Cars); // ゲームの値はシナリオの番線の停目。入る番線の停目に直す
+
+        // (2) 止まる番線の信号機が見えていれば、信号機から出す
+        var signal = actual?.Signal is { } name ? x.Signals.FirstOrDefault(s => s.Name == name) : null;
+        if (actual != null && signal is { Distance: <= SignalTrustedWithin })
+        {
+            var sixCar = actual.After is { } after ? signal.Distance + after : signal.Distance - (actual.Before ?? 0);
+            var confirmed = sixCar - actual.OffsetFor(x.Cars);
+            _confirmed = (index, track, confirmed + x.Traveled);
+            return new StopDistanceResult(confirmed, StopDistanceKind.Confirmed, station, track, scenarioTrack, rough, signal.Name, signal.Distance);
+        }
+        // 一度信号機から出せた駅・番線は、信号機が見えなくなっても（場内を過ぎた、ゲームの信号機の知らせが途切れた）走った距離で数え続ける
+        if (_confirmed is { } c && c.Index == index && c.Track == track)
+            return new StopDistanceResult(c.At - x.Traveled, StopDistanceKind.Confirmed, station, track, scenarioTrack, rough, signal?.Name, signal?.Distance);
+
+        return new StopDistanceResult(rough, StopDistanceKind.Rough, station, track, scenarioTrack, rough, signal?.Name, signal?.Distance);
     }
 
     /// <summary>実際に入る（入った）番線。自列車の軌道回路 → 開いている場内信号機 → シナリオの番線 の順に見る。</summary>
