@@ -41,7 +41,10 @@ public static class DiaNotes
     public const int OriginHoldSeconds = 10 * 60;
 
     /// <summary>終着の列車が、着いてから何秒の間は駅にいるとみるか（交換の相手として）。</summary>
-    public const int TerminalStaySeconds = 3 * 60;
+    public const int TerminalStaySeconds = 10 * 60;
+
+    /// <summary>始発の列車が、折り返す前の列車が着いてからでも、発の何秒前まで駅にいるとみるか（交換の相手を探すとき）。</summary>
+    public const int OriginStaySeconds = 12 * 60;
 
     /// <summary>重ねた列車がこの秒数より離れた時刻にしか通らない駅は、記事が変わらないとみて計算しない（連絡の30分・交換の12分より長く）。</summary>
     private const int TouchSeconds = 60 * 60;
@@ -148,6 +151,12 @@ public static class DiaNotes
         // （回1052 が名田から 1052 になる。1052 にも上吉沢〜名田が書いてあるが、そこを走るのは回1052）
         private readonly Dictionary<View, int> _hidden = new();
 
+        // 始発の列車 → 折り返す前の列車が、その駅に着いた時刻
+        private readonly Dictionary<View, int> _arrived = new();
+
+        // 路線の端まで続く複線ですれ違った列車を、単線に入る駅にまとめて書く駅（二木戸。新大路方の複線）
+        private static readonly HashSet<string> LineEndBatch = ["TH50"];
+
         private readonly Table? _base;                            // 所定のダイヤの表（重ねた表のとき）
         private readonly HashSet<string> _overlay = new();        // 重ねた列車の列番（重ねた表のとき）
 
@@ -228,6 +237,12 @@ public static class DiaNotes
             }
             foreach (var x in Trains.Values)
             {
+                // 折り返して次の列車になる: 次の列車は、この列車が着いた時から始発の駅にいる
+                if (x.Train.Turn is { Kind: "折返", Number: { } tn } && Trains.TryGetValue(tn, out var nt) && nt != x
+                    && x.Stops.FindLastIndex(p => p.At != null) is var xl && xl >= 0
+                    && nt.Stops.FindIndex(p => p.At != null) is var nf && nf >= 0
+                    && x.Stops[xl].Key == nt.Stops[nf].Key && x.Stops[xl].At is { } arr)
+                    _arrived[nt] = arr;
                 if (x.Train.Next is { } nx && Trains.TryGetValue(nx.Number, out var y) && y != x)
                     Hide(y, y.Stops.FindIndex(p => p.Key == nx.StationId));
                 var lx = x.Stops.FindLastIndex(p => p.At != null);
@@ -238,6 +253,17 @@ public static class DiaNotes
                         && z.Stops[k].Arr == last.Arr && z.Stops[k].Dep == last.Dep)
                         Hide(z, k);
             }
+        }
+
+        /// <summary>
+        /// この列車が k の駅にいる時間。始発の駅は、折り返す前の列車が着いた時から（わからなければ発の <see cref="OriginHoldSeconds"/> 秒前から）。
+        /// </summary>
+        private (int From, int To)? TSpan(View t, int k)
+        {
+            if (t.Stops[k].Arr == null && t.Stops[k].Dep is { } dep && t.PrevTimed(k) == null
+                && _arrived.TryGetValue(t, out var from) && Wrap(dep - from) is var w && w >= 0 && w <= 3 * 3600)
+                return (dep - Math.Min(w, OriginStaySeconds), dep);
+            return t.Span(k, true);
         }
 
         private bool Hidden(View u, int j) => _hidden.TryGetValue(u, out var h) && j <= h;
@@ -261,8 +287,10 @@ public static class DiaNotes
             {
                 if (Hidden(u, j)) return null;
                 if (u.Span(j, false) is not { } s) return null;
-                // 終着の駅: 着いてから少しの間（<see cref="TerminalStaySeconds"/> 秒）は駅にいるとみる
-                if (u.Stops[j].Dep == null && u.NextTimed(j) == null) return (u.Stops[j], s.From, s.From + TerminalStaySeconds);
+                // 終着の駅: 折り返して出るまで駅にいる（折り返しの時刻が書いていなければ <see cref="TerminalStaySeconds"/> 秒）
+                if (u.Stops[j].Dep == null && u.NextTimed(j) == null)
+                    return (u.Stops[j], s.From, Sec(u.Train.Turn?.Time) is { } back && Wrap(back - s.From) is var w && w >= 0 && w <= 3 * 3600
+                        ? s.From + Math.Min(w, TerminalStaySeconds) : s.From + TerminalStaySeconds);
                 return (u.Stops[j], s.From, s.To);
             }
             if (!_order.TryGetValue(key, out var x)) return null;
@@ -316,7 +344,7 @@ public static class DiaNotes
             foreach (var k in timed)
             {
                 var key = t.Stops[k].Key;
-                if (SpanAt(u, key) is not { } us || t.Span(k, true) is not { } ts) continue;
+                if (SpanAt(u, key) is not { } us || TSpan(t, k) is not { } ts) continue;
                 if (Math.Abs(Wrap(us.From - ts.From)) > 3 * 3600) break;
                 if (Wrap(us.From - ts.To) <= 0 && Wrap(us.To - ts.From) >= 0)
                 {
@@ -344,8 +372,8 @@ public static class DiaNotes
 
         /// <summary>
         /// k から先で最初に単線に入る駅に、相手 u が単線から出てきて間もなく着くなら、そこに書く。書いたら true。
-        /// 間もなく: 路線の端まで続く複線（二木戸から新大路方・大道寺から館浜方）からなら <see cref="LineEndWindowSeconds"/> 秒以内
-        /// （その複線ですれ違った列車をまとめて書く。この列車が走り始めてからすれ違ったものだけ）、
+        /// 間もなく: 二木戸から新大路方の複線からなら <see cref="LineEndWindowSeconds"/> 秒以内
+        /// （その複線ですれ違った列車をまとめて書く。この列車が走り始めてからすれ違ったものだけ。大道寺から館浜方の複線は書かない）、
         /// 単線にはさまれた複線からなら <see cref="CrossWindowSeconds"/> 秒以内。
         /// </summary>
         private bool Entry(Dictionary<int, List<(View, Pt)>> r, View t, List<int> timed, int k, View u)
@@ -354,11 +382,14 @@ public static class DiaNotes
             {
                 if (!t.EntersSingle(m)) continue;
                 var lineEnd = LineEnd(t, m);
-                if (lineEnd && SpanAt(u, t.Stops[timed[0]].Key) is { } u0 && t.Span(timed[0], true) is { } t0 && Wrap(u0.From - t0.From) < 0)
+                // 路線の端まで続く複線ですれ違った列車は、二木戸（新大路方の複線）でだけまとめて書く。
+                // 大道寺から館浜方の複線は、相手が遅れても待たずに出られるので書かない
+                if (lineEnd && !LineEndBatch.Contains(t.Stops[m].Key)) return false;
+                if (lineEnd && SpanAt(u, t.Stops[timed[0]].Key) is { } u0 && TSpan(t, timed[0]) is { } t0 && Wrap(u0.From - t0.From) < 0)
                     return false; // この列車が走り始める前に、もうすれ違っていた
                 if (PartnerIndex(u, t.Stops[m].Key) is { } jm && u.PrevTimed(jm) is { } up
                     && SingleBetween(u.Stops[up].Key, u.Stops[jm].Key)
-                    && t.Span(m, true) is { } tm && u.Span(jm, false) is { } um
+                    && TSpan(t, m) is { } tm && u.Span(jm, false) is { } um
                     && Wrap(tm.From - um.To) is var gap && gap >= 0 && gap <= (lineEnd ? LineEndWindowSeconds : CrossWindowSeconds))
                 {
                     Add(r, m, u, u.Stops[jm]);
