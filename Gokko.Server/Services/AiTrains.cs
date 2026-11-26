@@ -346,6 +346,7 @@ public sealed class AiTrains : BackgroundService
             if (options.Count == 0) options.AddRange(st.Routes[dir.Value].Arrive.Keys.Order());
             var track = options.FirstOrDefault(k => st.TrackCircuit.TryGetValue(k, out var c) && !occupied.Contains(c), -1);
             if (track < 0) return (false, $"{st.Name}: 出せる番線がありません（ほかの列車・進路があります）");
+            if (!TrackFitsDir(st, dir.Value, track)) return (false, $"{st.Name} {track}番線は{dir.Value.Label()}の列車が使わない番線です");
             var platform = st.TrackCircuit[track];
 
             var train = new Train
@@ -761,7 +762,9 @@ public sealed class AiTrains : BackgroundService
                     }
 
                     if (!t.DepartureAsked && !_central.DiaMode) { t.WantDeparture = true; t.DepartureAsked = true; } // 入換要求（ダイヤ運転中は自動）
-                    if (t.PathEnd - (t.Blocked ? SignalMargin : 2) > t.Head + 5)
+                    // 道筋の先に入換（引上げ）の進路が入ってから動く。停止位置が出発信号機より手前の番線（新野崎1番線）では、
+                    // 出発信号機までの残りを引上げと取り違え、番線の上で折り返しの列番になっていた
+                    if (t.PathEnd - (t.Blocked ? SignalMargin : 2) > t.Head + 5 && ShuntOutAhead(t, stopNow.StationId))
                     {
                         t.Dwelling = false;
                         t.Shunting = true;
@@ -963,6 +966,23 @@ public sealed class AiTrains : BackgroundService
                 return;
             }
         }
+        var headCircuit = t.Path.SelectMany(s => s.Circuits).LastOrDefault(c => c.Start < t.Head)?.Name ?? t.Info.TrackCircuits.LastOrDefault() ?? "";
+        // 引き上げた先（入換の進路の終わりの回路）に着いていなければ、列番を変えない（進路を待つ）
+        if (!inPlace && !t.StableTurned && _rail.Stations.TryGetValue(here.StationId, out var sost) && sost.Routes[t.Dir].ShuntOuts.Count > 0
+            && !sost.Routes[t.Dir].ShuntOuts.Any(o => o.Routes.LastOrDefault()?.Circuits.LastOrDefault() == headCircuit))
+        {
+            t.Status = $"{here.Name} で入換（引上げ）の進路待ち";
+            return;
+        }
+
+        if (turn?.Number is { Length: > 0 } tn && _routes.DirOfTrain(tn) is { } tdir && _rail.Stations.TryGetValue(here.StationId, out var tst)
+            && WrongTrack(tst, tdir, headCircuit) is { } wrong)
+        {
+            t.Status = $"{here.Name} で入換（引上げ）の進路待ち（{wrong}）";
+            if (_placeRefused.Add((t.Id, tn))) _log.Note($"にぎやかし: {t.Number} は {tn} に変わりません（{wrong}。{headCircuit}）");
+            return;
+        }
+
         var stabled = t.StableTurned;
         t.StableTurned = false;
         t.Shunting = false;
@@ -1014,6 +1034,34 @@ public sealed class AiTrains : BackgroundService
         }
         t.Status = $"引上線で折り返し（{old} → {number}）。番線への入換待ち";
         _log.Note($"にぎやかし: {old} は {here.Name} の引上線で折り返して {number} になりました");
+    }
+
+    /// <summary>列番を変えなかった・出さなかったことを一度だけ記録するため（列車ID・列番）。</summary>
+    private readonly HashSet<(string Id, string Number)> _placeRefused = new();
+
+    /// <summary>道筋の先（まだ通っていない所）に、その駅の入換（引上げ）の進路（TrackRoutes.json の shuntOut）が入っているか。</summary>
+    private bool ShuntOutAhead(Train t, string stationId)
+    {
+        if (!_rail.Stations.TryGetValue(stationId, out var st)) return false;
+        var keys = st.Routes[t.Dir].ShuntOuts.SelectMany(o => o.Routes).Select(r => (r.Interlock, r.Name)).ToHashSet();
+        return t.Path.Any(s => s.End > t.Head && s.Route is { } r && keys.Contains((r.Interlock, r.Name)));
+    }
+
+    /// <summary>
+    /// その向きの列車が使う番線か（着く・出る・入換で入る・入換で出る番線）。
+    /// 上りしか使わない番線に下りの列車を出したり、そこで下りの列番に変えたりしないため（新野崎1番線に下りの 1865 が出た）。
+    /// </summary>
+    private static bool TrackFitsDir(StationDef st, Dir dir, int track)
+    {
+        var r = st.Routes[dir];
+        return r.Depart.ContainsKey(track) || r.Arrive.ContainsKey(track) || r.Shunts.Any(s => s.From == track || s.To == track) || r.ShuntOuts.Any(o => o.From == track);
+    }
+
+    /// <summary>軌道回路がその駅の番線の回路で、その番線がその向きの列車の使わない番線なら、その理由。番線でない回路（引上線の分岐など）は null。</summary>
+    private static string? WrongTrack(StationDef st, Dir dir, string circuit)
+    {
+        var tracks = st.TrackCircuit.Where(kv => kv.Value == circuit).Select(kv => kv.Key).ToList();
+        return tracks.Count > 0 && !tracks.Any(k => TrackFitsDir(st, dir, k)) ? $"{st.Name} {tracks[0]}番線は{dir.Label()}の列車が使わない番線" : null;
     }
 
     /// <summary>今いる軌道回路から、反対向きに道筋を作り直す（列番・停車駅はそのまま）。その軌道回路を返す。</summary>
@@ -1121,6 +1169,11 @@ public sealed class AiTrains : BackgroundService
         var track = dt is { } d0 && t.Info.TrackCircuits.Contains(st.TrackCircuit[d0]) ? d0
             : st.TrackCircuit.Where(kv => t.Info.TrackCircuits.Contains(kv.Value)).Select(kv => (int?)kv.Key).FirstOrDefault() ?? dt ?? -1;
         if (!st.TrackCircuit.TryGetValue(track, out var platform)) return false;
+        if (!TrackFitsDir(st, dir, track))
+        {
+            if (_placeRefused.Add((t.Id, number))) _log.Note($"にぎやかし: {t.Number} は {st.Name} {track}番線で {number} に折り返しません（{dir.Label()}の列車が使わない番線）");
+            return false;
+        }
 
         var old = t.Number;
         Become(t, number, nd, dir, st, track, platform, i, Time(_rail.Turns.TurnOf(t.Dia)?.Time), utcNow);
