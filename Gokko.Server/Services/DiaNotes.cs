@@ -3,21 +3,21 @@ using System.Text.RegularExpressions;
 namespace Gokko.Server.Services;
 
 /// <summary>
-/// 時刻表の記事のうち、待避「(待)」と接続「(連)」を時刻表から作り直す（臨時停車で時刻を変えたとき。<see cref="TempStopRetime"/>）。
+/// 時刻表の記事のうち、待避「(待)」と連絡「(連)」を時刻表から作り直す（臨時停車で時刻を変えたとき。<see cref="TempStopRetime"/>）。
 /// ふだんは手書きの記事のまま。時刻を変えた列車があるときだけ、その列車と、相手になる列車の記事を作り直す。
 ///
 /// 記事の形: 「(待)特手②05通」＝ その駅に止まっている間に、②番線を大手橋行きの特急が05分に通過する。
 ///           「(連)普野①08発」＝ その駅で、①番線から新野崎行きの普通が08分に出る。
 /// ・待避: 同じ向きで、その駅の着から発までの間に、その駅を通過する列車（着と発のある途中駅だけ。始発駅の待避は手書きのまま）
-/// ・接続: 手書きの接続がある駅で、着いてから <see cref="ConnectWindowSeconds"/> 秒以内に出る同じ向きの列車のうち、最初に
-///         「この列車が止まらない駅へ行く」か「先の駅にこの列車より早く着く」もの。回送・試運転は接続を作らない・相手にしない
-/// ・すれ違い「×」・接続待ち「(接)」・灰色などの記事は変えない
+/// ・連絡: 手書きの連絡がある駅で、着いてから <see cref="ConnectWindowSeconds"/> 秒以内に出る同じ向きの列車のうち、最初に
+///         「この列車が止まらない駅へ行く」か「先の駅にこの列車より早く着く」もの。回送・試運転は連絡を作らない・相手にしない
+/// ・すれ違い「×」・接続「(接)」（待つもの。ConnectionTable が使う）・灰色などの記事は変えない
 /// ・作り直すときは、手書きの記事のうち、時刻を変えた列車に関わる (待)(連) を読み直す（相手の時刻が変われば分を書き直し、
-///   待避・接続でなくなれば消す）。決まりで選ぶ相手が変わったら、前の相手を消して新しい相手を書き足す
+///   待避・連絡でなくなれば消す）。決まりで選ぶ相手が変わったら、前の相手を消して新しい相手を書き足す
 /// </summary>
 public static class DiaNotes
 {
-    /// <summary>接続を探す時間（着いてから、この秒数のうちに出る列車）。</summary>
+    /// <summary>連絡を探す時間（着いてから、この秒数のうちに出る列車）。</summary>
     public const int ConnectWindowSeconds = 30 * 60;
 
     private static readonly Regex Item = new(@"^\((待|連)\)(.)(.)([①-⑳]?)(\d\d)(着|発|通)$");
@@ -80,7 +80,7 @@ public static class DiaNotes
         var merged = baseDia.ToDictionary(kv => kv.Key, kv => changed.GetValueOrDefault(kv.Key) ?? kv.Value);
         var after = new Table(merged.Values);
 
-        // 接続を書く駅: 手書きの接続がある駅
+        // 連絡を書く駅: 手書きの連絡がある駅
         var connStations = new HashSet<string>();
         foreach (var t in baseDia.Values)
             foreach (var s in t.Stops)
@@ -133,7 +133,7 @@ public static class DiaNotes
             }
             var kind = m.Groups[1].Value;
             var how = m.Groups[6].Value;
-            // 決まりで選ぶ接続の相手が変わった: 前の相手は消す
+            // 決まりで選ぶ連絡の相手が変わった: 前の相手は消す
             if (kind == "連" && genBefore.ContainsKey(u) && !genAfter.ContainsKey(u)) continue;
             if (!selfChanged && !changed.ContainsKey(u))
             {
@@ -141,7 +141,7 @@ public static class DiaNotes
                 present.Add(u);
                 continue;
             }
-            // どちらかの時刻が変わった: 読み直す（待避・接続でなくなれば消す）
+            // どちらかの時刻が変わった: 読み直す（待避・連絡でなくなれば消す）
             if (after.Trains.TryGetValue(u, out var uv) && Recheck(at, i, uv, kind, how) is { } re)
             {
                 outItems.Add(re);
@@ -175,7 +175,7 @@ public static class DiaNotes
                 if (Wrap(p - a) >= 0 && Wrap(d - p) >= 0) r[u.Train.Number] = Text("待", u, u.Stops[j], p, "通");
             }
 
-        // 接続
+        // 連絡
         if (i > 0 && connStations.Contains(s.Key) && !NoConnect(t.Train.Type) && s.At is { } ta
             && FirstConnection(tb, t, i, ta) is { } c)
             r[c.V.Train.Number] = Text("連", c.V, c.V.Stops[c.J], c.V.Stops[c.J].Dep!.Value, "発");
@@ -234,7 +234,7 @@ public static class DiaNotes
         return best;
     }
 
-    /// <summary>時刻を変えたあとも待避・接続になるなら、書き直した記事。ならなければ null。</summary>
+    /// <summary>時刻を変えたあとも待避・連絡になるなら、書き直した記事。ならなければ null。</summary>
     private static string? Recheck(View t, int i, View u, string kind, string how)
     {
         var s = t.Stops[i];
