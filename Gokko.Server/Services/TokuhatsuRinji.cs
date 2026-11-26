@@ -33,6 +33,12 @@ public sealed class TokuhatsuRinji(RailData rail, CentralControl central, Player
     private sealed class Entry
     {
         public required DiaTrain Dia { get; init; }
+        /// <summary>解放: 元の列車から切り離す「解＋元の列番」の列車（発駅だけの短い列車。特発臨に折り返す）。解放でなければ null。</summary>
+        public DiaTrain? SplitDia { get; init; }
+        /// <summary>解放: 切り離す元の列車の列番。</summary>
+        public string? SplitFrom { get; init; }
+        /// <summary>連結: 終点で連結する列車の列番（特発臨の列番は「連」＋この列番）。</summary>
+        public string? Couple { get; init; }
         /// <summary>元の列車の列番（出庫なら null）。</summary>
         public string? From { get; init; }
         /// <summary>出庫させた車庫（江原検 など）。元の列車から立てたときは null。</summary>
@@ -53,12 +59,16 @@ public sealed class TokuhatsuRinji(RailData rail, CentralControl central, Player
 
     /// <summary>立てる・案を引くときの入力。Stops があれば、それをそのまま立てる。なければ Dest・Dep・StopAt から案を引く。</summary>
     /// Station は発駅（元の列車が止まっている駅か、これから通る駅）。なければ、止まっている駅か、次の駅。
-    /// Depot は出庫させる車庫（江原検 など。Train の代わり）、Cars は出庫の両数。
+    /// Depot は出庫させる車庫（江原検 など。Train の代わり）、Cars は出庫・解放の両数。
+    /// Split は解放する元の列車（Train の代わり。Station で切り離す）、Couple は終点で連結する列車（列番は「連」＋その列番、種別は回送になる）。
     public sealed record Request(string? Train, string? Station, string? Number, string? Type, string? Dest, string? Dep, List<string>? StopAt, List<StopSpec>? Stops, bool LinkTurn,
-        string? Depot = null, int? Cars = null);
+        string? Depot = null, int? Cars = null, string? Split = null, string? Couple = null);
 
-    /// <summary>発駅。Train は元の列車（出庫なら空）、Track は止まっている番線（走っている列車・出庫は null）、Depot は出庫の車庫。</summary>
-    private sealed record From(string Train, StationDef Station, int? Track, string? Depot);
+    /// <summary>
+    /// 発駅。Train は元の列車（出庫・解放なら空）、Track は止まっている番線（走っている列車・出庫は null）、Depot は出庫の車庫、
+    /// SplitFrom は解放する元の列車（Track はその列車が発駅に着く番線）。
+    /// </summary>
+    private sealed record From(string Train, StationDef Station, int? Track, string? Depot, string? SplitFrom = null);
 
     /// <summary>自動運転の列車の両数（列番 → 両数。走っていなければ null）。Program.cs で AiTrains につなぐ。</summary>
     public Func<string, int?>? AiCars { get; set; }
@@ -87,11 +97,14 @@ public sealed class TokuhatsuRinji(RailData rail, CentralControl central, Player
         lock (_lock) return _entries.Any(e => e.Dia.Number == key);
     }
 
-    /// <summary>元の列車が列番を変えて走る特発臨か（自動運転の列車を時刻表から出すときは出さない）。出庫の特発臨は false（ふつうの出庫と同じく出す）。</summary>
+    /// <summary>
+    /// ほかの列車から変わって走る特発臨か（自動運転の列車を時刻表から出すときは出さない）。元の列車が列番を変える特発臨と、
+    /// 解放（元の列車から切り離した車両が折り返して走る）が true。出庫の特発臨は false（ふつうの出庫と同じく出す）。
+    /// </summary>
     public bool IsConversion(string train)
     {
         var key = RailData.NormalizeTrain(train);
-        lock (_lock) return _entries.Any(e => e.Dia.Number == key && e.From != null);
+        lock (_lock) return _entries.Any(e => e.Dia.Number == key && (e.From != null || e.SplitFrom != null));
     }
 
     /// <summary>特発臨の列番の列車が出てきた（track は、自動運転の列車が列番を変えた番線）。</summary>
@@ -151,7 +164,11 @@ public sealed class TokuhatsuRinji(RailData rail, CentralControl central, Player
                 dir = RouteEngine.TrainInfo(number)?.Dir == Dir.Down ? "下り" : "上り",
                 type = dia?.Type ?? RouteEngine.TrainInfo(number)?.Type,
                 dest = dia?.Dest,
-                rinji = PendingFor(number)?.Number
+                rinji = PendingFor(number)?.Number,
+                // 解放できる駅: この先の駅のうち、時刻表で停車して番線が決まっている駅（もう「解」の列車がある列車は切り離せない）
+                split = dia == null || rail.DiaOf("解" + number) != null ? []
+                    : ahead.Where(s => dia.Stations.TryGetValue(s.Id, out var ds) && ds.StopType == "停車" && ds.Track != null)
+                        .Select(s => new { id = s.Id, name = s.Name, track = dia.Stations[s.Id].Track }).ToList()
             }));
         }
         return list.OrderBy(x => x.Key, StringComparer.Ordinal).Select(x => x.Row).ToList();
@@ -196,8 +213,10 @@ public sealed class TokuhatsuRinji(RailData rail, CentralControl central, Player
             {
                 number = e.Dia.Number,
                 type = e.Dia.Type,
-                from = e.From ?? $"出庫（{e.Depot}）",
+                from = e.From ?? (e.SplitFrom != null ? $"解放（{e.SplitFrom} から）" : $"出庫（{e.Depot}）"),
                 depot = e.Depot,
+                split = e.SplitFrom,
+                couple = e.Couple,
                 cars = e.Dia.Cars,
                 station = e.Depot ?? rail.Line.StationName(e.StationId),
                 track = e.Track,
@@ -215,7 +234,7 @@ public sealed class TokuhatsuRinji(RailData rail, CentralControl central, Player
     {
         var running = players.Snapshot().Select(p => RailData.NormalizeTrain(p.TrainNumber)).ToHashSet();
         lock (_lock)
-            foreach (var e in _entries.Where(e => !e.Started && running.Contains(e.Dia.Number))) e.Started = true;
+            foreach (var e in _entries.Where(e => !e.Started && (running.Contains(e.Dia.Number) || e.SplitDia != null && running.Contains(e.SplitDia.Number)))) e.Started = true;
     }
 
     /// <summary>
@@ -246,8 +265,14 @@ public sealed class TokuhatsuRinji(RailData rail, CentralControl central, Player
         {
             if (clock.Now is not { } now) return (null, "ロープレ時刻が設定されていません（発車時刻を入れてください）");
             dep = Math.Ceiling((now.TotalSeconds + 180) / 30) * 30;
+            // 解放: 元の列車がその駅に着く時刻の2分後より前にはしない（切り離してから出る）
+            if (f.SplitFrom != null && rail.DiaOf(f.SplitFrom)?.Stops.FirstOrDefault(s => s.StationId == f.Station.Id) is { } ss && Sec(ss.Arr ?? ss.Dep) is { } st0)
+            {
+                var due = Math.Ceiling((st0 + 120) / 30) * 30;
+                if (due - dep is > 0 and < 6 * 3600) dep = due;
+            }
             // まだ発駅に着いていなければ、元の列車の時刻表のその駅の時刻の1分後より前にはしない
-            if (f.Track == null && f.Depot == null && rail.DiaOf(f.Train)?.Stops.FirstOrDefault(s => s.StationId == f.Station.Id) is { } os && Sec(os.Arr ?? os.Dep) is { } ot)
+            else if (f.Track == null && f.Depot == null && rail.DiaOf(f.Train)?.Stops.FirstOrDefault(s => s.StationId == f.Station.Id) is { } os && Sec(os.Arr ?? os.Dep) is { } ot)
             {
                 var due = Math.Ceiling((ot + 60) / 30) * 30;
                 if (due - dep is > 0 and < 6 * 3600) dep = due;
@@ -292,11 +317,14 @@ public sealed class TokuhatsuRinji(RailData rail, CentralControl central, Player
         {
             train = f.Train,
             depot = f.Depot,
+            split = f.SplitFrom,
             station = f.Station.Id,
             stationName = f.Depot ?? f.Station.Name,
             track = startTrack,
-            arriving = f.Track == null && f.Depot == null, // まだ発駅に着いていない（その番線に入れる）
-            cars = f.Depot != null ? r.Cars ?? 6 : CarsOf(f.Train),
+            arriving = f.Track == null && f.Depot == null && f.SplitFrom == null, // まだ発駅に着いていない（その番線に入れる）
+            cars = f.Depot != null ? r.Cars ?? 6 : f.SplitFrom != null ? r.Cars ?? 2 : CarsOf(f.Train),
+            splitCars = f.SplitFrom != null ? CarsOf(f.SplitFrom) : null, // 解放する元の列車の両数
+            couple = CoupleCandidates(stops[^1].St, Sec(stops[^1].Arr) ?? t, dir),
             dir = dir.Label(),
             type,
             stops = stops.Select((s, i) => new
@@ -312,8 +340,10 @@ public sealed class TokuhatsuRinji(RailData rail, CentralControl central, Player
     {
         var (f, error) = Origin(r);
         if (f == null) return error;
-        var number = RailData.NormalizeTrain(r.Number);
-        var type = (r.Type ?? "").Trim();
+        // 連結: 増結車の決まり（時刻表の 連777 と同じ）に合わせ、列番は「連」＋連結する列車の列番、種別は回送
+        var couple = r.Couple is { Length: > 0 } cp ? RailData.NormalizeTrain(cp) : null;
+        var number = couple != null ? "連" + couple : RailData.NormalizeTrain(r.Number);
+        var type = couple != null ? "回送" : (r.Type ?? "").Trim();
         if (number.Length == 0) return "列番を入れてください";
         if (!Types.Contains(type)) return "種別を選んでください";
         if (rail.DiaOf(number) != null) return $"{number} はもう時刻表にある列番です";
@@ -334,12 +364,16 @@ public sealed class TokuhatsuRinji(RailData rail, CentralControl central, Player
         var (startTrack, de, setTrack) = StartTrack(f, info.Dir);
         if (de != null) return de;
         int? cars;
-        if (f.Depot != null)
+        if (f.Depot != null || f.SplitFrom != null)
         {
-            cars = r.Cars ?? 6;
+            cars = r.Cars ?? (f.Depot != null ? 6 : 2);
             if (cars is < 1 or > 10) return "両数は1〜10両にしてください";
+            if (f.SplitFrom != null && CarsOf(f.SplitFrom) is { } pc && cars >= pc)
+                return $"切り離す両数（{cars}両）が、{f.SplitFrom} の両数（{pc}両）以上です";
         }
         else cars = CarsOf(f.Train);
+        var splitNumber = f.SplitFrom != null ? "解" + f.SplitFrom : null;
+        if (splitNumber != null && rail.DiaOf(splitNumber) != null) return $"{f.SplitFrom} には、もう切り離す列車（{splitNumber}）があります";
 
         // 時刻: 発駅は発、終点は着、途中の停車駅は着・発、通過駅は通過の時刻（発の欄）。前の駅より前にならないこと
         var dia = new DiaTrain { Number = number, Type = type, TypeLabel = type, Dest = rail.Line.StationName(stops[^1].St), Cars = cars };
@@ -375,19 +409,51 @@ public sealed class TokuhatsuRinji(RailData rail, CentralControl central, Player
 
         var lastId = stops[^1].St;
         if (rail.Stations.TryGetValue(lastId, out var ts) && ts.RouteControl) dia.TerminalId = lastId;
-        dia.Unyo = f.Depot == null && rail.DiaOf(f.Train) is { } od ? rail.Turns.UnyoOf(od) : null;
+        dia.Unyo = f.Depot == null && f.SplitFrom == null && rail.DiaOf(f.Train) is { } od ? rail.Turns.UnyoOf(od) : null;
+
+        // 連結: 終点で、あとから着く列車に連結する（増結車が先に番線に入って待つ）。終点の番線は、連結する列車が着く番線
+        string? coupleNote = null;
+        if (couple != null)
+        {
+            var endName = rail.Line.StationName(lastId);
+            if (rail.DiaOf(couple) is not { } pd) return $"連結する列車 {couple} は時刻表にありません";
+            if (pd.Stops.FirstOrDefault(s => s.StationId == lastId) is not { Stop: "停" } ps) return $"{couple} は{endName}に停車しません";
+            if (ps.Track is not { } ptk) return $"{couple} が{endName}で着く番線が、時刻表にありません";
+            if (RouteEngine.TrainInfo(couple) is not { } pinfo || !RouteEngine.CanCoupleAt(rail, lastId, pinfo.Dir, ptk))
+                return $"{endName} {ptk}番線は、{couple} が増結車のいる番線へ入る入換信号機がないので、連結できません";
+            if (!rail.Stations[lastId].Routes[info.Dir].Arrive.ContainsKey(ptk))
+                return $"{endName} {ptk}番線（{couple} が着く番線）には、{info.Dir.Label()}の特発臨は入れません";
+            if (Sec(dia.Stops[^1].Arr) is { } ra && Sec(ps.Arr ?? ps.Dep) is { } pa && (pa - ra + 86400) % 86400 > 12 * 3600)
+                return $"{couple} が{endName}に着く（{ps.Arr ?? ps.Dep}）のは、増結車が着くより前です（増結車が先に入って待ちます）";
+            var last = dia.Stops[^1];
+            dia.Stops[^1] = last with { Track = ptk };
+            dia.Stations[lastId] = ("停車", ptk);
+            dia.Turn = new DiaTurn("併結", couple, ps.Arr ?? ps.Dep, null);
+            coupleNote = $"・{endName} {ptk}番線で {couple} に連結";
+        }
+
+        // 解放: 元の列車が発駅に着いたら「解」＋元の列番の車両を切り離し、その車両が特発臨に折り返して出る（時刻表の 解874 → 回933 と同じ）
+        DiaTrain? splitDia = null;
+        if (splitNumber != null)
+        {
+            var first = dia.Stops[0];
+            splitDia = new DiaTrain { Number = splitNumber, Type = "回送", TypeLabel = "回送", Dest = first.Name, Cars = cars, TerminalId = f.Station.Id };
+            splitDia.Stops.Add(new DiaStop(first.Name, f.Station.Id, "停", null, first.Dep, startTrack));
+            splitDia.Stations[f.Station.Id] = ("停車", startTrack);
+            splitDia.Turn = new DiaTurn("折返", number, first.Dep, "発");
+        }
 
         lock (_lock)
         {
             if (_entries.Any(e => e.Dia.Number == number)) return $"{number} はもう特発臨で立てています";
-            if (f.Depot == null && _entries.Any(e => !e.Started && e.From == f.Train)) return $"{f.Train} には、まだ走り出していない特発臨があります（先に取り消してください）";
+            if (f.Depot == null && f.SplitFrom == null && _entries.Any(e => !e.Started && e.From == f.Train)) return $"{f.Train} には、まだ走り出していない特発臨があります（先に取り消してください）";
             _entries.Add(new Entry
             {
-                Dia = dia, From = f.Depot == null ? f.Train : null, Depot = f.Depot, StationId = f.Station.Id,
-                Track = startTrack, TrackSet = setTrack
+                Dia = dia, From = f.Depot == null && f.SplitFrom == null ? f.Train : null, Depot = f.Depot, StationId = f.Station.Id,
+                Track = startTrack, TrackSet = setTrack, SplitDia = splitDia, SplitFrom = f.SplitFrom, Couple = couple
             });
             var skipped = ApplyLayer();
-            if (skipped.Contains(number))
+            if (skipped.Contains(number) || splitNumber != null && skipped.Contains(splitNumber))
             {
                 _entries.RemoveAll(e => e.Dia.Number == number);
                 ApplyLayer();
@@ -397,7 +463,12 @@ public sealed class TokuhatsuRinji(RailData rail, CentralControl central, Player
 
         if (f.Depot != null)
         {
-            Changed?.Invoke($"特発臨: {number}（{type}・{cars}両）{f.Depot} {startTrack}番線から出庫 {dia.Stops[0].Dep}発 → {dia.Dest} {dia.Stops[^1].Arr}着");
+            Changed?.Invoke($"特発臨: {number}（{type}・{cars}両）{f.Depot} {startTrack}番線から出庫 {dia.Stops[0].Dep}発 → {dia.Dest} {dia.Stops[^1].Arr}着{coupleNote}");
+            return null;
+        }
+        if (f.SplitFrom != null)
+        {
+            Changed?.Invoke($"特発臨: {number}（{type}・{cars}両）{f.Station.Name} {startTrack}番線で {f.SplitFrom} から切り離し（{splitNumber}） {dia.Stops[0].Dep}発 → {dia.Dest} {dia.Stops[^1].Arr}着{coupleNote}");
             return null;
         }
 
@@ -407,7 +478,7 @@ public sealed class TokuhatsuRinji(RailData rail, CentralControl central, Player
 
         // 元の列車の後運用につなぐ（後運用の差し替え。元の列車の後運用は「なし」になる）
         string? turnNote = null;
-        if (r.LinkTurn && rail.DiaOf(f.Train) is { } orig && rail.Turns.TurnOf(orig) is { Kind: "折返", Number: { Length: > 0 } next })
+        if (couple == null && r.LinkTurn && rail.DiaOf(f.Train) is { } orig && rail.Turns.TurnOf(orig) is { Kind: "折返", Number: { Length: > 0 } next })
         {
             var err = rail.Turns.Set(number, next);
             if (err == null)
@@ -418,7 +489,7 @@ public sealed class TokuhatsuRinji(RailData rail, CentralControl central, Player
             else turnNote = $"・後運用はつなげませんでした（{err}）";
         }
 
-        Changed?.Invoke($"特発臨: {number}（{type}）{f.Station.Name} {startTrack}番線 {dia.Stops[0].Dep}発 → {dia.Dest} {dia.Stops[^1].Arr}着。{f.Train} は {f.Station.Name} で打ち切り{turnNote}");
+        Changed?.Invoke($"特発臨: {number}（{type}）{f.Station.Name} {startTrack}番線 {dia.Stops[0].Dep}発 → {dia.Dest} {dia.Stops[^1].Arr}着。{f.Train} は {f.Station.Name} で打ち切り{turnNote}{coupleNote}");
         return null;
     }
 
@@ -447,7 +518,7 @@ public sealed class TokuhatsuRinji(RailData rail, CentralControl central, Player
             if (central.StopOverride(e.From, e.StationId) == "打ち切り") central.SetStop(e.From, e.StationId, null);
             if (e.TrackSet && central.TrackOverride(e.From, e.StationId) == e.Track) central.SetTrack(e.From, e.StationId, null);
         }
-        if (e.Started) Removed?.Invoke([key]);
+        if (e.Started) Removed?.Invoke(e.SplitDia != null ? [key, e.SplitDia.Number] : [key]);
         Changed?.Invoke(e.Started
             ? $"特発臨を取消: {key}（走り出していたので、自動運転の列車なら消します）"
             : e.From == null ? $"特発臨を取消: {key}（{e.Depot} からの出庫）"
@@ -464,7 +535,7 @@ public sealed class TokuhatsuRinji(RailData rail, CentralControl central, Player
         {
             n = _entries.Count;
             if (n == 0) return 0;
-            started = _entries.Where(e => e.Started).Select(e => e.Dia.Number).ToList();
+            started = _entries.Where(e => e.Started).SelectMany(e => e.SplitDia != null ? new[] { e.Dia.Number, e.SplitDia.Number } : new[] { e.Dia.Number }).ToList();
             _entries.Clear();
             ApplyLayer();
         }
@@ -473,7 +544,7 @@ public sealed class TokuhatsuRinji(RailData rail, CentralControl central, Player
     }
 
     // _lock の中で呼ぶ
-    private List<string> ApplyLayer() => rail.SetExtraTrains(Source, _entries.Select(e => e.Dia).ToList());
+    private List<string> ApplyLayer() => rail.SetExtraTrains(Source, _entries.SelectMany(e => e.SplitDia != null ? new[] { e.SplitDia, e.Dia } : new[] { e.Dia }).ToList());
 
     // =========================================================================================
     // 下ごしらえ
@@ -489,6 +560,20 @@ public sealed class TokuhatsuRinji(RailData rail, CentralControl central, Player
         {
             var d = Depots().FirstOrDefault(x => x.Name == depot);
             return d.Station == null ? (null, $"{depot} という車庫はありません") : (new From("", d.Station, null, depot), null);
+        }
+        // 解放: 走っている元の列車が、この先で停車する駅（時刻表で番線が決まっている駅）で切り離す
+        if (r.Split is { Length: > 0 } split)
+        {
+            var sk = RailData.NormalizeTrain(split);
+            var sp = players.Snapshot().FirstOrDefault(x => RailData.NormalizeTrain(x.TrainNumber) == sk && !x.ConnectionId.StartsWith(PlayerRegistry.GhostPrefix));
+            if (sp == null) return (null, $"{sk} は走っていません");
+            if (rail.DiaOf(sk) is not { } sd) return (null, $"{sk} は時刻表にありません（切り離す駅を決められません）");
+            var (_, sAhead) = Stations(sp, sk);
+            var sst = sAhead.FirstOrDefault(s => s.Id == r.Station);
+            if (sst == null) return (null, $"{sk} はこの先 {rail.Line.StationName(r.Station ?? "")} を通りません（切り離すのは、この先の停車駅です）");
+            if (!sd.Stations.TryGetValue(sst.Id, out var sds) || sds.StopType != "停車" || sds.Track is not { } stk)
+                return (null, $"{sk} は{sst.Name}に停車しないか、番線が時刻表にありません（切り離すのは、停車する駅です）");
+            return (new From("", sst, stk, null, sk), null);
         }
         var key = RailData.NormalizeTrain(r.Train);
         if (key.Length == 0) return (null, "元の列車を選ぶか、出庫する車庫を選んでください");
@@ -533,6 +618,8 @@ public sealed class TokuhatsuRinji(RailData rail, CentralControl central, Player
             var ok = tracks.Where(depart.ContainsKey).OrderBy(x => x).ToList();
             return ok.Count > 0 ? (ok[0], null, false) : (null, $"{f.Depot} から{dir.Label()}へ出庫する番線がありません", false);
         }
+        if (f.SplitFrom != null && f.Track is { } stt) // 解放: 元の列車が着く番線から、そのまま出る
+            return depart.ContainsKey(stt) ? (stt, null, false) : (null, NoTrack([stt], $"{f.SplitFrom} が着く"), false);
         if (f.Track is { } t) return depart.ContainsKey(t) ? (t, null, false) : (null, NoTrack([t], $"{f.Train} が止まっている"), false);
 
         var fromDir = RouteEngine.TrainInfo(f.Train)?.Dir ?? dir;
@@ -542,6 +629,25 @@ public sealed class TokuhatsuRinji(RailData rail, CentralControl central, Player
         int? diaTrack = rail.DiaOf(f.Train)?.Stations.TryGetValue(f.Station.Id, out var ds) == true ? ds.Track : null;
         var pick = diaTrack is { } dt && good.Contains(dt) ? dt : good[0];
         return (pick, null, pick != diaTrack);
+    }
+
+    /// <summary>
+    /// 連結できる相手: 終点（stationId）に停車し、特発臨が着いたあと（arrSec から90分以内）に着く列車で、
+    /// 増結車のいる番線へ入換信号機で入れる番線に着くもの（着く早い順）。特発臨（dir の向き）もその番線に入れること。もう増結車（連＋列番）がある列車は除く。
+    /// </summary>
+    private List<object> CoupleCandidates(string stationId, double arrSec, Dir dir)
+    {
+        var list = new List<(double Wait, object Row)>();
+        foreach (var d in rail.Dia.Values)
+        {
+            if (d.Number.StartsWith("連") || d.Number.StartsWith("解") || rail.DiaOf("連" + d.Number) != null) continue;
+            if (d.Stops.FirstOrDefault(s => s.StationId == stationId) is not { Stop: "停" } s || s == d.Stops[0] || s.Track is not { } tk) continue;
+            if (Sec(s.Arr ?? s.Dep) is not { } at || RouteEngine.TrainInfo(d.Number) is not { } info) continue;
+            var wait = (at - arrSec + 86400) % 86400;
+            if (wait > 90 * 60 || !RouteEngine.CanCoupleAt(rail, stationId, info.Dir, tk) || !rail.Stations[stationId].Routes[dir].Arrive.ContainsKey(tk)) continue;
+            list.Add((wait, new { train = d.Number, type = d.Type, time = s.Arr ?? s.Dep, track = tk }));
+        }
+        return list.OrderBy(x => x.Wait).Take(20).Select(x => x.Row).ToList();
     }
 
     /// <summary>
