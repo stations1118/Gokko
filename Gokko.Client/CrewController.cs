@@ -650,8 +650,13 @@ public sealed class CrewController
             var colon = ev.LastIndexOf(':');
             if (colon <= 0) continue;
             var name = ev[..colon];
-            if (!DriverInput.Actions.ContainsKey(name)) continue;
             var down = ev[(colon + 1)..] == "1";
+            if (name.StartsWith(DriverInput.PanelPrefix, StringComparison.Ordinal))
+            {
+                ApplyDriverPanel(name[DriverInput.PanelPrefix.Length..], down, s, now);
+                continue;
+            }
+            if (!DriverInput.Actions.ContainsKey(name)) continue;
             if (name is DriverInput.DoorClose or DriverInput.DoorOpen)
             {
                 // 運転士がゲームのドアのキーを押した: 添乗は、運転士のドアが閉まりきるのを待たずに、同時に動かす（車掌は自分で扱うので使わない）
@@ -904,9 +909,52 @@ public sealed class CrewController
         _doorMismatchSinceMs = 0;
     }
 
+    private bool _sentPanelEmergency, _sentPanelReOpen, _sentPanelJoukou; // 運転台の車掌スイッチで送った状態
+
+    /// <summary>
+    /// 運転士: 運転台の車掌スイッチの操作を、車掌から届くのと同じように、乗っている車掌・添乗のゲームへ送る
+    /// （ドア・NFB は押した瞬間、再開閉・乗降促進・非常ブレーキは入・切が変わったとき。ブザーは自分のゲームのブザーとして届く）。
+    /// </summary>
+    private void RelayDriverPanel(string action)
+    {
+        void Send(string name, bool on) => _driverKeyEvents.Enqueue($"{DriverInput.PanelPrefix}{name}:{(on ? 1 : 0)}");
+        if (action.Length > 0) Send(action, true);
+        if (_emergency != _sentPanelEmergency) Send(DriverInput.PanelEmergency, _sentPanelEmergency = _emergency);
+        if (_reOpen != _sentPanelReOpen) Send("ReOpenSW", _sentPanelReOpen = _reOpen);
+        if (_joukou != _sentPanelJoukou) Send("JoukouSokusin", _sentPanelJoukou = _joukou);
+    }
+
+    /// <summary>車掌・添乗: 運転士の運転台の車掌スイッチの操作を、自分のゲームで同じに扱う（車掌の操作盤から扱ったときと同じ）。</summary>
+    private void ApplyDriverPanel(string name, bool down, TciState s, long now)
+    {
+        switch (name)
+        {
+            case "DoorOpnLeft" or "DoorClsLeft" or "DoorOpnRight" or "DoorClsRight":
+                if (!down || s.Speed >= 0.5f) return;
+                _lastPanelDoorMs = now; // 自分の操作として運転士へ送り返さない
+                _lastDoorFixMs = now;
+                _ = _tci.PressAsync(name, 50);
+                return;
+            case "door34sw" or "doorCutSw":
+                if (down) _ = _tci.PressAsync(name, 100);
+                return;
+            case "ReOpenSW" or "JoukouSokusin":
+                _tci.SetButton(name, down);
+                return;
+            case DriverInput.PanelEmergency:
+                if (!_emergency) _tci.SetAtoNotch(down ? -8 : 0); // 自分の操作盤で非常をかけているときは触らない
+                return;
+        }
+    }
+
     private void SendConductor(string action, bool? allClose = null)
     {
-        if (_role != CrewRole.Conductor) return; // 運転士の運転台の車掌スイッチは、自分のゲームだけを扱う
+        if (_role == CrewRole.Driver)
+        {
+            RelayDriverPanel(action); // 運転台の車掌スイッチ: 乗っている車掌・添乗のゲームでも同じに扱う
+            return;
+        }
+        if (_role != CrewRole.Conductor) return;
         _crew.SendConductorInput(new ConductorInput
         {
             Action = action, AllClose = allClose ?? _ownAllClose ?? true, Emergency = _emergency, ReOpen = _reOpen, Joukou = _joukou,

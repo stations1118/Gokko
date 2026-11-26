@@ -197,6 +197,15 @@ public sealed class DriverInput
         [DoorClose] = "ドア閉", [DoorOpen] = "ドア開"
     };
 
+    /// <summary>
+    /// 運転台の車掌スイッチ（運転士の車掌用操作盤）の操作を、Action に "盤/ボタン名:1" の形で載せる（車掌から届く操作と同じように、
+    /// 車掌・添乗のゲームで扱う）。ボタン名はドア・NFB（車掌の操作と同じ）、ReOpenSW・JoukouSokusin、<see cref="PanelEmergency"/>。
+    /// </summary>
+    public const string PanelPrefix = "盤/";
+
+    /// <summary>運転台の車掌スイッチの非常ブレーキ（車掌・添乗のゲームでは ATO のブレーキ -8）。</summary>
+    public const string PanelEmergency = "Emergency";
+
     /// <summary>運転士がドアを閉めた（添乗に知らせる）。</summary>
     public const string DoorClose = "DoorClose";
 
