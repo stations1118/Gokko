@@ -429,6 +429,11 @@ public static class AdminEndpoints
             .Where(s => !s.IsRepeater && s.Protects.Count > 0 && System.Text.RegularExpressions.Regex.IsMatch(s.Name, @"^(上り|下り)閉塞\d+$"))
             .Select(s => new { number = System.Text.RegularExpressions.Regex.Match(s.Name, @"\d+$").Value, direction = s.Name[..2], circuit = s.Protects[0] })));
 
+        // 停目までの距離の表（クライアントの自動運転が乗務の初めに1回だけ読む。距離の計算はクライアント）。中身は起動時のデータで決まるので1回だけ作る
+        Gokko.Common.StopTargetTable? stopTargets = null;
+        app.MapGet("/api/stop-targets", (AiTrains ai, StopMarkers markers, RailData rail) =>
+            Results.Ok(stopTargets ??= StopTargets.Build(ai, markers, rail)));
+
         // ロープレ時刻（画面で、サーバーの実際の時刻をロープレ時刻に直して出すため）。daySec はその日の秒（設定していなければ null）
         app.MapGet("/api/clock", (GameClock clock) => Results.Ok(new
         {
