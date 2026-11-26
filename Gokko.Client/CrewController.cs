@@ -169,6 +169,7 @@ public sealed class CrewController
         _tci.Start();
         _tci.WantStations = _role == CrewRole.Driver; // 運転士はランカーブを記録する（停車駅の一覧が要る）
         _ = LoadStopTableAsync();
+        _ = LoadBrakeProfilesAsync();
         if (_role == CrewRole.Driver && _keyHook == null)
         {
             _keyHook = new GlobalKeyboardHook();
@@ -433,7 +434,7 @@ public sealed class CrewController
         if (s is { InGame: true, IsDriver: true } && _tci.LastRaw is { } raw)
         {
             var signals = _tci.Signals();
-            Record("manual", s, raw, UpdateStop(s, raw, signals), signals, 0, now);
+            Record("manual", s, raw, UpdateStop(s, raw, signals), signals, 0, 0, now);
         }
 
         foreach (var (binding, down) in _joystick.Poll()) OnDriverInputDevice(binding, down); // コントローラーのボタン
@@ -735,6 +736,7 @@ public sealed class CrewController
     private AutoDriver? _auto;
     private StopDistance _stopDistance = new(null); // 停目までの残り（運転士の記録・自動運転で使う）
     private StopTargetTable? _stopTable; // 停目の表（乗務を始めたときにサーバーから1回だけ読む。読めなければ null）
+    private BrakeProfileTable? _brakeProfiles; // 自動運転の見込みの値（乗務を始めたときにサーバーから1回だけ読む。読めなければ null）
     private readonly RunRecorder _recorder = new(); // ランカーブ（運転士の人の運転・車掌の自動運転）
     private bool _autoBuzzer; // 発車の合図（ブザー）が鳴っていたか（鳴り始めを見る）
     private int _autoPower = int.MinValue, _autoBrake = int.MinValue; // 前の周期に送ったノッチ
@@ -760,7 +762,7 @@ public sealed class CrewController
             return;
         }
 
-        _auto = new AutoDriver();
+        _auto = new AutoDriver { Profiles = _brakeProfiles };
         _stopDistance = new StopDistance(_stopTable);
         _recorder.Reset();
         _autoBuzzer = true; // 入れた瞬間に鳴っていたブザーでは発車しない
@@ -772,6 +774,24 @@ public sealed class CrewController
     }
 
     /// <summary>停目の表を読む（読めなければゲームの距離だけで動く）。読めたら、停目までの残りを出し直す（記録は次の駅間から）。</summary>
+    /// <summary>自動運転の見込みの値（ランカーブから集計した表）を読む。読めなければ目安で走る。自動運転が入っていれば差し替える。</summary>
+    private async Task LoadBrakeProfilesAsync()
+    {
+        try
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+            var table = await System.Net.Http.Json.HttpClientJsonExtensions.GetFromJsonAsync<BrakeProfileTable>(http,
+                ServerAddress.Current.TrimEnd('/') + "/api/brake-profiles", new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+            if (table == null) return;
+            _brakeProfiles = table;
+            if (_auto != null) _auto.Profiles = table;
+        }
+        catch (Exception)
+        {
+            // 読めなければ目安で走る
+        }
+    }
+
     private async Task LoadStopTableAsync()
     {
         var table = await StopDistance.LoadTableAsync();
@@ -790,8 +810,8 @@ public sealed class CrewController
             _game.Latest?.TrackCircuits ?? []));
 
     /// <summary>ランカーブを1つ記録する（運転士は人の運転、車掌は自動運転の間だけ）。</summary>
-    private void Record(string mode, TciState s, TrainState raw, StopDistanceResult stop, IReadOnlyList<SignalInfo> signals, double gain, long now) =>
-        _recorder.Step(mode, s, raw, stop, signals, _game.Latest?.TrackCircuits ?? [], _crew.Status?.TrainNumber is { Length: > 0 } t ? t : s.DiaName, gain, now);
+    private void Record(string mode, TciState s, TrainState raw, StopDistanceResult stop, IReadOnlyList<SignalInfo> signals, double gain, double stopOffset, long now) =>
+        _recorder.Step(mode, s, raw, stop, signals, _game.Latest?.TrackCircuits ?? [], _crew.Status?.TrainNumber is { Length: > 0 } t ? t : s.DiaName, gain, stopOffset, now);
 
     /// <summary>自動運転を切る（入っていなければ何もしない）。ノッチは中立・常用最大ブレーキに戻す。</summary>
     private void StopAuto(string message)
@@ -822,7 +842,7 @@ public sealed class CrewController
         var signals = _tci.Signals();
         var stop = UpdateStop(s, raw, signals);
         var (power, brake) = _auto.Step(s, raw, signals, stop, departSignal, _emergency, now);
-        Record("auto", s, raw, stop, signals, _auto.Gain, now);
+        Record("auto", s, raw, stop, signals, _auto.Gain, _auto.StopOffset, now);
         _tci.SetReverser(1, resend);
         _tci.SetNotch(power, brake, resend);
         _autoPower = power;
