@@ -1062,41 +1062,46 @@ public static class AdminEndpoints
         {
             if (string.IsNullOrWhiteSpace(req.Train)) return Results.BadRequest(new { message = "列車を指定してください" });
             string? error;
+            // 同じ列番が2本走っていてサーバーで 1985CX と呼んでいる列車は、時刻表の列番（1985C）の後運用を差し替える。
+            // 集中扱いの指示（打ち切り・番線）は、サーバーの列番（1985CX）に付ける
+            var train = engine.DiaNumberOf(req.Train);
+            var server = RailData.NormalizeTrain(req.Train);
+            string S(string t) => t == train ? server : t;
             // 途中折返し（station と next と direct）: train を station で打ち切り、direct 番線で next に折り返す。next がもう走っていれば断る
             if (req.Station is { Length: > 0 } midSt && req.Direct is { } midTrack && !string.IsNullOrWhiteSpace(req.Next))
             {
                 var nextNo = RailData.NormalizeTrain(req.Next);
                 if (engine.IsRunning(nextNo)) return Results.BadRequest(new { message = $"{nextNo} はもう走っています" });
-                if (rail.Turns.SetMid(req.Train, nextNo, midSt, midTrack, out error) is { } m)
+                if (rail.Turns.SetMid(train, nextNo, midSt, midTrack, out error) is { } m)
                 {
-                    central.SetStop(m.Train, m.Station, "打ち切り");
-                    central.SetTrack(m.Train, m.Station, m.Track);
+                    central.SetStop(S(m.Train), m.Station, "打ち切り");
+                    central.SetTrack(S(m.Train), m.Station, m.Track);
                     central.SetTrack(m.Next, m.Station, m.Track);
                 }
             }
             else if (req.Direct is { } track)
             {
-                if (rail.Turns.SetDirect(req.Train, track, engine.DelayOf(RailData.NormalizeTrain(req.Train)),
-                        (t, st) => central.TrackOverride(t, st) != null, out error) is { } d)
+                if (rail.Turns.SetDirect(train, track, engine.DelayOf(server),
+                        (t, st) => central.TrackOverride(S(t), st) != null, out error) is { } d)
                 {
-                    central.SetTrack(d.Train, d.Station, d.Track);
+                    central.SetTrack(S(d.Train), d.Station, d.Track);
                     central.SetTrack(d.Next, d.Station, d.Track);
                     foreach (var (mt, mk) in d.Moved) central.SetTrack(mt, d.Station, mk);
                 }
             }
             else if (string.IsNullOrWhiteSpace(req.Next))
             {
-                error = rail.Turns.Cancel(req.Train, out var undone);
+                error = rail.Turns.Cancel(train, out var undone);
                 if (undone is { } u)
                 {
-                    if (u.Midway && central.StopOverride(u.Train, u.Station) == "打ち切り") central.SetStop(u.Train, u.Station, null);
-                    if (central.TrackOverride(u.Train, u.Station) == u.Track) central.SetTrack(u.Train, u.Station, null);
+                    if (u.Midway && central.StopOverride(S(u.Train), u.Station) == "打ち切り") central.SetStop(S(u.Train), u.Station, null);
+                    if (central.TrackOverride(S(u.Train), u.Station) == u.Track) central.SetTrack(S(u.Train), u.Station, null);
                     if (central.TrackOverride(u.Next, u.Station) == u.Track) central.SetTrack(u.Next, u.Station, null);
                     foreach (var (mt, mk) in u.Moved)
                         if (central.TrackOverride(mt, u.Station) == mk) central.SetTrack(mt, u.Station, null);
                 }
             }
-            else error = rail.Turns.Set(req.Train, req.Next);
+            else error = rail.Turns.Set(train, req.Next);
             return error != null ? Results.BadRequest(new { message = error }) : Results.Ok(new { ok = true });
         });
 
