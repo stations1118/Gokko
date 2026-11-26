@@ -19,7 +19,7 @@ namespace Gokko.Client;
 public sealed class AutoDriver
 {
     private const int MaxBrake = 7;            // 常用最大（B8 は直通非常なので使わない）
-    private const int HoldBrake = 4;           // 止まっている間のブレーキ
+    private const int HoldBrake = 5;           // 止まっている間のブレーキ（止まりきってから入れる。発車のときは力行に移るときにゆるむ）
     private const int MaxPower = 5;            // 力行の一番強い段の見込み
     private const double ShuntSpeed = 25;      // 入換で動くときの速度の上限（km/h）
     private const double LimitMargin = 2;      // 制限速度・ATS の速度より、これだけ下を上限にする（km/h）
