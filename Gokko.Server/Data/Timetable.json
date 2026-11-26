@@ -1496,9 +1496,9 @@
         { "st": "TH66S", "name": "江原信", "stop": "通", "arr": null, "dep": "14:38:25", "track": null },
         { "st": "TH67", "name": "新野崎", "stop": "通", "arr": null, "dep": "14:40:20", "track": 3 },
         { "st": "TH70", "name": "浜園", "stop": "通", "arr": null, "dep": "14:42:20", "track": null },
-        { "st": "TH71", "name": "津崎", "stop": "通", "arr": null, "dep": "14:45:05", "track": 3 },
-        { "st": "TH75", "name": "駒野", "stop": "通", "arr": null, "dep": "14:48:50", "track": 3 },
-        { "st": "TH76", "name": "館浜", "stop": "停", "arr": "14:51:20", "dep": null, "track": 2 }
+        { "st": "TH71", "name": "津崎", "stop": "通", "arr": null, "dep": "14:43:15", "track": 3 },
+        { "st": "TH75", "name": "駒野", "stop": "通", "arr": null, "dep": "14:47:00", "track": 3 },
+        { "st": "TH76", "name": "館浜", "stop": "停", "arr": "14:49:30", "dep": null, "track": 2 }
       ]
     },
     {
@@ -1581,9 +1581,9 @@
         { "st": "TH66S", "name": "江原信", "stop": "通", "arr": null, "dep": "14:05:45", "track": null },
         { "st": "TH67", "name": "新野崎", "stop": "通", "arr": null, "dep": "14:07:40", "track": 3 },
         { "st": "TH70", "name": "浜園", "stop": "通", "arr": null, "dep": "14:09:40", "track": null },
-        { "st": "TH71", "name": "津崎", "stop": "通", "arr": null, "dep": "14:12:25", "track": 3 },
-        { "st": "TH75", "name": "駒野", "stop": "通", "arr": null, "dep": "14:16:10", "track": 3 },
-        { "st": "TH76", "name": "館浜", "stop": "停", "arr": "14:18:40", "dep": null, "track": 2 }
+        { "st": "TH71", "name": "津崎", "stop": "通", "arr": null, "dep": "14:10:35", "track": 3 },
+        { "st": "TH75", "name": "駒野", "stop": "通", "arr": null, "dep": "14:14:20", "track": 3 },
+        { "st": "TH76", "name": "館浜", "stop": "停", "arr": "14:16:50", "dep": null, "track": 2 }
       ]
     },
     {
@@ -1768,7 +1768,7 @@
         { "st": "TH73", "name": "海岸公園", "stop": "停", "arr": null, "dep": "13:39:15", "track": null },
         { "st": "TH72", "name": "虹ケ浜", "stop": "停", "arr": null, "dep": "13:41:30", "track": null },
         { "st": "TH71", "name": "津崎", "stop": "停", "arr": "13:43:25", "dep": "13:43:50", "track": 2 },
-        { "st": "TH70", "name": "浜園", "stop": "停", "arr": "13:45:30", "dep": "13:46:00", "track": 1, "note": "(連)特手①05発" },
+        { "st": "TH70", "name": "浜園", "stop": "停", "arr": "13:45:30", "dep": "13:46:00", "track": 1 },
         { "st": "TH69", "name": "羽衣橋", "stop": "停", "arr": null, "dep": "13:47:50", "track": null },
         { "st": "TH68", "name": "新井川", "stop": "停", "arr": null, "dep": "13:49:40", "track": null },
         { "st": "TH67", "name": "新野崎", "stop": "停", "arr": "13:51:25", "dep": null, "track": 1, "note": "入換;(連)準道②56発" }
@@ -1778,13 +1778,13 @@
       "number": "1364", "type": "普通", "label": "普通", "dest": "新野崎", "unyo": 64,
       "turn": { "kind": "折返", "number": "1465", "time": "14:32", "how": "入換", "text": "1465 14:32入換 普通 館浜行" },
       "stops": [
-        { "st": "TH76", "name": "館浜", "stop": "停", "arr": null, "dep": "13:51:00", "track": 4 },
-        { "st": "TH75", "name": "駒野", "stop": "停", "arr": "13:53:15", "dep": "13:53:45", "track": 2 },
-        { "st": "TH74", "name": "河原崎", "stop": "停", "arr": null, "dep": "13:55:25", "track": null },
-        { "st": "TH73", "name": "海岸公園", "stop": "停", "arr": null, "dep": "13:57:15", "track": null },
-        { "st": "TH72", "name": "虹ケ浜", "stop": "停", "arr": null, "dep": "13:59:30", "track": null },
-        { "st": "TH71", "name": "津崎", "stop": "停", "arr": "14:01:45", "dep": "14:06:30", "track": 1, "note": "(待)特手②03通" },
-        { "st": "TH70", "name": "浜園", "stop": "停", "arr": "14:08:20", "dep": "14:08:50", "track": 1, "note": "(連)特手①35発" },
+        { "st": "TH76", "name": "館浜", "stop": "停", "arr": null, "dep": "13:53:00", "track": 4 },
+        { "st": "TH75", "name": "駒野", "stop": "停", "arr": "13:55:15", "dep": "13:55:45", "track": 2 },
+        { "st": "TH74", "name": "河原崎", "stop": "停", "arr": null, "dep": "13:57:25", "track": null },
+        { "st": "TH73", "name": "海岸公園", "stop": "停", "arr": null, "dep": "13:59:15", "track": null },
+        { "st": "TH72", "name": "虹ケ浜", "stop": "停", "arr": null, "dep": "14:01:30", "track": null },
+        { "st": "TH71", "name": "津崎", "stop": "停", "arr": "14:03:45", "dep": "14:06:30", "track": 1, "note": "(待)特手②05通" },
+        { "st": "TH70", "name": "浜園", "stop": "停", "arr": "14:08:20", "dep": "14:08:50", "track": 1 },
         { "st": "TH69", "name": "羽衣橋", "stop": "停", "arr": null, "dep": "14:10:40", "track": null },
         { "st": "TH68", "name": "新井川", "stop": "停", "arr": null, "dep": "14:12:30", "track": null },
         { "st": "TH67", "name": "新野崎", "stop": "停", "arr": "14:14:10", "dep": null, "track": 1, "note": "入換;(接)準道②16発" }
@@ -1792,7 +1792,7 @@
     },
     {
       "number": "1365", "type": "普通", "label": "普通", "dest": "館浜", "unyo": 64,
-      "turn": { "kind": "折返", "number": "1364", "time": "13:51", "how": "発", "text": "1364 13:51発 普通 新野崎行" },
+      "turn": { "kind": "折返", "number": "1364", "time": "13:53", "how": "発", "text": "1364 13:53発 普通 新野崎行" },
       "stops": [
         { "st": "TH67", "name": "新野崎", "stop": "停", "arr": null, "dep": "13:16:00", "track": 4, "note": "入換" },
         { "st": "TH68", "name": "新井川", "stop": "停", "arr": null, "dep": "13:17:50", "track": null },
@@ -1829,7 +1829,7 @@
         { "st": "TH67", "name": "新野崎", "stop": "停", "arr": null, "dep": "13:56:00", "track": 4, "note": "入換" },
         { "st": "TH68", "name": "新井川", "stop": "停", "arr": null, "dep": "13:57:50", "track": null },
         { "st": "TH69", "name": "羽衣橋", "stop": "停", "arr": null, "dep": "13:59:40", "track": null },
-        { "st": "TH70", "name": "浜園", "stop": "停", "arr": "14:01:05", "dep": "14:01:35", "track": null, "note": "(連)特館11発" },
+        { "st": "TH70", "name": "浜園", "stop": "停", "arr": "14:01:05", "dep": "14:01:35", "track": null },
         { "st": "TH71", "name": "津崎", "stop": "停", "arr": "14:03:15", "dep": "14:03:40", "track": 3 },
         { "st": "TH72", "name": "虹ケ浜", "stop": "停", "arr": null, "dep": "14:05:55", "track": null },
         { "st": "TH73", "name": "海岸公園", "stop": "停", "arr": null, "dep": "14:08:10", "track": null },
@@ -1887,9 +1887,9 @@
       "turn": { "kind": "折返", "number": "1485C", "time": "14:20", "how": "入換", "text": "1485C 14:20入換 準急 館浜行" },
       "stops": [
         { "st": "TH76", "name": "館浜", "stop": "停", "arr": null, "dep": "13:44:00", "track": 3 },
-        { "st": "TH75", "name": "駒野", "stop": "停", "arr": "13:46:15", "dep": "13:46:45", "track": 2, "note": "(連)普野②53発" },
+        { "st": "TH75", "name": "駒野", "stop": "停", "arr": "13:46:15", "dep": "13:46:45", "track": 2, "note": "(連)普野②55発" },
         { "st": "TH71", "name": "津崎", "stop": "通", "arr": null, "dep": "13:50:50", "track": 2 },
-        { "st": "TH70", "name": "浜園", "stop": "停", "arr": "13:52:10", "dep": "13:52:40", "track": 1, "note": "(連)特手①05発;(連)普野①08発" },
+        { "st": "TH70", "name": "浜園", "stop": "停", "arr": "13:52:10", "dep": "13:52:40", "track": 1, "note": "(連)普野①08発" },
         { "st": "TH67", "name": "新野崎", "stop": "停", "arr": "13:55:30", "dep": "13:56:00", "track": 2 },
         { "st": "TH66", "name": "江ノ原", "stop": "停", "arr": null, "dep": "13:58:05", "track": null },
         { "st": "TH66S", "name": "江原信", "stop": "通", "arr": null, "dep": "13:58:50", "track": null },
@@ -1932,7 +1932,7 @@
         { "st": "TH66S", "name": "江原信", "stop": "通", "arr": null, "dep": "13:43:45", "track": null },
         { "st": "TH66", "name": "江ノ原", "stop": "停", "arr": null, "dep": "13:45:10", "track": null },
         { "st": "TH67", "name": "新野崎", "stop": "停", "arr": "13:46:55", "dep": "13:47:25", "track": 3, "note": "(連)普館④56発" },
-        { "st": "TH70", "name": "浜園", "stop": "停", "arr": "13:50:10", "dep": "13:50:40", "track": null, "note": "(連)普館01発;(連)特館11発" },
+        { "st": "TH70", "name": "浜園", "stop": "停", "arr": "13:50:10", "dep": "13:50:40", "track": null, "note": "(連)普館01発" },
         { "st": "TH71", "name": "津崎", "stop": "通", "arr": null, "dep": "13:51:55", "track": 3 },
         { "st": "TH75", "name": "駒野", "stop": "停", "arr": "13:56:00", "dep": "13:56:30", "track": 3 },
         { "st": "TH76", "name": "館浜", "stop": "停", "arr": "13:59:25", "dep": null, "track": 3 }
@@ -1942,10 +1942,10 @@
       "number": "1402A", "type": "特急", "label": "C特2", "dest": "大手橋", "unyo": 2,
       "turn": { "kind": "引継", "number": "1402A", "time": null, "how": null, "text": "1402A C特2 大手橋行" },
       "stops": [
-        { "st": "TH76", "name": "館浜", "stop": "停", "arr": null, "dep": "13:58:00", "track": 1 },
-        { "st": "TH75", "name": "駒野", "stop": "通", "arr": null, "dep": "13:59:30", "track": 2 },
-        { "st": "TH71", "name": "津崎", "stop": "通", "arr": null, "dep": "14:03:10", "track": 2 },
-        { "st": "TH70", "name": "浜園", "stop": "通", "arr": null, "dep": "14:04:05", "track": 1 },
+        { "st": "TH76", "name": "館浜", "stop": "停", "arr": null, "dep": "14:00:00", "track": 1 },
+        { "st": "TH75", "name": "駒野", "stop": "通", "arr": null, "dep": "14:01:30", "track": 2 },
+        { "st": "TH71", "name": "津崎", "stop": "通", "arr": null, "dep": "14:05:10", "track": 2 },
+        { "st": "TH70", "name": "浜園", "stop": "通", "arr": null, "dep": "14:06:05", "track": 1 },
         { "st": "TH67", "name": "新野崎", "stop": "通", "arr": null, "dep": "14:08:10", "track": 2 },
         { "st": "TH66S", "name": "江原信", "stop": "通", "arr": null, "dep": "14:09:40", "track": null },
         { "st": "TH65", "name": "大道寺", "stop": "停", "arr": "14:11:00", "dep": "14:12:00", "track": 1, "note": "×普道③00着;×特館④03着;×試駒④09着;(連)普路①23発" },
@@ -2000,10 +2000,10 @@
       "number": "1414A", "type": "特急", "label": "C特1", "dest": "大手橋", "unyo": 14,
       "turn": { "kind": "引継", "number": "1414A", "time": null, "how": null, "text": "1414A C特1 大手橋行" },
       "stops": [
-        { "st": "TH76", "name": "館浜", "stop": "停", "arr": null, "dep": "14:28:00", "track": 1 },
-        { "st": "TH75", "name": "駒野", "stop": "通", "arr": null, "dep": "14:29:30", "track": 2 },
-        { "st": "TH71", "name": "津崎", "stop": "通", "arr": null, "dep": "14:33:10", "track": 2 },
-        { "st": "TH70", "name": "浜園", "stop": "通", "arr": null, "dep": "14:34:05", "track": 1 },
+        { "st": "TH76", "name": "館浜", "stop": "停", "arr": null, "dep": "14:30:00", "track": 1 },
+        { "st": "TH75", "name": "駒野", "stop": "通", "arr": null, "dep": "14:31:30", "track": 2 },
+        { "st": "TH71", "name": "津崎", "stop": "通", "arr": null, "dep": "14:35:10", "track": 2 },
+        { "st": "TH70", "name": "浜園", "stop": "通", "arr": null, "dep": "14:36:05", "track": 1 },
         { "st": "TH67", "name": "新野崎", "stop": "通", "arr": null, "dep": "14:38:10", "track": 2 },
         { "st": "TH66S", "name": "江原信", "stop": "通", "arr": null, "dep": "14:39:40", "track": null },
         { "st": "TH65", "name": "大道寺", "stop": "停", "arr": "14:41:00", "dep": "14:42:00", "track": 1, "note": "×特館④36着;×普道③41着;(連)普東①45発" },
@@ -2247,7 +2247,7 @@
         { "st": "TH67", "name": "新野崎", "stop": "停", "arr": null, "dep": "14:16:00", "track": 4, "note": "入換" },
         { "st": "TH68", "name": "新井川", "stop": "停", "arr": null, "dep": "14:17:50", "track": null },
         { "st": "TH69", "name": "羽衣橋", "stop": "停", "arr": null, "dep": "14:19:40", "track": null },
-        { "st": "TH70", "name": "浜園", "stop": "停", "arr": "14:21:05", "dep": "14:21:35", "track": null, "note": "(連)特館43発" },
+        { "st": "TH70", "name": "浜園", "stop": "停", "arr": "14:21:05", "dep": "14:21:35", "track": null },
         { "st": "TH71", "name": "津崎", "stop": "停", "arr": "14:23:15", "dep": "14:23:40", "track": 3 },
         { "st": "TH72", "name": "虹ケ浜", "stop": "停", "arr": null, "dep": "14:25:55", "track": null },
         { "st": "TH73", "name": "海岸公園", "stop": "停", "arr": null, "dep": "14:28:10", "track": null },
@@ -2263,13 +2263,13 @@
         { "st": "TH67", "name": "新野崎", "stop": "停", "arr": null, "dep": "14:34:00", "track": 4, "note": "入換" },
         { "st": "TH68", "name": "新井川", "stop": "停", "arr": null, "dep": "14:35:50", "track": null },
         { "st": "TH69", "name": "羽衣橋", "stop": "停", "arr": null, "dep": "14:37:40", "track": null },
-        { "st": "TH70", "name": "浜園", "stop": "停", "arr": "14:39:05", "dep": "14:39:35", "track": null, "note": "(連)特館43発" },
-        { "st": "TH71", "name": "津崎", "stop": "停", "arr": "14:41:30", "dep": "14:46:30", "track": 4, "note": "(待)特館③45通" },
-        { "st": "TH72", "name": "虹ケ浜", "stop": "停", "arr": null, "dep": "14:48:55", "track": null },
-        { "st": "TH73", "name": "海岸公園", "stop": "停", "arr": null, "dep": "14:51:10", "track": null },
-        { "st": "TH74", "name": "河原崎", "stop": "停", "arr": null, "dep": "14:53:05", "track": null },
-        { "st": "TH75", "name": "駒野", "stop": "停", "arr": "14:54:30", "dep": "14:55:00", "track": 3 },
-        { "st": "TH76", "name": "館浜", "stop": "停", "arr": "14:57:55", "dep": null, "track": 4 }
+        { "st": "TH70", "name": "浜園", "stop": "停", "arr": "14:39:05", "dep": "14:39:35", "track": null },
+        { "st": "TH71", "name": "津崎", "stop": "停", "arr": "14:41:30", "dep": "14:44:30", "track": 4, "note": "(待)特館③43通" },
+        { "st": "TH72", "name": "虹ケ浜", "stop": "停", "arr": null, "dep": "14:46:55", "track": null },
+        { "st": "TH73", "name": "海岸公園", "stop": "停", "arr": null, "dep": "14:49:10", "track": null },
+        { "st": "TH74", "name": "河原崎", "stop": "停", "arr": null, "dep": "14:51:05", "track": null },
+        { "st": "TH75", "name": "駒野", "stop": "停", "arr": "14:52:30", "dep": "14:53:00", "track": 3 },
+        { "st": "TH76", "name": "館浜", "stop": "停", "arr": "14:55:55", "dep": null, "track": 4 }
       ]
     },
     {
@@ -2298,7 +2298,7 @@
         { "st": "TH73", "name": "海岸公園", "stop": "停", "arr": null, "dep": "14:19:15", "track": null },
         { "st": "TH72", "name": "虹ケ浜", "stop": "停", "arr": null, "dep": "14:21:30", "track": null },
         { "st": "TH71", "name": "津崎", "stop": "停", "arr": "14:23:25", "dep": "14:23:50", "track": 2 },
-        { "st": "TH70", "name": "浜園", "stop": "停", "arr": "14:25:30", "dep": "14:26:00", "track": 1, "note": "(連)特手①35発" },
+        { "st": "TH70", "name": "浜園", "stop": "停", "arr": "14:25:30", "dep": "14:26:00", "track": 1 },
         { "st": "TH69", "name": "羽衣橋", "stop": "停", "arr": null, "dep": "14:27:50", "track": null },
         { "st": "TH68", "name": "新井川", "stop": "停", "arr": null, "dep": "14:29:40", "track": null },
         { "st": "TH67", "name": "新野崎", "stop": "停", "arr": "14:31:25", "dep": null, "track": 1, "note": "入換;(連)準道①39発" }
@@ -2327,7 +2327,7 @@
         { "st": "TH76", "name": "館浜", "stop": "停", "arr": null, "dep": "14:24:00", "track": 3 },
         { "st": "TH75", "name": "駒野", "stop": "停", "arr": "14:26:15", "dep": "14:26:45", "track": 2, "note": "(連)普野②35発" },
         { "st": "TH71", "name": "津崎", "stop": "通", "arr": null, "dep": "14:30:50", "track": 2 },
-        { "st": "TH70", "name": "浜園", "stop": "停", "arr": "14:32:10", "dep": "14:32:40", "track": 1, "note": "(連)特手①35発;(連)普野①46発" },
+        { "st": "TH70", "name": "浜園", "stop": "停", "arr": "14:32:10", "dep": "14:32:40", "track": 1, "note": "(連)普野①46発" },
         { "st": "TH67", "name": "新野崎", "stop": "停", "arr": "14:35:50", "dep": "14:39:10", "track": 1, "note": "(待)特手②38通" },
         { "st": "TH66", "name": "江ノ原", "stop": "停", "arr": null, "dep": "14:41:20", "track": null },
         { "st": "TH66S", "name": "江原信", "stop": "通", "arr": null, "dep": "14:42:05", "track": null },
@@ -2341,11 +2341,11 @@
         { "st": "TH65", "name": "大道寺", "stop": "停", "arr": null, "dep": "14:02:00", "track": 4, "note": "入換;(接)普道③00着" },
         { "st": "TH66S", "name": "江原信", "stop": "通", "arr": null, "dep": "14:02:45", "track": null },
         { "st": "TH66", "name": "江ノ原", "stop": "停", "arr": null, "dep": "14:04:10", "track": null },
-        { "st": "TH67", "name": "新野崎", "stop": "停", "arr": "14:06:15", "dep": "14:10:00", "track": 4, "note": "(待)特館③07通;(連)普館④16発" },
-        { "st": "TH70", "name": "浜園", "stop": "停", "arr": "14:12:50", "dep": "14:13:20", "track": null, "note": "(連)普館21発" },
-        { "st": "TH71", "name": "津崎", "stop": "通", "arr": null, "dep": "14:14:35", "track": 3 },
-        { "st": "TH75", "name": "駒野", "stop": "停", "arr": "14:18:40", "dep": "14:19:10", "track": 3 },
-        { "st": "TH76", "name": "館浜", "stop": "停", "arr": "14:22:05", "dep": null, "track": 3 }
+        { "st": "TH67", "name": "新野崎", "stop": "停", "arr": "14:06:15", "dep": "14:09:00", "track": 4, "note": "(待)特館③07通;(連)普館④16発" },
+        { "st": "TH70", "name": "浜園", "stop": "停", "arr": "14:11:50", "dep": "14:12:20", "track": null, "note": "(連)普館21発" },
+        { "st": "TH71", "name": "津崎", "stop": "通", "arr": null, "dep": "14:13:35", "track": 3 },
+        { "st": "TH75", "name": "駒野", "stop": "停", "arr": "14:17:40", "dep": "14:18:10", "track": 3 },
+        { "st": "TH76", "name": "館浜", "stop": "停", "arr": "14:21:05", "dep": null, "track": 3 }
       ]
     },
     {
@@ -2370,7 +2370,7 @@
         { "st": "TH66S", "name": "江原信", "stop": "通", "arr": null, "dep": "14:23:45", "track": null },
         { "st": "TH66", "name": "江ノ原", "stop": "停", "arr": null, "dep": "14:25:10", "track": null },
         { "st": "TH67", "name": "新野崎", "stop": "停", "arr": "14:26:55", "dep": "14:27:25", "track": 3, "note": "(連)普館④34発" },
-        { "st": "TH70", "name": "浜園", "stop": "停", "arr": "14:30:10", "dep": "14:30:40", "track": null, "note": "(連)普館39発;(連)特館43発" },
+        { "st": "TH70", "name": "浜園", "stop": "停", "arr": "14:30:10", "dep": "14:30:40", "track": null, "note": "(連)普館39発" },
         { "st": "TH71", "name": "津崎", "stop": "通", "arr": null, "dep": "14:31:55", "track": 3 },
         { "st": "TH75", "name": "駒野", "stop": "停", "arr": "14:36:00", "dep": "14:36:30", "track": 3 },
         { "st": "TH76", "name": "館浜", "stop": "停", "arr": "14:39:25", "dep": null, "track": 3 }
@@ -2383,7 +2383,7 @@
         { "st": "TH76", "name": "館浜", "stop": "停", "arr": null, "dep": "14:04:00", "track": 3 },
         { "st": "TH75", "name": "駒野", "stop": "停", "arr": "14:06:15", "dep": "14:06:45", "track": 2, "note": "(連)普野②15発" },
         { "st": "TH71", "name": "津崎", "stop": "通", "arr": null, "dep": "14:10:50", "track": 2 },
-        { "st": "TH70", "name": "浜園", "stop": "停", "arr": "14:12:10", "dep": "14:12:40", "track": 1, "note": "(連)普野①26発;(連)特手①35発" },
+        { "st": "TH70", "name": "浜園", "stop": "停", "arr": "14:12:10", "dep": "14:12:40", "track": 1, "note": "(連)普野①26発" },
         { "st": "TH67", "name": "新野崎", "stop": "停", "arr": "14:15:30", "dep": "14:16:00", "track": 2, "note": "(接)普野①14着" },
         { "st": "TH66", "name": "江ノ原", "stop": "停", "arr": null, "dep": "14:18:05", "track": null },
         { "st": "TH66S", "name": "江原信", "stop": "通", "arr": null, "dep": "14:18:50", "track": null },
@@ -2400,8 +2400,8 @@
         { "st": "TH67", "name": "新野崎", "stop": "停", "arr": "14:46:55", "dep": "14:47:25", "track": 3, "note": "(連)普館④56発" },
         { "st": "TH70", "name": "浜園", "stop": "停", "arr": "14:50:10", "dep": "14:50:40", "track": null, "note": "(連)普館01発" },
         { "st": "TH71", "name": "津崎", "stop": "通", "arr": null, "dep": "14:51:55", "track": 3 },
-        { "st": "TH75", "name": "駒野", "stop": "停", "arr": "14:56:50", "dep": "14:57:20", "track": 3 },
-        { "st": "TH76", "name": "館浜", "stop": "停", "arr": "15:00:15", "dep": null, "track": 3 }
+        { "st": "TH75", "name": "駒野", "stop": "停", "arr": "14:56:00", "dep": "14:56:30", "track": 3 },
+        { "st": "TH76", "name": "館浜", "stop": "停", "arr": "14:59:25", "dep": null, "track": 3 }
       ]
     },
     {
@@ -10334,7 +10334,7 @@
     },
     {
       "number": "回1302A", "type": "回送", "label": "回送", "dest": "駒野", "unyo": 2,
-      "turn": { "kind": "折返", "number": "回1303A", "time": "13:50", "how": "発", "text": "回1303A 13:50発 回送 館浜行" },
+      "turn": { "kind": "折返", "number": "回1303A", "time": "13:49", "how": "発", "text": "回1303A 13:49発 回送 館浜行" },
       "stops": [
         { "st": "TH76", "name": "館浜", "stop": "停", "arr": null, "dep": "13:06:00", "track": 2, "note": "灰色" },
         { "st": "TH75", "name": "駒野", "stop": "停", "arr": "13:08:10", "dep": null, "track": 5, "note": "灰色" }
@@ -10342,15 +10342,15 @@
     },
     {
       "number": "回1303A", "type": "回送", "label": "回送", "dest": "館浜", "unyo": 2,
-      "turn": { "kind": "折返", "number": "1402A", "time": "13:58", "how": "発", "text": "1402A 13:58発 C特2 大手橋行" },
+      "turn": { "kind": "折返", "number": "1402A", "time": "14:00", "how": "発", "text": "1402A 14:00発 C特2 大手橋行" },
       "stops": [
-        { "st": "TH75", "name": "駒野", "stop": "停", "arr": null, "dep": "13:50:00", "track": 5, "note": "灰色;(待)特館③47通" },
-        { "st": "TH76", "name": "館浜", "stop": "停", "arr": "13:53:30", "dep": null, "track": 1, "note": "灰色" }
+        { "st": "TH75", "name": "駒野", "stop": "停", "arr": null, "dep": "13:49:00", "track": 5, "note": "灰色;(待)特館③47通" },
+        { "st": "TH76", "name": "館浜", "stop": "停", "arr": "13:51:50", "dep": null, "track": 1, "note": "灰色" }
       ]
     },
     {
       "number": "回1314A", "type": "回送", "label": "回送", "dest": "駒野", "unyo": 14,
-      "turn": { "kind": "折返", "number": "回1415A", "time": "14:17", "how": "発", "text": "回1415A 14:17発 回送 館浜行" },
+      "turn": { "kind": "折返", "number": "回1415A", "time": "14:20", "how": "発", "text": "回1415A 14:20発 回送 館浜行" },
       "stops": [
         { "st": "TH76", "name": "館浜", "stop": "停", "arr": null, "dep": "13:36:00", "track": 2, "note": "灰色" },
         { "st": "TH75", "name": "駒野", "stop": "停", "arr": "13:38:10", "dep": null, "track": 6, "note": "灰色" }
@@ -10375,7 +10375,7 @@
     },
     {
       "number": "回1408A", "type": "回送", "label": "回送", "dest": "駒野", "unyo": 8,
-      "turn": { "kind": "折返", "number": "回1409A", "time": "14:46", "how": "発", "text": "回1409A 14:46発 回送 館浜行" },
+      "turn": { "kind": "折返", "number": "回1409A", "time": "14:49", "how": "発", "text": "回1409A 14:49発 回送 館浜行" },
       "stops": [
         { "st": "TH76", "name": "館浜", "stop": "停", "arr": null, "dep": "14:06:00", "track": 2, "note": "灰色" },
         { "st": "TH75", "name": "駒野", "stop": "停", "arr": "14:08:10", "dep": null, "track": 5, "note": "灰色" }
@@ -10385,16 +10385,16 @@
       "number": "回1409A", "type": "回送", "label": "回送", "dest": "館浜", "unyo": 8,
       "turn": { "kind": "折返", "number": "1508A", "time": "15:00", "how": "発", "text": "1508A 15:00発 C特2 大手橋行" },
       "stops": [
-        { "st": "TH75", "name": "駒野", "stop": "停", "arr": null, "dep": "14:46:30", "track": 5, "note": "灰色" },
-        { "st": "TH76", "name": "館浜", "stop": "停", "arr": "14:49:20", "dep": null, "track": 1, "note": "灰色" }
+        { "st": "TH75", "name": "駒野", "stop": "停", "arr": null, "dep": "14:49:00", "track": 5, "note": "灰色;(待)特館③47通" },
+        { "st": "TH76", "name": "館浜", "stop": "停", "arr": "14:51:50", "dep": null, "track": 1, "note": "灰色" }
       ]
     },
     {
       "number": "回1415A", "type": "回送", "label": "回送", "dest": "館浜", "unyo": 14,
-      "turn": { "kind": "折返", "number": "1414A", "time": "14:28", "how": "発", "text": "1414A 14:28発 C特1 大手橋行" },
+      "turn": { "kind": "折返", "number": "1414A", "time": "14:30", "how": "発", "text": "1414A 14:30発 C特1 大手橋行" },
       "stops": [
-        { "st": "TH75", "name": "駒野", "stop": "停", "arr": null, "dep": "14:17:00", "track": 6, "note": "灰色;(待)特館③16通" },
-        { "st": "TH76", "name": "館浜", "stop": "停", "arr": "14:19:50", "dep": null, "track": 1, "note": "灰色" }
+        { "st": "TH75", "name": "駒野", "stop": "停", "arr": null, "dep": "14:20:00", "track": 6, "note": "灰色;(待)特館③14通" },
+        { "st": "TH76", "name": "館浜", "stop": "停", "arr": "14:22:50", "dep": null, "track": 1, "note": "灰色" }
       ]
     },
     {
@@ -11434,7 +11434,7 @@
       "number": "試9494", "type": "試運転", "label": "試運転", "dest": "江原検", "unyo": 394,
       "turn": { "kind": "引継", "number": "構内運転士へ", "time": null, "how": null, "text": "構内運転士へ" },
       "stops": [
-        { "st": "TH75", "name": "駒野", "stop": "停", "arr": null, "dep": "14:33:00", "track": 1, "note": "灰色;(待)特手②29通" },
+        { "st": "TH75", "name": "駒野", "stop": "停", "arr": null, "dep": "14:33:00", "track": 1, "note": "灰色;(待)特手②31通" },
         { "st": "TH71", "name": "津崎", "stop": "通", "arr": null, "dep": "14:39:00", "track": 2 },
         { "st": "TH70", "name": "浜園", "stop": "通", "arr": null, "dep": "14:39:55", "track": 1 },
         { "st": "TH67", "name": "新野崎", "stop": "通", "arr": null, "dep": "14:42:45", "track": 2 },
