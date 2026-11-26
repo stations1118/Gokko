@@ -221,7 +221,7 @@ public sealed class StateBroadcaster : BackgroundService
                 var shuntMoving = p.ShuntMove == ShuntMoveState.Moving;
                 var others = shared.Where(o => o.ConnectionId != p.ConnectionId && !SameTrain(o, p)).SelectMany(o => o.TrackCircuits).ToHashSet();
                 if (shuntMoving) others.Clear();
-                // 連結する列車には、番線で待っている増結車の在線を見せない（入換信号機で、増結車のいる番線へ入るため）
+                // 連結する列車には、番線で待っている増結車の在線を見せない（止まってから番線の場内で、増結車のいる番線へ入るため）
                 others.ExceptWith(_routes.CouplingIgnored(p.ConnectionId));
                 state.Signals = _signals.Calculate(others, p.GameRoutes);
 
