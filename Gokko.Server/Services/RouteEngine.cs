@@ -1069,17 +1069,14 @@ public sealed partial class RouteEngine
         var line = $"{_clock.TextAt(now)} {text}"; // 画面の記録はロープレ時刻（ファイルには実際の日時も書く）
         _routeLog.Add(line);
         if (_routeLog.Count > 500) _routeLog.RemoveAt(0);
-        try
-        {
-            var dir = Path.Combine(AppContext.BaseDirectory, "logs");
-            Directory.CreateDirectory(dir);
-            File.AppendAllText(Path.Combine(dir, $"routes-{now.ToLocalTime():yyyyMMdd}.log"), $"{now.ToLocalTime():yyyy-MM-dd HH:mm:ss} {line}{Environment.NewLine}");
-        }
-        catch
-        {
-            // 書けなくても進路の判断は続ける
-        }
+        // 書けなくても進路の判断は続ける（DailyLog は例外を出さない）
+        var local = now.ToLocalTime();
+        _routeFile.Append(now, $"{local:yyyy-MM-dd HH:mm:ss} {line}{Environment.NewLine}",
+            () => $"{local:yyyy-MM-dd HH:mm:ss} この日の進路の記録が {_routeFile.MaxMb}MB を超えたので、ここで書くのをやめます{Environment.NewLine}");
     }
+
+    /// <summary>進路の記録のファイル（logs/routes-yyyyMMdd.log）。ふだんは1日 300〜400KB。何かが繰り返し書き続けても、1日 20MB で止める。</summary>
+    private readonly DailyLog _routeFile = new("routes", 20L * 1024 * 1024);
 
     /// <summary>
     /// 単線区間の走行順と、その区間へ出る駅の出発順序をそろえる（どちらかを変えたら、もう片方も変わる）。

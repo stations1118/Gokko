@@ -116,9 +116,7 @@ public sealed class AiTrains : BackgroundService
         now + TimeSpan.FromTicks((long)((utc - DateTime.UtcNow).Ticks * (_clock.Speed > 0 ? _clock.Speed : 1)));
     private readonly HashSet<string> _takeOverLogged = new(); // 引き継げなかったことを記録した継続乗務の在線（同じものを何度も書かない）
     private const long StatusLogMaxBytesPerDay = 20L * 1024 * 1024; // 状態の記録の1日の上限
-    private string _statusLogDay = "";
-    private long _statusLogBytes;
-    private bool _statusLogFull;
+    private readonly DailyLog _statusFile = new("ai", StatusLogMaxBytesPerDay);
 
     public AiTrains(string dataDir, RailData rail, PlayerRegistry players, GameClock clock, RouteEngine routes, CentralControl central,
         IncidentManager log, CrewRoster crew, DutyRosters duties, CrewRelay relay, ProtectionRadio protectionRadio,
@@ -604,37 +602,13 @@ public sealed class AiTrains : BackgroundService
     /// </summary>
     private void StatusLog(DateTime now, List<string> lines)
     {
-        try
-        {
-            var local = now.ToLocalTime();
-            var day = local.ToString("yyyyMMdd");
-            var dir = Path.Combine(AppContext.BaseDirectory, "logs");
-            var path = Path.Combine(dir, $"ai-{day}.log");
-            if (day != _statusLogDay)
-            {
-                Directory.CreateDirectory(dir);
-                _statusLogDay = day;
-                _statusLogBytes = File.Exists(path) ? new FileInfo(path).Length : 0;
-                _statusLogFull = false;
-            }
-            if (_statusLogFull) return;
-
-            var game = _clock.TextAt(now);
-            var sb = new StringBuilder();
-            foreach (var l in lines) sb.Append($"{local:yyyy-MM-dd HH:mm:ss} {game} {l}{Environment.NewLine}");
-            if (_statusLogBytes > StatusLogMaxBytesPerDay)
-            {
-                _statusLogFull = true;
-                sb.Clear().Append($"{local:yyyy-MM-dd HH:mm:ss} {game} この日の状態の記録が {StatusLogMaxBytesPerDay / 1024 / 1024}MB を超えたので、ここで書くのをやめます{Environment.NewLine}");
-            }
-            var text = sb.ToString();
-            File.AppendAllText(path, text);
-            _statusLogBytes += Encoding.UTF8.GetByteCount(text);
-        }
-        catch
-        {
-            // 書けなくても列車は動かし続ける
-        }
+        // 書けなくても列車は動かし続ける（DailyLog は例外を出さない）
+        var local = now.ToLocalTime();
+        var game = _clock.TextAt(now);
+        var sb = new StringBuilder();
+        foreach (var l in lines) sb.Append($"{local:yyyy-MM-dd HH:mm:ss} {game} {l}{Environment.NewLine}");
+        _statusFile.Append(now, sb.ToString(),
+            () => $"{local:yyyy-MM-dd HH:mm:ss} {game} この日の状態の記録が {_statusFile.MaxMb}MB を超えたので、ここで書くのをやめます{Environment.NewLine}");
     }
 
     private static bool ShouldStopForProtection(Train t, HashSet<(int First, int Last)> active)
