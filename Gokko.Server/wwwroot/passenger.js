@@ -141,12 +141,13 @@ async function readTrain(t, position) {
     const formation = cars.length ? cars.length + "両編成　" + cars.map(c => c || "形式不明").join("・") : "編成情報未取得";
     const table = node("table","");
     const head = table.createTHead().insertRow();
-    for (const title of ["停車駅","定刻","到着見込み"]) head.append(node("th","",title));
+    for (const title of ["停車駅","定刻着","到着見込み"]) head.append(node("th","",title));
     const body = table.createTBody();
     for (const stop of data.stops) {
       const row = body.insertRow();
-      for (const value of [stop.name, minuteTime(stop.scheduled), minuteTime(stop.expected)])
-        row.append(node("td","",value));
+      // 到着見込みが定刻より遅れていれば赤く出す
+      row.append(node("td","",stop.name), node("td","",minuteTime(stop.scheduled)),
+        node("td",stop.isLate ? "late-estimate" : "",minuteTime(stop.expected)));
     }
     schedule.replaceChildren(node("strong","",formation), crowdCard(data.averageOccupancy), data.stops.length ? table : node("p","","この列車のスタフは未登録です。"));
   } catch {
@@ -192,8 +193,7 @@ function draw({stations, trains, updated, gameTime}) {
     const tag = kindBadge(t.kind, kind);
     const face = node("span", "face " + serviceClass(t.kind, kind));
     face.setAttribute("aria-hidden", "true");
-    const down = t.direction === "下り";
-    const number = node("span","number",(down ? "▼ " : "▲ ") + trainLabel(t.train));
+    const number = node("span","number",trainLabel(t.train));
     const service = node("span","train-service");
     service.append(tag);
     if (t.delay) service.append(node("span","delay","+" + t.delay + "分"));

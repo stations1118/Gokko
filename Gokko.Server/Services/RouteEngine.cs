@@ -659,6 +659,8 @@ public sealed partial class RouteEngine
         /// </summary>
         public string GameTrain { get; init; } = "";
         public required string Type { get; init; }
+        /// <summary>今の列番の種別記号から決めた種別（列車走行位置・発車案内に出す）。時刻表と種別が違う列番で走っているときに使う。</summary>
+        public required string NumberKind { get; init; }
         public required Dir Dir { get; init; }
 
         /// <summary>ダイヤにある列車なら、その列車（番線・停車・終着・列選の基本）。なければ種別ごとの所定で作る。</summary>
@@ -942,7 +944,7 @@ public sealed partial class RouteEngine
                 NoteSeen(number);
                 _runs[p.ConnectionId] = new TrainRun
                 {
-                    ConnId = p.ConnectionId, Train = number, GameTrain = requested, Type = dia?.Type ?? info.Type, Dir = info.Dir, Player = p,
+                    ConnId = p.ConnectionId, Train = number, GameTrain = requested, NumberKind = info.Type, Type = dia?.Type ?? info.Type, Dir = info.Dir, Player = p,
                     Dia = dia, Indicator = dia != null ? IndicatorOf(dia.TypeLabel) : ""
                 };
             }
@@ -4438,19 +4440,19 @@ public sealed partial class RouteEngine
         }
     }
 
-    /// <summary>列車位置案内に出す列車: 本線・旅客ホーム側の回路に少しでもいる。編成全体が側線・留置線に入ったら出さない。</summary>
+    /// <summary>列車走行位置に出す列車: 本線・旅客ホーム側の回路に少しでもいる。編成全体が側線・留置線に入ったら出さない。</summary>
     private bool VisibleOnPassengerMap(TrainRun run) =>
         run.HasPosition && _data.Line.HasPassengerCircuit(run.Player.TrackCircuits);
 
     /// <summary>
-    /// 列車位置案内（passenger.html）で列車を押したとき: 行き先・編成（車両ごとの形式）と、お客様が乗り降りする駅の定刻着・到着見込み。
+    /// 列車走行位置（passenger.html）で列車を押したとき: 行き先・編成（車両ごとの形式）と、お客様が乗り降りする駅の定刻着・到着見込み。
     /// 信号場は出さない。打ち切りの駅で終える。在線していない列車は null。
     /// </summary>
     public object? PassengerTrain(string train)
     {
         lock (_lock)
         {
-            var run = _runs.Values.FirstOrDefault(r => VisibleOnPassengerMap(r) && r.Train == train && r.Type != "回送"); // 回送・試運転はお客様に出さない
+            var run = _runs.Values.FirstOrDefault(r => VisibleOnPassengerMap(r) && r.Train == train && r.Type != "回送" && r.NumberKind != "回送"); // 回送・試運転はお客様に出さない
             if (run == null) return null;
             var rows = new List<object>();
             var dest = "";
@@ -4476,15 +4478,24 @@ public sealed partial class RouteEngine
                         var arrived = s.StationId != null && run.ActualArr.ContainsKey(s.StationId);
                         var passed = i <= lastPassed;
                         // 到着見込み: 遅れがあれば定刻に足す。なければ、次の駅だけ走行時間から見込む
-                        var expected = !passed && !arrived && run.Delay is { } delay && ParseDiaTime(scheduled) is { } sec
-                            ? FormatDiaTime(sec + Math.Max(0, delay)) : null;
-                        if (expected == null && !passed && !arrived && scheduled != null
+                        var scheduledSeconds = ParseDiaTime(scheduled);
+                        double? expectedSeconds = !passed && !arrived && run.Delay is { } delay && scheduledSeconds is { } sec
+                            ? sec + Math.Max(0, delay) : null;
+                        if (expectedSeconds == null && !passed && !arrived && scheduled != null
                             && _clock.Now is { } now && s.StationId is { } nextId
                             && (_data.Line.ZoneOfStation(nextId) - run.Front) * run.Dir.Step() > 0
                             && _data.Line.ZoneOfStation(nextId) >= 0
                             && _model.SecondsTo(RunType(run), run.Dir, run.Front, run.Fraction, nextId) is { } remaining)
-                            expected = FormatDiaTime(now.TotalSeconds + remaining);
-                        rows.Add(new { name = s.Name, scheduled, expected });
+                        {
+                            // 4時前は、時刻表と同じく前の日の24時以降として数える（定刻の 24:35 と比べられるように）
+                            var nowSeconds = now.TotalSeconds < 4 * 3600 ? now.TotalSeconds + 86400 : now.TotalSeconds;
+                            expectedSeconds = nowSeconds + remaining;
+                        }
+                        var expected = expectedSeconds is { } eta ? FormatDiaTime(eta) : null;
+                        // 到着見込みが定刻より後の分（画面で赤く出す）
+                        var isLate = expectedSeconds is { } estimate && scheduledSeconds is { } plan
+                            && Math.Floor(Math.Round(estimate) / 60) > Math.Floor(plan / 60);
+                        rows.Add(new { name = s.Name, scheduled, expected, isLate });
                     }
                     if (end) break;
                 }
@@ -4540,7 +4551,7 @@ public sealed partial class RouteEngine
     }
 
     /// <summary>
-    /// 列車位置案内で駅を押したときの発車案内: 方面ごとに、これから発車する4本（定刻発・種別・行き先・のりば・運転整理中か）。
+    /// 列車走行位置で駅を押したときの発車案内: 方面ごとに、これから発車する4本（定刻発・種別・行き先・のりば・運転整理中か）。
     /// まだ出ていない列車は時刻表の時刻から、走っている列車はまだその駅を出ていなければ入れる（通過・打ち切りの指示がある列車は除く）。
     /// 出発順序の指示があれば、その順に並べ替える。
     /// </summary>
@@ -4573,7 +4584,8 @@ public sealed partial class RouteEngine
                     if (station != null && (station.Done || IsCutOff(run, station))) continue;
                     if (_central.StopOverride(run.Train, id) is "通過" or "打ち切り") continue;
                     var adjusted = _orderPlan?.Times.GetValueOrDefault((run.Train, id))?.Dep ?? dep.Seconds;
-                    candidates.Add(dep with { Train = run.Train, Seconds = adjusted });
+                    if (run.NumberKind != "回送") // 今の列番が回送の列車は出さない
+                        candidates.Add(dep with { Train = run.Train, Kind = run.NumberKind, Seconds = adjusted });
                 }
             }
 
@@ -4611,7 +4623,7 @@ public sealed partial class RouteEngine
     }
 
     /// <summary>
-    /// 列車位置案内（passenger.html）用。駅（信号場を除く。路線の順）と、その駅に止まる種別、在線している列車の位置（ゾーン）・種別・行き先・遅れ。
+    /// 列車走行位置（passenger.html）用。駅（信号場を除く。路線の順）と、その駅に止まる種別、在線している列車の位置（ゾーン）・種別・行き先・遅れ。
     /// </summary>
     public object PassengerPositions()
     {
@@ -4626,9 +4638,11 @@ public sealed partial class RouteEngine
                     kinds = PassengerKindOrder.Where(kind => kinds[id].Contains(kind)).ToArray()
                 }).ToArray();
             var advisories = _central.PassengerAdvisoryTrains();
-            var trains = _runs.Values.Where(r => VisibleOnPassengerMap(r) && r.Type != "回送").Select(r => new // 回送・試運転はお客様に出さない
+            var trains = _runs.Values.Where(r => VisibleOnPassengerMap(r) && r.Type != "回送" && r.NumberKind != "回送").Select(r => new // 回送・試運転はお客様に出さない
             {
-                train = r.Train, advisory = advisories.Contains(r.Train), kind = r.Type, type = r.Dia?.TypeLabel ?? r.Type, direction = r.Dir.Label(), zone = r.Front,
+                // 種別は今の列番の記号から。時刻表と同じ種別なら時刻表の書き方（通勤特急 など）
+                train = r.Train, advisory = advisories.Contains(r.Train), kind = r.NumberKind,
+                type = r.Dia is { } dia && dia.Type == r.NumberKind ? dia.TypeLabel : r.NumberKind, direction = r.Dir.Label(), zone = r.Front,
                 destination = r.Dia is { } d ? (d.Dest.Length > 0 ? d.Dest : d.Stops.LastOrDefault()?.Name) : null, // 時刻表の行き先
                 delay = r.Delay is { } seconds && seconds >= 60 ? (int)(seconds / 60) : 0
             }).ToArray();

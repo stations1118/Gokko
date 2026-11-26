@@ -69,7 +69,7 @@ public sealed class ClientReport
     /// <summary>自列車が踏んでいる軌道回路（他の列車の分は含めない）。</summary>
     public List<string> TrackCircuits { get; set; } = new();
 
-    /// <summary>自列車の車両ごとの形式（ゲームの CarModel。並びのまま）。在線共有モードの運転士だけが送る。列車位置案内の編成に出す。</summary>
+    /// <summary>自列車の車両ごとの形式（ゲームの CarModel。並びのまま）。在線共有モードの運転士だけが送る。列車走行位置の編成に出す。</summary>
     public string[] CarModels { get; set; } = [];
 
     // ---- 以下は在線共有モードのときだけ使う ----
