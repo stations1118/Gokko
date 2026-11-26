@@ -1681,7 +1681,9 @@ public sealed class AiTrains : BackgroundService
         // 分岐: 記録が当てはまらない駅の進路は 40km/h（列車がその進路にいる間と、その手前からの減速）
         foreach (var s in t.Path)
         {
-            if (s.Route is not { } def || s.End <= t.Head - t.Length || s.Start > t.Head + 1500) continue;
+            // 進路に駅間の回路（三郷の 12L の AS2T など。名前が TH で始まらない）が入っていれば、40km/h は駅の回路の終わりまで
+            var end = s.Circuits.LastOrDefault(c => c.Name.StartsWith("TH"))?.End ?? s.End;
+            if (s.Route is not { } def || end <= t.Head - t.Length || s.Start > t.Head + 1500) continue;
             // 入換の進路はいつも 25km/h
             var shunt = def.Kind.Contains("入換") || def.Category.Contains("入換");
             if (!shunt && use.Any(j => RecordCovers(j, def, t))) continue;
