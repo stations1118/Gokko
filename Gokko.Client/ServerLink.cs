@@ -129,6 +129,21 @@ public sealed partial class ServerLink
         }
     }
 
+    /// <summary>入換で動かすボタン（X線入換・X線停車中）。</summary>
+    public async Task<string> ShuntMoveAsync()
+    {
+        var conn = _conn;
+        if (conn == null || !_joined) return "サーバーに接続していません";
+        try
+        {
+            return await conn.InvokeAsync<string>(Protocol.ShuntMove);
+        }
+        catch (Exception)
+        {
+            return "入換のボタンを送れませんでした";
+        }
+    }
+
     public async Task<string> RequestDepartureAsync()
     {
         var conn = _conn;

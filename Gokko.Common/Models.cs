@@ -255,6 +255,15 @@ public sealed class ClientState
     public string? RouteMessage { get; set; }
 
     /// <summary>
+    /// 入換で動かすボタン（X線入換など）の表示。null なら出さない。X線に止まっていると「X線入換」、押したあとは取り消し、
+    /// ゲームの中だけで動かしている間は「X線停車中」（押すと、残した在線につなぎ直す）。
+    /// </summary>
+    public string? ShuntButtonLabel { get; set; }
+
+    /// <summary>入換で動かすボタンを押せるか。</summary>
+    public bool ShuntButtonEnabled { get; set; }
+
+    /// <summary>
     /// 浅い複製（サーバーが、運転士への配信を車掌・添乗へ回すときに使う）。一覧は複製元と同じものを指すので、
     /// 中身を書き換えず、プロパティごと差し替えること。項目が増えても、そのまま複製される。
     /// </summary>
