@@ -1336,6 +1336,9 @@ public sealed class AiTrains : BackgroundService
                     // 進路の回路が、もう道筋に入っている（新野崎の入換25LD は 22L の先の 5LT まで。22L の回路は 5LT だけ）なら、
                     // 長さ 0 の区間にして、その信号機を過ぎたことにする（その先へ道筋を延ばせるように）
                     var path = RoutePath(open, lastCircuit);
+                    // 今いる回路から続かない進路（信号機は同じでも別の所から出る進路。盤で開けた進路はどの列車にも写る）は使わない。
+                    // 使うと、在線がその進路の回路へ飛ぶ（大道寺5番線の 1653 が、盤で開けた 27L の 11LT へ飛んだ）
+                    if (!Continues(t, lastCircuit, open, path)) continue;
                     seg = path.Count > 0 ? MakeSeg(name, open, path, last.End)
                         : new Seg(name, open, last.End, last.End, [new SegCircuit(lastCircuit, last.End, last.End)]);
                 }
@@ -1372,12 +1375,24 @@ public sealed class AiTrains : BackgroundService
             if (!_rail.Routes.TryGetValue(key, out var d) || d.Circuits.Count == 0 || t.RedSignals.Contains(d.Signal)) continue;
             if (t.Path.Any(s => s.Route == d) || d.Circuits.Any(inPath.Contains)) continue;
             if (!near.Contains(d.Circuits[0]) && !near.Contains(d.Circuits[^1])) continue;
-            if (RoutePath(d, lastCircuit) is not { Count: > 0 } path) continue;
+            if (RoutePath(d, lastCircuit) is not { Count: > 0 } path || !Continues(t, lastCircuit, d, path)) continue;
             return MakeSeg(d.Signal, d, path, last.End);
         }
 
         return null;
     }
+
+    /// <summary>道筋に足す進路の回路が、今の最後の回路の隣から始まっているか（足す回路がなければ続いているとみなす）。続かなければ一度だけ記録する。</summary>
+    private bool Continues(Train t, string from, RouteDef route, List<string> path)
+    {
+        if (path.Count == 0 || _adj.TryGetValue(from, out var near) && near.Contains(path[0])) return true;
+        if (_jumpRefused.Add((t.Id, route.Interlock, route.Name)))
+            _log.Note($"にぎやかし: {t.Number} は {route.Name}（{route.Interlock}）に入りません（{from} から続いていない。{string.Join(" ", path)}）");
+        return false;
+    }
+
+    /// <summary>続かない進路を使わなかったことを一度だけ記録するため（列車ID・連動装置・進路）。</summary>
+    private readonly HashSet<(string Id, string Interlock, string Route)> _jumpRefused = new();
 
     private Seg MakeSeg(string signal, RouteDef? route, List<string> circuits, double start)
     {

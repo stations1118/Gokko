@@ -1770,10 +1770,14 @@ public sealed partial class RouteEngine
         var step = run.Dir.Step();
         foreach (var st in run.Stations.Where(s => !s.Done))
         {
-            // 最後尾が駅を抜けたら終わり。終着の列車が、駅間に入れてあるその駅の回路（大道寺の X線）へ引き上げただけなら、まだ終わらない
-            // （上りで着いた列車が X線へ引き上げると、駅を抜けたことになり、X線から番線への入換を扱えなくなる）
+            // 最後尾が駅を抜けたら終わり
+            // ただし、この駅で終わる列車（終着・行き止まりの番線）が、まだこの駅の場内の進路の回路にいるなら抜けていない
+            // （回路の区間分けがずれていると、短い列車が場内の途中の回路だけを踏んだときに抜けたとみなされ、引上げが出なくなる）。
+            // 駅間に入れてあるその駅の回路（大道寺の X線）へ引き上げただけのときも、まだ終わらない（X線から番線への入換を扱うため）
             if ((run.Rear - st.Zone) * step > 0
-                && !(st.Terminal && run.Player.TrackCircuits.Count > 0 && run.Player.TrackCircuits.All(c => c.StartsWith(st.St.Id + "_", StringComparison.Ordinal))))
+                && !((st.Terminal || IsTurnbackTrack(run, st))
+                     && (st.ArrivePath.SelectMany(r => r.Circuits).Any(run.Player.TrackCircuits.Contains)
+                         || run.Player.TrackCircuits.Count > 0 && run.Player.TrackCircuits.All(c => c.StartsWith(st.St.Id + "_", StringComparison.Ordinal)))))
             {
                 st.Done = true;
                 st.DoneUtc = now;
@@ -4961,6 +4965,7 @@ public sealed partial class RouteEngine
             {
                 var st = r.Stations.FirstOrDefault(s => s.St.Id == watch.Id && !s.Done);
                 if (!r.HasPosition || st == null || r.ActualDep.ContainsKey(watch.Id) || IsCutOff(r, st)) return null;
+                if (InSiding(r, st, zone)) return null; // 留置線・引上線にいる列車（お客様には出さない）
                 var here = r.Player.Zones.Contains(zone) || (zone - r.Front) * r.Dir.Step() <= 0;
                 var dist = here ? 0 : r.Player.TrackCircuits.Where(watch.Range.Contains).Select(c => watch.Distance.TryGetValue(c, out var d) ? d : int.MaxValue).DefaultIfEmpty(-1).Min();
                 return dist < 0 ? null : (st, dist, here);
@@ -5078,6 +5083,21 @@ public sealed partial class RouteEngine
 
             return new { station = watch.Id, name = watch.Name, gameTime = FormatDiaTime(NowSec()), boards };
         }
+    }
+
+    /// <summary>
+    /// その駅で始まる・終わる列車が、留置線・引上線（新野崎5番線、大道寺5番線・X線など。着発の番線でない所）にいるか。
+    /// 着発の番線（ホーム）や場内の進路の回路にいれば、いない。始発の入換を待っている・終着の引上げでホームを出た列車は、駅の外の回路（X線）にいても、いる。
+    /// </summary>
+    private static bool InSiding(TrainRun run, StationRun st, int zone)
+    {
+        if (!st.Terminal && !st.IsStart && !IsTurnbackTrack(run, st)) return false;
+        var mine = run.Player.TrackCircuits;
+        if (mine.Count == 0) return false;
+        var platforms = new[] { Dir.Down, Dir.Up }.SelectMany(d => st.St.Routes[d].Arrive.Keys.Concat(st.St.Routes[d].Depart.Keys))
+            .Select(k => st.St.TrackCircuit.GetValueOrDefault(k)).OfType<string>();
+        if (platforms.Any(mine.Contains) || st.ArrivePath.SelectMany(r => r.Circuits).Any(mine.Contains)) return false;
+        return st.ShuntOut == GroupState.Requested || st.IsStart && st.ShuntFrom != null || run.Player.Zones.Contains(zone);
     }
 
     /// <summary>その列車が、もうその駅を出た（通った）か。走っていない列車も出たとみなす。</summary>
