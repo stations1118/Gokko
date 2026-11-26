@@ -150,12 +150,16 @@ public sealed class PlayerRegistry(GameData data, CentralControl central)
     public bool IsJoined(string connectionId) => _players.ContainsKey(connectionId);
 
     /// <summary>退出。継続乗務ボタンを押したまま運転中だったら、在線を残す（つなぎ直して同じ番線から始めれば引き継ぐ）。</summary>
-    public void Remove(string connectionId)
+    /// <summary>
+    /// 参加者を外す。ダイヤ運転中・継続乗務などでは、その場所に在線を残す（継続乗務の在線）。
+    /// leaveGhost が false なら残さない（自動運転の車掌が車掌に戻るとき。列車はそのまま同じ列番で走り続けるので、残すと同じ列番が2本になる）。
+    /// </summary>
+    public void Remove(string connectionId, bool leaveGhost = true)
     {
         var kicked = _kicked.TryRemove(connectionId, out _);
         if (!_players.TryRemove(connectionId, out var p)) return;
         lock (p)
-            if (!kicked && (p.ContinueDuty || central.DiaMode || p.ShuntMove == ShuntMoveState.Leaving) && p.Mode == ShareMode.Shared && p.InGame && p.TrackCircuits.Count > 0 && p.TrainNumber.Length > 0
+            if (leaveGhost && !kicked && (p.ContinueDuty || central.DiaMode || p.ShuntMove == ShuntMoveState.Leaving) && p.Mode == ShareMode.Shared && p.InGame && p.TrackCircuits.Count > 0 && p.TrainNumber.Length > 0
                 && p.AppearReason == null && p.CoupledInto == null && !LeavesLine(p))
                 AddGhost(p, p.ShuntMove == ShuntMoveState.Leaving ? p.ShuntSpot : null);
     }
