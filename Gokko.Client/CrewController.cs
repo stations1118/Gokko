@@ -717,6 +717,7 @@ public sealed class CrewController
     // ---- 自動運転（車掌モード。運転士がいない列車で、自分のゲームのノッチを自動運転が決める） ----
 
     private AutoDriver? _auto;
+    private StopDistance _stopDistance = new(null); // 停目までの残り（表はサーバーから自動運転を入れたときに1回だけ読む）
     private bool _autoBuzzer; // 発車の合図（ブザー）が鳴っていたか（鳴り始めを見る）
     private int _autoPower = int.MinValue, _autoBrake = int.MinValue; // 前の周期に送ったノッチ
     private long _autoMismatchMs; // ゲームのノッチが、送ったノッチと違い始めた時刻（0 なら同じ）
@@ -739,12 +740,21 @@ public sealed class CrewController
         }
 
         _auto = new AutoDriver();
+        _stopDistance = new StopDistance(null);
+        _ = LoadStopTableAsync(_auto);
         _autoBuzzer = true; // 入れた瞬間に鳴っていたブザーでは発車しない
         _autoPower = _autoBrake = int.MinValue;
         _autoMismatchMs = 0;
         _tci.WantStations = true;
         _panel?.SetAuto(true);
         Message?.Invoke("自動運転: ノッチは自動で扱います。ドアは操作盤で扱い、閉めたらブザーで発車の合図をしてください");
+    }
+
+    /// <summary>停目の表を読む（読めなければゲームの距離だけで動く）。読み終わったときに同じ自動運転が続いていれば差し替える。</summary>
+    private async Task LoadStopTableAsync(AutoDriver auto)
+    {
+        var table = await StopDistance.LoadTableAsync();
+        if (table != null && ReferenceEquals(_auto, auto)) _stopDistance = new StopDistance(table);
     }
 
     /// <summary>自動運転を切る（入っていなければ何もしない）。ノッチは中立・常用最大ブレーキに戻す。</summary>
@@ -772,7 +782,13 @@ public sealed class CrewController
         var resend = mismatch && now - _autoMismatchMs > NotchResendMs;
         if (resend) _autoMismatchMs = 0;
 
-        var (power, brake) = _auto.Step(s, raw, _tci.Signals(), departSignal, _emergency, now);
+        var signals = _tci.Signals();
+        var stop = _stopDistance.Update(new StopDistanceInput(
+            raw.TotalLength, s.Speed, raw.CarStates?.Count ?? 0,
+            (raw.stationList ?? []).Select(x => new GameStop(x.Name ?? "", x.StopPosName ?? "", x.stopType != TrainCrew.StopType.Passing, x.TotalLength)).ToList(),
+            signals.Select(x => new GameSignal(x.name ?? "", x.phase ?? "", x.distance)).ToList(),
+            _game.Latest?.TrackCircuits ?? []));
+        var (power, brake) = _auto.Step(s, raw, signals, stop, departSignal, _emergency, now);
         _tci.SetReverser(1, resend);
         _tci.SetNotch(power, brake, resend);
         _autoPower = power;

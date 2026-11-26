@@ -3,13 +3,10 @@ using TrainCrew;
 
 namespace Gokko.Client;
 
-/// <summary>次に止まる停目までの残り（m）と、その値が確かか（確定 = 信号機などから出した値／おおまか = 余裕を取って手前に止まる）。</summary>
-public readonly record struct StopTarget(double Meters, bool Confirmed);
-
 /// <summary>
 /// 自動運転（車掌モードの［自動運転］。運転士がいない列車で、自分のゲームのノッチを決める）。サーバーには何も聞かない。
-/// ・止まる位置: 次の停車駅の停目までの残り（<see cref="StopTarget"/>）。ふだんはゲームの停車駅の位置（両数に合った停目。
-///   シナリオの番線のもの）から出す。番線がシナリオと違うときの直し方は <see cref="Correct"/> で外から差し替える。通過駅は使わない
+/// ・止まる位置: 次の停車駅の停目までの残り（<see cref="StopDistance"/> が出す。入る番線・両数に合った停目。通過駅は使わない）。
+///   確定（信号機から出した値）か、シナリオどおりの番線なら停目をめがけ、シナリオと違う番線でおおまかなうちは少し手前をめがける
 /// ・発車: ドアが閉まっていて、車掌のブザー（発車の合図）が鳴り始めたら。運転停車（ドアを開けない停車）は発車時刻に出る
 /// ・走り方: 次の停車駅の着時刻に間に合う平均の速さより少し速い速度まで力行して惰行する。遅れていれば制限速度いっぱいまで
 /// ・守るもの: 制限速度・先の制限・ATS の速度と「接近」・前方の停止信号・注意（Y）・警戒（YY）・減速（YG）の信号機を過ぎる速度
@@ -30,7 +27,7 @@ public sealed class AutoDriver
     private const int StepDownMs = 700;        // 段を下げるのは、前に段を変えてからこれだけたってから（効くまでの遅れより長く）
     private const double StepBand = 0.1;       // 段を変える目安の幅（km/h/s。行ったり来たりしないように）
     private const double SignalMargin = 15;    // 停止信号の、これだけ手前に止まる（m）
-    private const double RoughMargin = 25;     // 停目までの残りが「おおまか」なら、これだけ手前に止まる（m）
+    private const double RoughMargin = 10;     // シナリオと違う番線で、停目までの残りがおおまかなうちは、これだけ手前をめがける（m。確定すれば外す）
     private const double JumpMeters = 2;       // 停目までの残りが1周期でこれ以上変わったら、すぐ段を合わせ直す（m）
     private const double CoastBand = 8;        // 惰行で、目指す速度よりこれだけ下がったら、また力行する（km/h）
     private const double ScheduleFactor = 1.25; // 間に合う平均の速さに掛ける（加速・減速の分、巡航は平均より速くする）
@@ -63,16 +60,10 @@ public sealed class AutoDriver
     public string Note { get; private set; } = "";
 
     /// <summary>
-    /// 停目までの残りを直す（停車駅の番号と、ゲームの値から出した残り m を渡す）。番線がシナリオと違うときの直し方が決まったら差し替える。
-    /// 既定はゲームの値のまま（シナリオの番線なら、両数に合った停目までの距離そのもの）。
-    /// </summary>
-    public Func<int, double, StopTarget> Correct { get; set; } = (_, meters) => new StopTarget(meters, true);
-
-    /// <summary>
     /// 1周期ぶん。返すのは力行・ブレーキの段（どちらかは 0）。
-    /// departSignal: 車掌のブザーが今鳴り始めた。emergency: 車掌の非常ブレーキが入っている。
+    /// stop: 停目までの残り（<see cref="StopDistance.Update"/> の結果）。departSignal: 車掌のブザーが今鳴り始めた。emergency: 車掌の非常ブレーキが入っている。
     /// </summary>
-    public (int Power, int Brake) Step(TciState s, TrainState raw, IReadOnlyList<SignalInfo> signals, bool departSignal, bool emergency, long now)
+    public (int Power, int Brake) Step(TciState s, TrainState raw, IReadOnlyList<SignalInfo> signals, StopDistanceResult stop, bool departSignal, bool emergency, long now)
     {
         var accel = Accel(now, s.Speed); // km/h/s（減速はマイナス）
         // 停車駅の一覧は途中で届かなくなることがあるので、前に届いたものを使い続ける
@@ -114,10 +105,14 @@ public sealed class AutoDriver
         {
             var st = stations[target];
             targetName = st.Name ?? "";
-            var game = s.NextStation == targetName ? s.NextStationDistance : st.TotalLength - pos;
-            var t = Correct(target, game);
-            confirmed = t.Confirmed;
-            dStop = t.Meters + (confirmed ? StopBias : -RoughMargin);
+            // 停目までの残りが、この駅のものならそれを使う（止まった直後は、まだ止まった駅の残りが来る）。なければゲームの値
+            double meters = s.NextStation == targetName ? s.NextStationDistance : st.TotalLength - pos;
+            if (stop.Kind != StopDistanceKind.None && StopDistance.ParseStopPos(st.StopPosName ?? "", targetName).Station == stop.Station)
+            {
+                meters = stop.Remaining;
+                confirmed = stop.Kind == StopDistanceKind.Confirmed || stop.Track == stop.ScenarioTrack;
+            }
+            dStop = meters + (confirmed ? StopBias : -RoughMargin);
         }
 
         // 止まっている
