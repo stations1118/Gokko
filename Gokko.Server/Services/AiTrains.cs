@@ -2086,6 +2086,10 @@ public sealed class AiTrains : BackgroundService
         s.Stop == "通" && s.Track == null && s.StationId != null
         && _rail.Stations.TryGetValue(s.StationId, out var st) && st.Routes[dir].Through.Count > 0;
 
+    /// <summary>番線ごとの6両停目（AiTrains.json の stops。信号機の Before m 手前、After があれば After m 先）。停目までの距離の表（/api/stop-targets）に使う。</summary>
+    public IEnumerable<(string Station, Dir Dir, int Track, string Signal, double Before, double? After)> StopSignals() =>
+        _stops.Select(s => (s.Station, s.Dir, s.Track, s.Signal, s.Before, s.After));
+
     private StopSpec? FindStop(string station, Dir dir, int track) =>
         _stops.FirstOrDefault(s => s.Station == station && s.Dir == dir && s.Track == track)
         ?? (track == 0 ? _stops.FirstOrDefault(s => s.Station == station && s.Dir == dir) : null);
