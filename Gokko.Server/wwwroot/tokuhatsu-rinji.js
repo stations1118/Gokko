@@ -8,14 +8,16 @@ window.GokkoRinji = (() => {
   const suffix = { 特急: "A", 急行: "B", 準急: "C", 区急: "D", 快急: "K" };
   let picker = null;
 
-  // 列番の案: 元の列車の数字を使い、向きに合わせて最後の桁を奇数（下り）・偶数（上り）にする。回送は「回」、ほかは「臨」を頭に付ける
+  // 列番の案: 元の列車の数字を使い、向きに合わせて最後の桁を奇数（下り）・偶数（上り）にする。回送は「臨回」、ほかは「臨」を頭に付ける
+  // 出庫（元の列車がない）は、今のロープレ時刻の時分（13:47 → 1347）を使う
   function suggest(from, type, down) {
+    if (!from) from = window.GokkoClock && GokkoClock.isSet() ? GokkoClock.fmt(GokkoClock.now()).replace(/\D/g, "") : "";
     const m = String(from || "").match(/(\d+)(?!.*\d)/);
     if (!m) return "";
     let d = m[1];
     const last = Number(d[d.length - 1]);
     if ((last % 2 === 1) !== down) d = d.slice(0, -1) + (last === 9 ? 8 : last + 1);
-    return (type === "回送" ? "回" : "臨") + d + (suffix[type] || "");
+    return (type === "回送" ? "臨回" : "臨") + d + (suffix[type] || "");
   }
 
   const zoneOf = (data, id) => ((data && data.stations || []).find((s) => s.id === id) || {}).zone;
@@ -27,13 +29,14 @@ window.GokkoRinji = (() => {
       `<option value="${esc(s.id)}" ${s.id === pick ? "selected" : ""}>${esc(s.name)}${hz == null ? "" : s.zone > hz ? "（下り）" : "（上り）"}</option>`)).join("");
   }
 
-  const startTrack = (plan) => plan.arriving ? "着いた番線" : `${plan.track}番線`;
+  const startTrack = (plan) => plan.track != null ? `${plan.track}番線` : "着いた番線";
+  const fromLabel = (plan) => plan.depot ? `出庫（${plan.depot}・${plan.cars}両）` : `${plan.train}${plan.cars ? `（${plan.cars}両）` : ""}`;
 
   // スジの案の表（停車駅・時刻・番線を直せる）。attr は欄ごとの印（data-xx-）
   function planTable(plan, number, linkTurn, a) {
     const n = plan.stops.length;
-    return `<div style="margin:6px 0">${esc(plan.train)} → <b>${esc(number || "（列番）")}</b>（${esc(plan.type)}・${esc(plan.dir)}）
-        ${esc(plan.stationName)} ${startTrack(plan)}から${plan.arriving ? `<span class="muted">（${esc(plan.train)} が着いて止まったら変わります）</span>` : ""}</div>
+    return `<div style="margin:6px 0">${esc(fromLabel(plan))} → <b>${esc(number || "（列番）")}</b>（${esc(plan.type)}・${esc(plan.dir)}）
+        ${esc(plan.stationName)} ${startTrack(plan)}から${plan.arriving ? `<span class="muted">（${esc(plan.train)} をこの番線に入れ、止まったら変わります）</span>` : ""}</div>
       <div style="overflow-x:auto"><table>
       <tr class="muted"><td>駅</td><td>停車</td><td>着</td><td>発・通過</td><td>番線</td></tr>
       ${plan.stops.map((s, i) => {
@@ -45,7 +48,7 @@ window.GokkoRinji = (() => {
           <td>${i === 0 ? startTrack(plan) : s.control && s.stop === "停" ? `<input data-${a}track size="3" value="${s.track ?? ""}" placeholder="自動">` : ""}</td></tr>`;
       }).join("")}</table></div>
       <div class="row" style="margin-top:6px">
-        <label><input type="checkbox" data-${a}link ${linkTurn ? "checked" : ""}> 元の列車の後運用につなぐ（終点が同じ駅のとき）</label>
+        ${plan.depot ? "" : `<label><input type="checkbox" data-${a}link ${linkTurn ? "checked" : ""}> 元の列車の後運用につなぐ（終点が同じ駅のとき）</label>`}
         <button data-${a}create class="primary">特発臨を立てる</button>
         <button data-${a}clear>やめる</button></div>`;
   }
@@ -63,12 +66,14 @@ window.GokkoRinji = (() => {
   }
 
   const createBody = (plan, number, linkTurn) => ({
-    train: plan.train, station: plan.station, number, type: plan.type, linkTurn,
+    train: plan.train, station: plan.station, number, type: plan.type, linkTurn: !plan.depot && linkTurn, depot: plan.depot || null, cars: plan.depot ? plan.cars : null,
     stops: plan.stops.map((s) => ({ st: s.st, stop: s.stop, arr: s.arr, dep: s.dep, track: s.track }))
   });
 
-  const confirmText = (plan, number, user) =>
-    `${plan.train} は ${plan.stationName} で打ち切りになり、${number}（${plan.type}）として ${plan.stops[0].dep} に ${plan.stops[plan.stops.length - 1].name} へ向けて出ます。`
+  const confirmText = (plan, number, user) => plan.depot
+    ? `${plan.depot} の ${plan.track}番線から ${number}（${plan.type}・${plan.cars}両）を出庫させ、${plan.stops[0].dep} に ${plan.stops[plan.stops.length - 1].name} へ向けて出します。`
+      + "自動運転の列車は、発車時刻の少し前に車庫の番線に出ます。ユーザーが運転するなら、その列番を入れてもらってください。"
+    : `${plan.train} は ${plan.stationName} で打ち切りになり、${number}（${plan.type}）として ${plan.stops[0].dep} に ${plan.stops[plan.stops.length - 1].name} へ向けて出ます。`
     + (plan.arriving ? `${plan.train} が ${plan.stationName} に着いて止まったら変わります。` : "")
     + (user ? "ユーザーの列車なので、運転士に列番の入れ直しを伝えてください。" : "");
 
@@ -77,7 +82,7 @@ window.GokkoRinji = (() => {
   // =========================================================================================
   function panel({ el, api, act, onMessage, help = true }) {
     let data = { candidates: [], list: [], types: [], stations: [] };
-    const form = { train: "", station: "", type: "普通", number: "", numberTouched: false, dest: "", dep: "", linkTurn: true };
+    const form = { train: "", depot: "", cars: 6, station: "", type: "普通", number: "", numberTouched: false, dest: "", dep: "", linkTurn: true };
     let plan = null; // スジの案（表で直す）
     const msg = (m) => onMessage && onMessage(m);
 
@@ -86,6 +91,7 @@ window.GokkoRinji = (() => {
       <div class="row" style="margin-top:8px">
         <select data-f="train"></select>
         <select data-f="station" title="発駅（止まっている駅か、これから通る駅）"></select>
+        <label data-cars-box style="display:none">両数 <input data-f="cars" type="number" min="1" max="10" value="6" style="width:4em"></label>
         <select data-f="type"></select>
         <select data-f="dest"></select>
         <label>列番 <input data-f="number" size="10" placeholder="臨1347"></label>
@@ -96,6 +102,7 @@ window.GokkoRinji = (() => {
       ${help ? `<div class="muted" style="margin-top:6px">走っている列車から、止まっている駅か、これから通る駅を発駅にして立てます。時刻は標準運転時分から引いた案です（表で直せます）。途中駅・終点の番線は空けておくと、自動進路構成が決めます。
         立てると、元の列車は発駅で打ち切りになり、元の列車の後運用は時刻表どおりに残ります（「元の列車の後運用につなぐ」を選ぶと、特発臨の終点からつなぎます）。
         自動運転の列車は、発駅に着いて止まったら特発臨の列番に変わって走ります（番線は着いた番線）。ユーザーの列車は、タブレットに特発臨が出るので、運転士に列番を入れ直してもらってください。
+        元の列車の代わりに「出庫」を選ぶと、車庫から両数を決めて出せます。元の列車から立てたときは、元の列車の両数を引き継ぎます。
         ダイヤグラムの◆の窓で「打ち切り」を選んでも、その駅から立てられます。ロープレ時刻を設定するか、サーバーを再起動すると消えます。</div>` : ""}`;
     const $ = (sel) => el.querySelector(sel);
     const f = (k) => el.querySelector(`[data-f="${k}"]`);
@@ -108,16 +115,22 @@ window.GokkoRinji = (() => {
         .concat((c.ahead || []).map((s, i) => ({ id: s.id, label: `${s.name}（${i === 0 ? "次の駅" : "この先"}）` })));
     }
 
+    const depot = () => (data.depots || []).find((d) => d.name === form.depot);
+
     function fillSelects() {
       const c = cand();
       const setOpts = (sel, html) => { if (document.activeElement !== sel && sel.dataset.html !== html) { sel.innerHTML = html; sel.dataset.html = html; } };
-      const trainOpts = [`<option value="">元の列車を選ぶ</option>`].concat(data.candidates.map((x) =>
+      // 出庫（車庫から出す）は、元の列車の代わりに選ぶ。値は「@車庫の名前」
+      const depotOpts = (data.depots || []).map((d) => `<option value="@${esc(d.name)}" ${d.name === form.depot ? "selected" : ""}>出庫（${esc(d.name)}）</option>`);
+      const trainOpts = [`<option value="">元の列車を選ぶ（または出庫）</option>`].concat(depotOpts, data.candidates.map((x) =>
         `<option value="${esc(x.train)}" ${x.train === form.train ? "selected" : ""}>${esc(x.train)}（${x.ai ? "自動運転" : "ユーザー"}・${
           x.here ? `${esc(x.here.name)} ${x.here.track}番線に停車中` : `${esc(x.where || "")}を走行中`}${x.rinji ? `・特発臨 ${esc(x.rinji)} 待ち` : ""}）</option>`));
-      if (form.train && !c) trainOpts.push(`<option value="${esc(form.train)}" selected>${esc(form.train)}（いまは走っていません）</option>`);
+      if (form.train && !c && !form.depot) trainOpts.push(`<option value="${esc(form.train)}" selected>${esc(form.train)}（いまは走っていません）</option>`);
       setOpts(f("train"), trainOpts.join(""));
-      const choices = stationChoices(c);
-      if (c && !choices.some((s) => s.id === form.station)) form.station = choices.length ? choices[0].id : "";
+      const dp = depot();
+      const choices = dp ? [{ id: dp.station, label: `${dp.name}（${dp.stationName}）` }] : stationChoices(c);
+      if ((c || dp) && !choices.some((s) => s.id === form.station)) form.station = choices.length ? choices[0].id : "";
+      el.querySelector("[data-cars-box]").style.display = dp ? "" : "none";
       setOpts(f("station"), choices.length ? choices.map((s) => `<option value="${esc(s.id)}" ${s.id === form.station ? "selected" : ""}>発駅 ${esc(s.label)}</option>`).join("")
         : `<option value="">発駅</option>`);
       setOpts(f("type"), data.types.map((t) => `<option ${t === form.type ? "selected" : ""}>${esc(t)}</option>`).join(""));
@@ -125,7 +138,7 @@ window.GokkoRinji = (() => {
     }
 
     function autoNumber() {
-      if (form.numberTouched || !form.train || !form.dest || !form.station) return;
+      if (form.numberTouched || !(form.train || form.depot) || !form.dest || !form.station) return;
       form.number = suggest(form.train, form.type, zoneOf(data, form.dest) > zoneOf(data, form.station));
       f("number").value = form.number;
     }
@@ -136,7 +149,9 @@ window.GokkoRinji = (() => {
           <tr><td><b>${esc(r.number)}</b></td><td>${esc(r.type)}</td><td>${esc(r.from)}</td>
             <td>${esc(r.station)} ${r.track != null ? `${r.track}番線` : "（着いた番線）"} ${esc(r.dep)}</td><td>${esc(r.dest)} ${esc(r.arr)}着</td>
             <td>${r.turn ? esc(r.turn) : `<span class="muted">なし</span>`}</td>
-            <td>${r.started ? `<span class="ok">列番を変えて走り出しました</span>` : `<span class="muted">${esc(r.from)} が ${esc(r.station)} で変わるのを待っています</span>`}</td>
+            <td>${r.started ? `<span class="ok">${r.depot ? "出庫しました" : "列番を変えて走り出しました"}</span>`
+              : r.depot ? `<span class="muted">${r.cars}両・発車時刻の少し前に出ます</span>`
+              : `<span class="muted">${esc(r.from)} が ${esc(r.station)} で変わるのを待っています</span>`}</td>
             <td><button data-cancel="${esc(r.number)}" class="danger">取消</button></td></tr>`).join("")}</table>`;
       const box = $("[data-list]");
       if (box.dataset.html !== html) { box.innerHTML = html; box.dataset.html = html; }
@@ -146,7 +161,8 @@ window.GokkoRinji = (() => {
 
     async function draft(stopAt) {
       try {
-        plan = await api("POST", "/rinji/draft", { train: form.train, station: form.station, type: form.type, dest: form.dest, dep: form.dep || null, stopAt: stopAt || null });
+        plan = await api("POST", "/rinji/draft", { train: form.depot ? null : form.train, depot: form.depot || null, cars: form.depot ? form.cars : null,
+          station: form.station, type: form.type, dest: form.dest, dep: form.dep || null, stopAt: stopAt || null });
         msg("");
       } catch (e) { plan = null; msg(e.message); }
       drawPlan();
@@ -154,7 +170,12 @@ window.GokkoRinji = (() => {
 
     el.addEventListener("change", (ev) => {
       const t = ev.target;
-      if (t.dataset.f === "train") { form.train = t.value; form.station = ""; form.dest = ""; form.numberTouched = false; plan = null; drawPlan(); fillSelects(); }
+      if (t.dataset.f === "train") {
+        const v = t.value;
+        form.depot = v.startsWith("@") ? v.slice(1) : ""; form.train = form.depot ? "" : v;
+        form.station = ""; form.dest = ""; form.numberTouched = false; plan = null; drawPlan(); fillSelects();
+      }
+      else if (t.dataset.f === "cars") { form.cars = Math.max(1, Math.min(10, Number(t.value) || 6)); t.value = form.cars; if (plan) plan.cars = form.cars; drawPlan(); }
       else if (t.dataset.f === "station") { form.station = t.value; form.dest = ""; plan = null; drawPlan(); fillSelects(); }
       else if (t.dataset.f === "type") { form.type = t.value; autoNumber(); if (plan) { readPlan($("[data-plan]"), plan, ""); draft(); } }
       else if (t.dataset.f === "dest") { form.dest = t.value; autoNumber(); plan = null; drawPlan(); }
@@ -176,7 +197,7 @@ window.GokkoRinji = (() => {
       if (!b) return;
       if (b.dataset.draft !== undefined) {
         form.number = f("number").value.trim(); form.dep = f("dep").value.trim();
-        if (!form.train) { msg("元の列車を選んでください"); return; }
+        if (!form.train && !form.depot) { msg("元の列車か、出庫する車庫を選んでください"); return; }
         if (!form.dest) { msg("行先を選んでください"); return; }
         await draft();
       } else if (b.dataset.clear !== undefined) {
@@ -195,7 +216,7 @@ window.GokkoRinji = (() => {
       } else if (b.dataset.cancel) {
         const r = data.list.find((x) => x.number === b.dataset.cancel);
         if (!(await GokkoDia.ask(`特発臨 ${b.dataset.cancel} を取り消しますか？`,
-          r && r.started ? "もう走り出しています。自動運転の列車なら消えます。" : `${r ? r.from : ""} の打ち切りも外し、元の時刻表に戻します。`))) return;
+          r && r.started ? "もう走り出しています。自動運転の列車なら消えます。" : r && r.depot ? "出庫をやめます。" : `${r ? r.from : ""} の打ち切りも外し、元の時刻表に戻します。`))) return;
         await act("POST", "/rinji/cancel", { number: b.dataset.cancel });
         await refresh();
       }
@@ -208,7 +229,7 @@ window.GokkoRinji = (() => {
     }
 
     picker = (train) => {
-      form.train = String(train || "").toUpperCase(); form.station = ""; form.dest = ""; form.numberTouched = false; plan = null; drawPlan(); fillSelects();
+      form.train = String(train || "").toUpperCase(); form.depot = ""; form.station = ""; form.dest = ""; form.numberTouched = false; plan = null; drawPlan(); fillSelects();
       el.scrollIntoView({ behavior: "smooth" });
     };
 

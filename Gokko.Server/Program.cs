@@ -167,6 +167,7 @@ app.Services.GetRequiredService<RelayPanels>(); // 起動時に駅のデータ�
 var rinji = app.Services.GetRequiredService<TokuhatsuRinji>();
 var rinjiAi = app.Services.GetRequiredService<AiTrains>();
 rinjiAi.Rinji = rinji;
+rinji.AiCars = rinjiAi.CarsNow; // 元の列車から立てた特発臨は、元の列車の両数を引き継ぐ
 rinji.Changed += message => incidentLog.Note(message);
 rinji.Removed += numbers => rinjiAi.RemoveNumbers(numbers);
 
