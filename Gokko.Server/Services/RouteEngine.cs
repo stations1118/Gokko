@@ -113,6 +113,18 @@ public sealed partial class RouteEngine
         return sec < 4 * 3600 ? sec + 86400 : sec;
     }
 
+    /// <summary>
+    /// ダイヤの時刻（運転日の秒）まで、あと何秒か（過ぎていれば負）。±12時間に収める: 臨時列車の 0時〜4時の時刻（"00:30:00"）や、
+    /// 終夜運転で4時をまたいで待つ列車（3時台に、4時20分の発車を待つ）も、すぐ先の時刻として数える。
+    /// </summary>
+    private double Until(double sec)
+    {
+        var d = sec - NowSec();
+        while (d > 12 * 3600) d -= 86400;
+        while (d < -12 * 3600) d += 86400;
+        return d;
+    }
+
     /// <summary>"HH:mm:ss"（24時以降も可）→ 運転日の秒。</summary>
     private static double? ParseDiaTime(string? text)
     {
@@ -263,7 +275,7 @@ public sealed partial class RouteEngine
     {
         if (!DiaMode || run.Dia == null || _central.OpenAt(run.Train, st.St.Id) != null) return null;
         if (!DiaShuntTimes.TryGetValue(run.Dia.Number, out var t)) return null;
-        return NowSec() < t - DepartLeadSeconds ? $"入換時刻待ち（{FormatDiaTime(t)} 入換。{DepartLeadSeconds}秒前に開通）" : null;
+        return Until(t) > DepartLeadSeconds ? $"入換時刻待ち（{FormatDiaTime(t)} 入換。{DepartLeadSeconds}秒前に開通）" : null;
     }
 
     /// <summary>
@@ -304,7 +316,7 @@ public sealed partial class RouteEngine
         if (DiaSec(run, st.St.Id, depart: true) is not { } dep) return null;
         if (ShortDwell(run, st)) return null;
         var lead = DepartLead(st);
-        return NowSec() < dep - lead ? $"発車時刻待ち（{FormatDiaTime(dep)} 発。{lead}秒前に開通）" : null;
+        return Until(dep) > lead ? $"発車時刻待ち（{FormatDiaTime(dep)} 発。{lead}秒前に開通）" : null;
     }
 
     /// <summary>短い停車の上限（秒）。着から発車までがこれ以内なら、発車時刻を待たずに場内と一緒に出発も開ける。</summary>

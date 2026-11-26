@@ -119,6 +119,7 @@
     <div id="editor" hidden>
       <fieldset><legend>グループの内容</legend>
         <div class="row">名前: <input id="gName" type="text" maxlength="30" size="18">
+          <label title="終電から始発までの間に走らせる列車を作ります。4時〜6時の時刻を翌朝として扱い、翌6時までのスジを引けます。留置になる所定の列車を前運用にしたり、翌朝の所定の列車（始発）を後運用にしたりできます"><input type="checkbox" id="gOvernight"> 終夜（翌6時まで）</label>
           <span id="gStatus"></span> <span id="gApplied"></span> <span class="muted" id="gOwner"></span></div>
         <div class="row" id="gCommentRow" hidden><span class="muted">ひとこと:</span> <span id="gComment"></span></div>
         <div class="row">
@@ -195,6 +196,7 @@
         </div>
         <div class="row">
           発駅: <select id="tFrom"></select>
+          <span id="tPrevBox" hidden>前運用: <select id="tPrev" title="留置になる所定の列車（滞泊など）から、そのまま続けて走るとき"></select></span>
           発車: <input id="tDep" class="t-in" placeholder="10:00">
           終点: <select id="tTo"></select>
           <button id="lay">駅を並べる</button>
@@ -256,9 +258,11 @@
     const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(String(t || "").trim().replace(/[０-９：]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)));
     if (!m) return null;
     let v = +m[1] * 3600 + +m[2] * 60 + (+m[3] || 0);
-    if (v < 4 * 3600) v += 86400;
+    if (v < dayStart()) v += 86400;
     return v;
   }
+  // 運転日の始まり: ふだんは4時（4時前は翌日）、終夜のグループは6時（4時〜6時も翌朝）
+  const dayStart = () => (cur && cur.overnight ? 6 : 4) * 3600;
   function fmt(v) {
     v = Math.round(v) % 86400;
     const p = (n) => String(n).padStart(2, "0");
@@ -325,6 +329,9 @@
     const mine = cur.owner === base.me.id;
     $("gName").value = cur.name;
     $("gName").disabled = !ed;
+    $("gOvernight").checked = !!cur.overnight;
+    $("gOvernight").disabled = !ed;
+    reshapePlan();
     $("gStatus").innerHTML = `<span class="st st-${esc(cur.status)}">${esc(cur.status)}</span>`;
     $("gApplied").innerHTML = cur.applied ? '<span class="applied">適用中</span>' : "";
     $("gOwner").textContent = cur.id ? `作成 ${cur.ownerName || cur.owner}${cur.approvedBy ? `・承認 ID:${cur.approvedBy}` : ""}` : "（まだ保存していません）";
@@ -343,6 +350,13 @@
   }
 
   $("gName").oninput = () => { cur.name = $("gName").value; dirty = true; };
+  $("gOvernight").onchange = () => {
+    cur.overnight = $("gOvernight").checked;
+    dirty = true;
+    scrolledFor = null;
+    drawEditor();
+    scheduleDia();
+  };
 
   // 運行番号（"24"・"24S"。24 と 24S は別の運行）の並べ方: 数字の順、同じ数字ならアルファベットなし→あり。空は最後
   const unyoKey = (u) => [u ? parseInt(u, 10) : Infinity, String(u || "")];
@@ -553,11 +567,43 @@
     $("tFrom").innerHTML = stationOpts(t.stops[0]?.st);
     $("tTo").innerHTML = stationOpts(t.stops[t.stops.length - 1]?.st || base.stations[base.stations.length - 1].id);
     $("tDep").value = short(t.stops[0]?.dep);
-    for (const id of ["tUnyo", "tNumber", "tCars", "tType", "tLabel", "tDest", "tFrom", "tTo", "tDep", "lay", "fill", "tTurnHow", "tTurnNext", "tTurnVia", "tTurnTime"]) $(id).disabled = !ed;
+    drawPrev(t);
+    for (const id of ["tUnyo", "tNumber", "tCars", "tType", "tLabel", "tDest", "tFrom", "tTo", "tDep", "lay", "fill", "tTurnHow", "tTurnNext", "tTurnVia", "tTurnTime", "tPrev"]) $(id).disabled = !ed;
     drawHint(t);
     drawTurn(t);
     drawStops(t);
   }
+
+  // ---- 前運用（終夜）: 留置になる所定の列車（滞泊など、終点のあとがない列車）から、そのまま続けて走る ----
+  // 発駅で終わる所定の列車（着く順）。選ぶと、発駅の番線をその列車の着いた番線にする
+  function prevCandidates(t) {
+    const first = t.stops[0];
+    if (!first || !plan) return [];
+    const arrOf = (p) => { const l = p.stops[p.stops.length - 1]; return sec(l.arr || l.dep) ?? 0; };
+    return plan.filter((p) => p.stay && !p.trial && p.stops.length && p.stops[p.stops.length - 1].st === first.st).sort((a, b) => arrOf(a) - arrOf(b));
+  }
+  function drawPrev(t) {
+    const show = !!(cur.overnight || t.from);
+    $("tPrevBox").hidden = !show;
+    if (!show) return;
+    const cands = prevCandidates(t);
+    const keep = t.from && !cands.some((p) => p.name === t.from);
+    $("tPrev").innerHTML = `<option value="">なし</option>` + cands.map((p) => {
+      const l = p.stops[p.stops.length - 1];
+      return `<option value="${esc(p.name)}" ${p.name === t.from ? "selected" : ""}>${esc(p.name)} ${short(l.arr || l.dep)}着 ${l.track != null ? l.track + "番線" : ""}${p.unyo ? `（運行${esc(p.unyo)}）` : ""}</option>`;
+    }).join("") + (keep ? `<option value="${esc(t.from)}" selected>${esc(t.from)}（発駅で終わらない列車）</option>` : "");
+  }
+  $("tPrev").onchange = () => {
+    const t = cur.trains[curTrain];
+    if (!t) return;
+    t.from = $("tPrev").value;
+    const p = t.from && plan && plan.find((x) => x.name === t.from), l = p && p.stops[p.stops.length - 1];
+    if (l && l.track != null && t.stops[0]) t.stops[0].track = l.track;
+    dirty = true;
+    drawTrains();
+    drawTrain();
+    scheduleDia();
+  };
 
   // ---- 終点のあと（後運用・入換） ----
   // 後運用に選べる列車: このグループで、この列車の終点から出る列車（着いたあとに出るもの。早い順）。
@@ -581,9 +627,16 @@
     const arr = sec(end.arr || end.dep), d = dirOf(t), same = t.turnHow === "種別変更";
     // 構内入換（1駅だけで発の時刻がない列車）は、着の時刻（入換で番線に入る時刻）で比べる
     const dep0 = (x) => sec(x.stops[0].dep || (x.stops.length === 1 ? x.stops[0].arr : null)) ?? 0;
-    return cur.trains.filter((x) => x !== t && x.stops[0] && x.stops[0].st === end.st && (arr == null || dep0(x) >= arr)
-        && (!d || !dirOf(x) || t.turnHow === "入換" || (dirOf(x) === d) === same))
-      .sort((a, b) => dep0(a) - dep0(b));
+    const okNext = (x) => x !== t && x.stops[0] && x.stops[0].st === end.st && (arr == null || dep0(x) >= arr)
+        && (!d || !dirOf(x) || t.turnHow === "入換" || (dirOf(x) === d) === same);
+    const mineN = cur.trains.filter(okNext).sort((a, b) => dep0(a) - dep0(b));
+    // 終夜: 翌朝の所定の列車（前の列車がない始発）も、そのまま折返・入換の後運用にできる（近い順に20本まで）。
+    // 向きは問わない（赤山町に上りで着いて、そのまま上りの始発 552 として出ることもある）
+    if (!cur.overnight || !(t.turnHow === "発" || t.turnHow === "入換") || !plan) return mineN;
+    const hasPred = new Set(plan.map((p) => p.turn).filter((n) => n));
+    const baseN = basePartners().filter((x) => !hasPred.has(x.number) && x.stops[0] && x.stops[0].st === end.st && (arr == null || dep0(x) >= arr))
+      .sort((a, b) => dep0(a) - dep0(b)).slice(0, 20);
+    return [...mineN, ...baseN];
   }
   // 所定の列車を、連結・切り離しの相手として（列番・種別・駅の停車と時刻・番線）。試運転は出さない
   function basePartners() {
@@ -638,7 +691,8 @@
       const x = cands.find((y) => y.number === n);
       const endSt = t.stops[t.stops.length - 1]?.st, xs = x && x.stops.find((s) => s.st === endSt);
       const info = !x ? (how === "連結" ? "（この駅に止まらない列車）" : "（終点から出ない列車）")
-        : how === "連結" ? ` ${short(xs?.arr || xs?.dep)}着 ${xs?.track != null ? xs.track + "番線" : ""}${x.base ? "（所定）" : ""}` : x.stops.length === 1 ? ` ${short(x.stops[0].arr)} 構内入換で${x.stops[0].track ?? ""}番線へ` : ` ${short(x.stops[0]?.dep)}発 ${esc(x.dest || "")}行`;
+        : how === "連結" ? ` ${short(xs?.arr || xs?.dep)}着 ${xs?.track != null ? xs.track + "番線" : ""}${x.base ? "（所定）" : ""}` : x.stops.length === 1 ? ` ${short(x.stops[0].arr)} 構内入換で${x.stops[0].track ?? ""}番線へ`
+        : x.base ? ` ${short(x.stops[0]?.dep)}発 ${x.stops[0]?.track != null ? x.stops[0].track + "番線" : ""}（所定の始発）` : ` ${short(x.stops[0]?.dep)}発 ${esc(x.dest || "")}行`;
       return `<option value="${esc(n)}" ${n === t.turnNext ? "selected" : ""}>${esc(n)}${info}</option>`;
     }).join("") + (cands.some((x) => !x.number) ? `<option value="" disabled>（列番を入れていない列車は選べません）</option>` : "");
     const outs = shuntOutsOf(t);
@@ -937,10 +991,20 @@
   let diaTimer = 0;
 
   // 列車の点（ゾーン・時刻）と、駅ごとの着・発・停車・番線
+  // 運転日の始まり（終夜で6時）が変わったら、所定の線の形を作り直す
+  let planStart = null;
+  function reshapePlan() {
+    if (!plan || planStart === dayStart()) return;
+    planStart = dayStart();
+    for (const p of plan) p.sh = shape(p.stops);
+  }
   function shape(stops) {
     const pts = [], st = new Map();
+    let last = null;
+    // 運転日の始まりをまたぐ列車（終夜で、5時台に出て6時を過ぎる所定の列車など）は、続けて翌日の時刻にする
+    const day = (v) => { if (v != null && last != null && v < last - 12 * 3600) v += 86400; if (v != null) last = v; return v; };
     for (const s of stops) {
-      const a = sec(s.arr), d = sec(s.dep);
+      const a = day(sec(s.arr)), d = day(sec(s.dep));
       if (a == null && d == null) continue;
       const track = s.track ?? null;
       if (a != null) pts.push({ z: s.y, t: a, track });
@@ -1015,7 +1079,9 @@
   }
 
   // ---- 描き方は運転整理用のダイヤグラム（diapanel.js）に合わせる: 4時〜27時を横に並べ、駅名の列は左に固定。詳細表示は番線ごとの段 ----
-  const DAY0 = 4 * 3600, DAY1 = 27 * 3600, SNAP = 15, TOP = 18, BOTTOM = 22, RIGHT = 10;
+  // 図の時刻の範囲: ふだんは4時〜27時、終夜は6時〜30時（翌6時）。layout で決め直す
+  let DAY0 = 4 * 3600, DAY1 = 27 * 3600;
+  const SNAP = 15, TOP = 18, BOTTOM = 22, RIGHT = 10;
   let dv = { split: false, minPx: 6, stationPx: 24, trackPx: 13 };
   try { dv = { ...dv, ...JSON.parse(localStorage.getItem("gokkoUntenkaDia") || "{}") }; } catch (e) {}
   const saveDv = () => { try { localStorage.setItem("gokkoUntenkaDia", JSON.stringify(dv)); } catch (e) {} };
@@ -1056,6 +1122,8 @@
       const a = band[zones[i - 1]], c = band[zones[i]];
       return a.bottom + (z - zones[i - 1]) / (zones[i] - zones[i - 1]) * (c.top - a.bottom);
     };
+    DAY0 = dayStart();
+    DAY1 = cur && cur.overnight ? 30 * 3600 : 27 * 3600;
     const x = (t) => left + (t - DAY0) / 60 * dv.minPx;
     return { band, left, height, y: yOf, x, t: (px) => DAY0 + (px - left) / dv.minPx * 60, w: x(DAY1) + RIGHT };
   }
@@ -1500,7 +1568,9 @@
       const j = await api("GET", "/plan");
       singles = new Set(j.singles.map(([a, b]) => keyZ(a, b)));
       minRuns = new Map((j.minRuns || []).map((x) => [`${x.from}>${x.to}`, x.sec]));
-      plan = j.trains.map((t) => ({ name: t.train, type: t.type, turn: t.turn, shunt: t.shunt, trial: !!t.trial, stops: t.stops, sh: shape(t.stops) }));
+      plan = j.trains.map((t) => ({ name: t.train, type: t.type, turn: t.turn, unyo: t.unyo, stay: !!t.stay, shunt: t.shunt, trial: !!t.trial, stops: t.stops, sh: shape(t.stops) }));
+      planStart = dayStart();
+      if (cur && curTrain >= 0 && cur.trains[curTrain]) drawPrev(cur.trains[curTrain]);
       if (cur && curTrain >= 0 && cur.trains[curTrain]) drawTurn(cur.trains[curTrain]); // 連結・切り離しの相手に所定の列車を出す
       scheduleDia();
     } catch (e) { $("dia").textContent = e.message; }
@@ -1543,7 +1613,7 @@
   $("check").onclick = async () => {
     try {
       const filled = fillAllPassTimes();
-      const j = await api("POST", "/check", { id: cur.id, trains: cur.trains });
+      const j = await api("POST", "/check", { id: cur.id, trains: cur.trains, overnight: !!cur.overnight });
       if (filled) j.warnings = [`時刻を入れていなかった通過駅 ${filled}駅に、線が通る時刻を入れました`, ...j.warnings];
       showMsgs(j.errors, j.warnings, j.errors.length ? "" : "入力に誤りはありません");
     } catch (e) { showMsgs([e.message]); }
@@ -1552,7 +1622,7 @@
   async function save() {
     try {
       fillAllPassTimes(); // 時刻を入れていない通過駅は、線が通る時刻を入れてから保存する
-      const j = await api("POST", "/groups", { id: cur.id, name: cur.name, trains: cur.trains });
+      const j = await api("POST", "/groups", { id: cur.id, name: cur.name, trains: cur.trains, overnight: !!cur.overnight });
       dirty = false;
       await loadGroups(j.id);
       showMsgs([], j.warnings, "保存しました");

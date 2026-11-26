@@ -208,6 +208,18 @@ public sealed class DiaTrain
 
     /// <summary>駅ID → 停車するか・番線（書かれていなければ null）。</summary>
     public Dictionary<string, (string StopType, int? Track)> Stations { get; } = new();
+
+    /// <summary>この列車を写して、「終点のあと」だけ差し替えたもの（終夜運転で、留置になる所定の列車を臨時列車につなぐ）。</summary>
+    public DiaTrain WithTurn(DiaTurn? turn)
+    {
+        var c = new DiaTrain
+        {
+            Number = Number, Type = Type, TypeLabel = TypeLabel, Dest = Dest, TerminalId = TerminalId, Next = Next, Unyo = Unyo, Cars = Cars, Turn = turn
+        };
+        c.Stops.AddRange(Stops);
+        foreach (var (k, v) in Stations) c.Stations[k] = v;
+        return c;
+    }
 }
 
 /// <summary>
@@ -308,6 +320,8 @@ public sealed class RailData
 
     // 所定のダイヤに重ねる列車（出どころ → 列車。催物用の臨時列車・特発臨など）
     private readonly Dictionary<string, List<DiaTrain>> _extra = new();
+    // 所定の列車の差し替え（出どころ → 列車。終夜運転で、留置になる所定の列車の「終点のあと」を臨時列車につなぐなど）
+    private readonly Dictionary<string, List<DiaTrain>> _replace = new();
     private readonly object _extraLock = new();
 
     /// <summary>
@@ -315,14 +329,17 @@ public sealed class RailData
     /// どの出どころにも列車がなければ、所定のダイヤに戻す。
     /// 所定のダイヤは変えず、足した表を新しく作って参照を切り替えるだけなので、読んでいる途中の処理はそのまま古い表を読み終える。
     /// 表は、ほかの出どころを先に足し、この出どころを最後に足す。所定のダイヤ・ほかの出どころにある列番は足さない（この出どころの足せなかった列番を返す）。
+    /// replace は、所定の列車を差し替えるもの（同じ列番の所定の列車があるものだけ。中身は呼ぶ側が所定の列車を写して作る）。
     /// </summary>
-    public List<string> SetExtraTrains(string source, IReadOnlyCollection<DiaTrain> extra)
+    public List<string> SetExtraTrains(string source, IReadOnlyCollection<DiaTrain> extra, IReadOnlyCollection<DiaTrain>? replace = null)
     {
         List<string> skipped;
         lock (_extraLock)
         {
             if (extra.Count == 0) _extra.Remove(source);
             else _extra[source] = extra.ToList();
+            if (replace is not { Count: > 0 }) _replace.Remove(source);
+            else _replace[source] = replace.ToList();
             skipped = Rebuild(source);
         }
         Turns.DiaChanged();
@@ -353,13 +370,17 @@ public sealed class RailData
     private List<string> Rebuild(string? source)
     {
         var skipped = new List<string>();
-        if (_extra.Count == 0 && _retimed.Count == 0)
+        if (_extra.Count == 0 && _retimed.Count == 0 && _replace.Count == 0)
         {
             _dia = null;
             return skipped;
         }
         var d = new Dictionary<string, DiaTrain>(_baseDia);
-        foreach (var (n, t) in _retimed) d[n] = t;
+        // 所定の列車の差し替え（終夜運転の前運用）。臨時停車で時刻も変えた列車は、変えた時刻に差し替えた「終点のあと」を付ける（両方生かす）
+        foreach (var list in _replace.Values)
+            foreach (var t in list)
+                if (_baseDia.ContainsKey(t.Number)) d[t.Number] = t;
+        foreach (var (n, t) in _retimed) d[n] = d.TryGetValue(n, out var r) && !ReferenceEquals(r, _baseDia[n]) ? t.WithTurn(r.Turn) : t;
         foreach (var (src, list) in _extra)
             if (src != source)
                 foreach (var t in list) d.TryAdd(t.Number, t);
