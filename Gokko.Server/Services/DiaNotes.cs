@@ -15,7 +15,9 @@ namespace Gokko.Server.Services;
 ///         「この列車が止まらない駅へ行く」か「先の駅にこの列車より早く着く」もの。回送・試運転は連絡を作らない・相手にしない
 /// ・交換: 単線の区間（考察による。<see cref="SingleTrack"/>）で行き違う反対向きの列車。
 ///         駅に同時にいるなら、その駅から単線に入るときだけその駅に書く。
-///         複線の区間ですれ違ったなら、単線から出てきた列車（<see cref="CrossWindowSeconds"/> 秒以内）を、次に単線に入る駅に書く。
+///         複線の区間ですれ違ったなら、単線から出てきたばかりの列車（<see cref="CrossWindowSeconds"/> 秒以内）は、次に単線に入る駅に書く。
+///         そうでなく、単線にはさまれた複線の駅（明神川・奥峯口）の手前ですれ違ったなら、その駅に書く
+///         （相手の時刻表にその駅がなければ、前後の駅の時刻から割り振った通過時刻で書く）。
 ///         始発の列車は、発の <see cref="OriginHoldSeconds"/> 秒前から駅にいるとみる
 /// ・試運転（走るかどうかわからない）は、ほかの列車の記事には書かない。試運転の列車の記事にだけ、相手の列車を書く
 /// ・接続「(接)」（待つもの。ConnectionTable が使う）・灰色などの記事は変えない
@@ -28,7 +30,7 @@ public static class DiaNotes
     public const int ConnectWindowSeconds = 30 * 60;
 
     /// <summary>複線の区間ですれ違った相手を、単線に入る駅に書くのは、相手がその駅を出てからこの秒数のうちに着くときだけ。</summary>
-    public const int CrossWindowSeconds = 3 * 60;
+    public const int CrossWindowSeconds = 160;
 
     /// <summary>始発の列車が、発の何秒前から駅にいるとみるか（交換を探すとき）。</summary>
     public const int OriginHoldSeconds = 10 * 60;
@@ -127,7 +129,9 @@ public static class DiaNotes
     {
         public readonly Dictionary<string, View> Trains = new();
         public readonly Dictionary<string, List<(View V, int I)>> ByStation = new();
-        private readonly Dictionary<View, Dictionary<int, List<(View U, int J)>>> _crossings = new();
+        private readonly Dictionary<View, Dictionary<int, List<(View U, Pt P)>>> _crossings = new();
+        private readonly Dictionary<string, int> _order = new();   // 駅 → 路線の並びの番号
+        private readonly HashSet<string> _short = new();          // 単線にはさまれた複線の駅
 
         public Table(IEnumerable<DiaTrain> trains)
         {
@@ -141,6 +145,19 @@ public static class DiaNotes
                     l.Add((v, i));
                 }
             }
+            // 路線の駅の並び: 駅のいちばん多い列車の時刻表の並び（路線の外の駅も含む）
+            var order = trains.MaxBy(d => d.Stops.Count)?.Stops.Select(x => x.StationId ?? x.Name).ToList() ?? new();
+            for (var i = 0; i < order.Count; i++) _order.TryAdd(order[i], i);
+
+            // 単線にはさまれた複線の駅: 単線の区間の外にあって、路線の並びで両側に別の単線の区間がある駅
+            static bool InGroup(string a) => SingleTrack.Any(g => g.Contains(a));
+            for (var i = 0; i < order.Count; i++)
+            {
+                if (InGroup(order[i])) continue;
+                var left = order.Take(i).LastOrDefault(InGroup);
+                var right = order.Skip(i + 1).FirstOrDefault(InGroup);
+                if (left != null && right != null && !SingleBetween(left, right)) _short.Add(order[i]);
+            }
         }
 
         private static Pt ToPt(DiaStop s) =>
@@ -148,8 +165,31 @@ public static class DiaNotes
 
         public IEnumerable<(View V, int I)> At(string key) => ByStation.GetValueOrDefault(key) ?? [];
 
-        /// <summary>この列車の交換（駅の番号 → 相手と、相手のその駅の番号）。</summary>
-        public Dictionary<int, List<(View U, int J)>> Crossings(View t)
+        /// <summary>
+        /// 列車 u がその駅にいる時間。時刻表にその駅がなければ（特急の時刻表にない明神川など）、前後の駅の時刻から割り振った通過時刻。
+        /// </summary>
+        private (Pt P, int From, int To)? SpanAt(View u, string key)
+        {
+            if (u.IndexOf(key) is { } j)
+                return u.Span(j, false) is { } s ? (u.Stops[j], s.From, s.To) : null;
+            if (!_order.TryGetValue(key, out var x)) return null;
+            int? prev = null;
+            for (var k = 0; k < u.Stops.Count; k++)
+            {
+                if (u.Stops[k].At == null || !_order.TryGetValue(u.Stops[k].Key, out var ok)) continue;
+                if (prev is { } pk && _order[u.Stops[pk].Key] is var op && Math.Min(op, ok) < x && x < Math.Max(op, ok)
+                    && u.Span(pk, false) is { } a && u.Span(k, false) is { } b)
+                {
+                    var v = a.To + (int)Math.Round((double)Wrap(b.From - a.To) * (x - op) / (ok - op));
+                    return (new Pt(key, false, null, v, null), v, v);
+                }
+                prev = k;
+            }
+            return null;
+        }
+
+        /// <summary>この列車の交換（駅の番号 → 相手と、相手のその駅の時刻）。</summary>
+        public Dictionary<int, List<(View U, Pt P)>> Crossings(View t)
         {
             if (_crossings.TryGetValue(t, out var r)) return r;
             r = new();
@@ -169,12 +209,15 @@ public static class DiaNotes
                 int? prev = null;
                 foreach (var k in timed)
                 {
-                    if (u.IndexOf(t.Stops[k].Key) is not { } j || t.Span(k, true) is not { } ts || u.Span(j, false) is not { } us) continue;
+                    var key = t.Stops[k].Key;
+                    if (SpanAt(u, key) is not { } us || t.Span(k, true) is not { } ts) continue;
                     if (Math.Abs(Wrap(us.From - ts.From)) > 3 * 3600) break;
                     if (Wrap(us.From - ts.To) <= 0 && Wrap(us.To - ts.From) >= 0)
                     {
-                        // 駅に同時にいる: この駅から単線に入るときだけ
-                        if (t.EntersSingle(k)) Add(r, k, u, j);
+                        // 駅に同時にいる: この駅から単線に入るなら、この駅に書く。
+                        // 単線にはさまれた複線の駅なら、単線から出てきたばかりの相手は次に単線に入る駅に、そうでなければこの駅に書く
+                        if (t.EntersSingle(k)) Add(r, k, u, us.P);
+                        else if (_short.Contains(key) && !Entry(r, t, timed, k, u)) Add(r, k, u, us.P);
                         break;
                     }
                     if (Wrap(us.To - ts.From) < 0)
@@ -182,19 +225,10 @@ public static class DiaNotes
                         // 相手はもう出た: 手前の駅からこの駅までの間ですれ違った
                         if (prev is { } pk)
                         {
-                            if (SingleBetween(t.Stops[pk].Key, t.Stops[k].Key)) Add(r, k, u, j);
-                            else
-                                // 複線ですれ違った: 次に単線に入る駅に、単線から出てきた相手を書く
-                                foreach (var m in timed.Where(m => m >= k))
-                                {
-                                    if (!t.EntersSingle(m)) continue;
-                                    if (u.IndexOf(t.Stops[m].Key) is { } jm && u.PrevTimed(jm) is { } up
-                                        && SingleBetween(u.Stops[up].Key, u.Stops[jm].Key)
-                                        && t.Span(m, true) is { } tm && u.Span(jm, false) is { } um
-                                        && Wrap(tm.From - um.To) is var gap && gap >= 0 && gap <= CrossWindowSeconds)
-                                        Add(r, m, u, jm);
-                                    break;
-                                }
+                            if (SingleBetween(t.Stops[pk].Key, key)) Add(r, k, u, us.P);
+                            // 複線ですれ違った: 単線から出てきたばかりの相手は、次に単線に入る駅に書く。
+                            // そうでなく、この駅が単線にはさまれた複線の駅なら、この駅に書く
+                            else if (!Entry(r, t, timed, k, u) && _short.Contains(key)) Add(r, k, u, us.P);
                         }
                         break;
                     }
@@ -204,10 +238,31 @@ public static class DiaNotes
             return r;
         }
 
-        private static void Add(Dictionary<int, List<(View, int)>> r, int k, View u, int j)
+        /// <summary>
+        /// k から先で最初に単線に入る駅に、相手 u が単線から出てきてから <see cref="CrossWindowSeconds"/> 秒以内に着くなら、そこに書く。書いたら true。
+        /// </summary>
+        private static bool Entry(Dictionary<int, List<(View, Pt)>> r, View t, List<int> timed, int k, View u)
+        {
+            foreach (var m in timed.Where(m => m >= k))
+            {
+                if (!t.EntersSingle(m)) continue;
+                if (u.IndexOf(t.Stops[m].Key) is { } jm && u.PrevTimed(jm) is { } up
+                    && SingleBetween(u.Stops[up].Key, u.Stops[jm].Key)
+                    && t.Span(m, true) is { } tm && u.Span(jm, false) is { } um
+                    && Wrap(tm.From - um.To) is var gap && gap >= 0 && gap <= CrossWindowSeconds)
+                {
+                    Add(r, m, u, u.Stops[jm]);
+                    return true;
+                }
+                return false;
+            }
+            return false;
+        }
+
+        private static void Add(Dictionary<int, List<(View, Pt)>> r, int k, View u, Pt p)
         {
             if (!r.TryGetValue(k, out var l)) r[k] = l = new();
-            l.Add((u, j));
+            if (!l.Any(x => x.Item1 == u)) l.Add((u, p));
         }
     }
 
@@ -335,11 +390,12 @@ public static class DiaNotes
 
         // 交換（通過する駅にも書く）
         if (tb.Crossings(t).TryGetValue(i, out var cs))
-            foreach (var (u, j) in cs)
+            foreach (var (u, up) in cs)
             {
                 if (Hidden(t, u)) continue;
-                var up = u.Stops[j];
-                var (sec, how) = !up.Stops ? (up.Pass!.Value, "通") : up.Arr is { } ua ? (ua, "着") : (up.Dep!.Value, "発");
+                // 止まる列車は着（着の書いていない駅は、発の少し前）。始発の駅なら発
+                var origin = u.Stops.FindIndex(x => x.At != null) is var f && f >= 0 && ReferenceEquals(u.Stops[f], up);
+                var (sec, how) = !up.Stops ? (up.Pass!.Value, "通") : origin ? (up.Dep ?? up.Arr!.Value, "発") : (ArrOf(up)!.Value, "着");
                 r.TryAdd(u.Number, Text("×", u, up, sec, how));
             }
 
@@ -409,7 +465,7 @@ public static class DiaNotes
             if (u == t || TypeChar(u.Train) != ty || DestChar(u.Train.Dest) != de) continue;
             var up = u.Stops[j];
             if (tr.Length > 0 && (up.Track is not { } k || k < 1 || k > Circled.Length || Circled[k - 1].ToString() != tr)) continue;
-            var tm = how == "着" ? up.Arr : up.Dep ?? (how == "通" ? up.Arr : null);
+            var tm = how == "着" ? ArrOf(up) : up.Dep ?? (how == "通" ? up.Arr : null);
             if (tm is not { } x || x / 60 % 60 != mi) continue;
             var diff = Math.Abs(Wrap(x - baseSec));
             if (diff < bestDiff && diff <= 3600)
@@ -437,7 +493,7 @@ public static class DiaNotes
         var j = u.Stops.FindIndex(p => p.Key == key);
         if (j < 0) return null;
         var up = u.Stops[j];
-        var sec = how == "着" ? up.Arr ?? up.Dep : how == "発" ? up.Dep ?? up.Arr : up.Pass;
+        var sec = how == "着" ? ArrOf(up) : how == "発" ? up.Dep ?? up.Arr : up.Pass;
         return sec is { } x ? Text("×", u, up, x, how) : null;
     }
 
@@ -468,6 +524,9 @@ public static class DiaNotes
         var w = Wrap(dep - ta);
         return w > 0 && w <= ConnectWindowSeconds ? Text("連", u, up, dep, "発") : null;
     }
+
+    /// <summary>着いた時刻。着の書いていない駅（発だけの短い停車）は、発の <see cref="EventStops.DwellSeconds"/> 秒前。</summary>
+    private static int? ArrOf(Pt p) => p.Arr ?? p.Dep - EventStops.DwellSeconds;
 
     private static string Text(string kind, View u, Pt p, int sec, string how)
     {
