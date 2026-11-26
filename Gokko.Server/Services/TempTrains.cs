@@ -680,11 +680,11 @@ public sealed class TempTrains
                 {
                     if (n != "連" + parent.Number) errors.Add($"{n}: 増結車の列番は「連{parent.Number}」にしてください（連結する列車の列番に「連」を付ける）");
                     if (end.Track != null && ps.Track != null && end.Track != ps.Track) errors.Add($"{n}: {parent.Number} は{endName} {ps.Track}番線に着きます。増結車も {ps.Track}番線で待ってください");
-                    // 連結できる番線か（場内が2段あり、第一場内の先で止まってから番線の場内で入れる番線だけ。新野崎の上りは場内が1段なので入れない）
+                    // 連結できる番線か（場内が2段あり、番線の場内と同じ所へ入る入換信号機がある番線だけ。止まってから入換信号機で入る）
                     if (ps.Track is { } ptk && RouteEngine.TrainInfo(parent.Number) is { } pinfo && !RouteEngine.CanCoupleAt(_rail, end.St, pinfo.Dir, ptk))
                     {
                         var okTracks = _rail.Stations.TryGetValue(end.St, out var csd) ? csd.Routes[pinfo.Dir].Arrive.Keys.Where(k => RouteEngine.CanCoupleAt(_rail, end.St, pinfo.Dir, k)).Order().ToList() : new List<int>();
-                        errors.Add($"{n}: {endName} {ptk}番線は、{(pinfo.Dir == Dir.Down ? "下り" : "上り")}の場内が1段で、手前で止まってから入れないので、連結できません"
+                        errors.Add($"{n}: {endName} {ptk}番線は、{(pinfo.Dir == Dir.Down ? "下り" : "上り")}の列車が番線へ入る入換信号機がないので、連結できません"
                             + (okTracks.Count > 0 ? $"（{endName}で連結できる番線: {string.Join("・", okTracks)}番線）" : $"（{endName}では{(pinfo.Dir == Dir.Down ? "下り" : "上り")}の列車に連結できません）"));
                     }
                     double? ready = DaySec(end.Arr ?? end.Dep), parr = DaySec(ps.Arr ?? ps.Dep);
