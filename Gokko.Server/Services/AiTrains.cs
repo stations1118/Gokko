@@ -1979,6 +1979,22 @@ public sealed class AiTrains : BackgroundService
                 if (held || due - n > (entryPass ? TimeSpan.FromSeconds(EntryLeadSeconds) : TimeSpan.FromMinutes(2))) continue;
                 todo.Add((number, start.Name, track));
             }
+            // 出現前の列車が、このあと続けて・折り返して走る列番は、出さない（その列車が出れば、走っている列車の続きとして covered に入る）。
+            // 出現前の 回1680 の折り返しの 1781C を別の列車として一覧に出すと、ダイヤグラムで 回1680 → 1781C のつなぎが切れ、
+            // 回1680 が出るのが遅れれば 1781C が先に別に出てしまう
+            var chained = new HashSet<string>();
+            foreach (var p in pending)
+            {
+                var c = new HashSet<string>();
+                CoverChain(_rail.DiaOf(p.Number), c);
+                c.Remove(p.Number);
+                chained.UnionWith(c);
+            }
+            if (chained.Count > 0)
+            {
+                pending.RemoveAll(p => chained.Contains(p.Number));
+                todo.RemoveAll(x => chained.Contains(x.Number));
+            }
             _pending = pending;
         }
 
