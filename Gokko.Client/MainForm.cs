@@ -1094,49 +1094,64 @@ public sealed partial class MainForm : Form
     private bool _diaShown;
     private bool _diaLock; // ダイヤ運転中（番線を選べない）
     private bool _continueBefore;
-    private string _clockSyncKey = "";
+    private bool _clockOn;            // ゲームの実時間モードをオンにしてある
+    private int? _clockSentOffset;    // 最後に送った補正（秒。0〜86399）。null なら次に送り直す
 
     /// <summary>
     /// ダイヤ運転中は、ゲームの時計をロープレ時刻に合わせる（実時間モード ＋ 時刻の補正 = ロープレ時刻 − このPCの今の時刻。0〜24時間のプラスで送る）。
-    /// 補正が10秒以上変わったとき・ゲームにつなぎ直したときに送り直す。フリー運転に戻ったら実時間モードを外す。
-    /// コマンドは mode_request と mode_req の両方で送る
+    /// 補正が、最後に送った値から2秒以上ずれたとき（管理画面で時刻を変えたときなど）・ゲームにつなぎ直したときに送り直す。
+    /// ロープレ時刻は秒で切り捨てて届くので、計算した補正は毎回1秒ほどの幅でぶれる。少しのずれで送り直すと、
+    /// そのたびにゲームの時計が1秒戻ったり進んだりする（24秒→25秒→24秒…）ので、小さいずれでは送らない。
+    /// フリー運転に戻ったら実時間モードを外す。コマンドは mode_request と mode_req の両方で送る
     /// </summary>
     private async Task SyncGameClockAsync(bool dia, string? gameTime)
     {
-        if (!_game.IsConnected) { _clockSyncKey = ""; return; }
-        string key;
-        int h = 0, m = 0, sec = 0;
-        if (dia && TimeSpan.TryParse(gameTime, out var roleplay))
+        if (!_game.IsConnected) { _clockOn = false; _clockSentOffset = null; return; }
+        if (!(dia && TimeSpan.TryParse(gameTime, out var roleplay)))
         {
-            // 補正はいつもプラス（0〜24時間）で送る。マイナスで送ると、ゲームの時計が日付を戻る向きにまたいで、
-            // 「-10時」のような表示になる（例: 実際は0時、ロープレは13時台 → −11時間ではなく +13時間で送る）
-            var offset = roleplay - DateTime.Now.TimeOfDay;
-            var total = (int)Math.Round(offset.TotalSeconds) % 86400;
-            if (total < 0) total += 86400;
-            (h, m, sec) = (total / 3600, total / 60 % 60, total % 60);
-            key = $"on:{Math.Round(total / 10.0)}";
-        }
-        else key = "off";
-        if (key == _clockSyncKey) return;
-        var wasOn = _clockSyncKey.StartsWith("on");
-        _clockSyncKey = key;
-        try
-        {
-            if (key == "off")
+            if (!_clockOn) return;
+            _clockOn = false;
+            _clockSentOffset = null;
+            try
             {
-                if (!wasOn) return;
                 await _game.SendCommandAsync("mode_req", ["realtimemode_off"]);
                 await _game.SendCommandAsync("mode_request", ["realtimemode_off"]);
-                return;
             }
+            catch
+            {
+                _clockOn = true; // 次の周期で送り直す
+            }
+            return;
+        }
 
-            await _game.SendCommandAsync("mode_req", ["realtimemode_on"]);
-            await _game.SendCommandAsync("mode_request", ["realtimemode_on"]);
-            await _game.SendCommandAsync("realtime_offset", [h.ToString(), m.ToString(), sec.ToString()]);
+        // 補正はいつもプラス（0〜24時間）で送る。マイナスで送ると、ゲームの時計が日付を戻る向きにまたいで、
+        // 「-10時」のような表示になる（例: 実際は0時、ロープレは13時台 → −11時間ではなく +13時間で送る）。
+        // 届いた時刻は秒で切り捨てなので、本当の時刻はそこから1秒の間のどこか。真ん中（+0.5秒）で見込む
+        var offset = roleplay + TimeSpan.FromSeconds(0.5) - DateTime.Now.TimeOfDay;
+        var total = (int)Math.Round(offset.TotalSeconds) % 86400;
+        if (total < 0) total += 86400;
+        if (_clockOn && _clockSentOffset is { } sent)
+        {
+            var diff = Math.Abs(total - sent);
+            if (Math.Min(diff, 86400 - diff) < 2) return; // 0時をまたいだ差で比べる（23:59:59 と 0:00:00 は1秒差）
+        }
+
+        var turnOn = !_clockOn;
+        _clockOn = true;
+        _clockSentOffset = total;
+        try
+        {
+            if (turnOn)
+            {
+                await _game.SendCommandAsync("mode_req", ["realtimemode_on"]);
+                await _game.SendCommandAsync("mode_request", ["realtimemode_on"]);
+            }
+            await _game.SendCommandAsync("realtime_offset", [(total / 3600).ToString(), (total / 60 % 60).ToString(), (total % 60).ToString()]);
         }
         catch
         {
-            _clockSyncKey = ""; // 次の周期で送り直す
+            _clockOn = false; // 次の周期で送り直す
+            _clockSentOffset = null;
         }
     }
 
