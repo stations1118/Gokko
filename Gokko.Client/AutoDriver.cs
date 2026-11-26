@@ -25,7 +25,8 @@ public sealed class AutoDriver
     private const double LimitMargin = 2;      // 制限速度・ATS の速度より、これだけ下を上限にする（km/h）
     private const double PlanDecel = 2.0;      // 先の制限・停止信号まで減速しきれるかを見るときの減速度（km/h/s）
     private const double PlanMargin = 20;      // 同じく、減速しきるのに要る距離に足す余裕（m）
-    private const int PatternNotch = 5;        // この段の効き方（の 95%）が要るようになったら入れ始める（運転士の基本制動 B4＝ゲームの B5。止まる直前まで保つ）
+    private const int PatternNotch = 5;        // この段の目安の減速度（2.8km/h/s）が要るようになったら入れ始める（停目からの距離で決まるので両数によらない。4両停目なら 80m 手前 40km/h、6両停目なら 120m 手前 50km/h 前後）。
+                                               // 覚えた効き方が目安より弱い列車は、足りる段（B6 など）を選ぶ（運転士の基本制動 B4＝ゲームの B5、足りなければ1段上げる）
     private const double DefaultLag = 0.8;     // ブレーキが効き始めるまでの遅れ（秒）の目安。見込みの表に形式の値があればそれ
     private const int DefaultHoldMs = 2000;    // 段を変えたら、これだけは保つ（ブレーキシリンダの圧が上がって効ききるまで。行ったり来たりしない）。表に遅れがあれば遅れ＋1.2秒
     private const double StopTolerance = 1.0;  // 保ったあと、このままの減速度で止まる位置の見込みがこれ以上ずれたら段を変える（m）
@@ -277,7 +278,7 @@ public sealed class AutoDriver
 
         if (dTarget < -1 && s.Speed > 0.5f) return Hold($"{what}を行き過ぎました", MaxBrake);
 
-        if (!_stopping && !double.IsInfinity(dTarget) && (v > FinalSpeed ? need >= Decel(PatternNotch) * 0.95 : need >= Steady(FinalNotch) * 0.9))
+        if (!_stopping && !double.IsInfinity(dTarget) && (v > FinalSpeed ? need >= BrakeDecel[PatternNotch] : need >= Steady(FinalNotch) * 0.9))
         {
             // 走ってきた速さのまま、停止パターンに当たったところで入れ始める（最初の段は目安から。ふつうは B5）
             _stopping = true;
