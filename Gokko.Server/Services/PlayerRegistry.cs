@@ -365,9 +365,20 @@ public sealed class PlayerRegistry(GameData data, CentralControl central)
 
     public static ShuntSpot? ShuntSpotOf(string? name) => name == null ? null : ShuntSpots.FirstOrDefault(s => s.Name == name);
 
-    /// <summary>その場所だけに止まっている（踏んでいる軌道回路が全部その場所）なら、その場所。</summary>
-    private static ShuntSpot? ShuntSpotAt(PlayerInfo p) =>
-        p.TrackCircuits.Count == 0 ? null : ShuntSpots.FirstOrDefault(s => p.TrackCircuits.All(c => c == s.Circuit));
+    /// <summary>
+    /// その場所にいる（その場所の軌道回路を踏んでいて、ほかに踏んでいるのが同じ駅の回路だけ）なら、その場所。
+    /// 後ろが手前の分岐（大道寺 50イT など）にかかっていても出す（全部その場所のときだけにすると、入りきらずに止めた列車にボタンが出なかった）
+    /// </summary>
+    private static ShuntSpot? ShuntSpotAt(PlayerInfo p) => ShuntSpotAt(p.TrackCircuits);
+
+    private static ShuntSpot? ShuntSpotAt(IReadOnlyCollection<string> circuits) =>
+        circuits.Count == 0 ? null : ShuntSpots.FirstOrDefault(s => InSpot(s, circuits));
+
+    private static bool InSpot(ShuntSpot s, IReadOnlyCollection<string> circuits)
+    {
+        var station = s.Circuit[..(s.Circuit.IndexOf('_') + 1)]; // "TH65_"
+        return circuits.Contains(s.Circuit) && circuits.All(c => c.StartsWith(station, StringComparison.Ordinal));
+    }
 
     /// <summary>入換で動かすために、この人が残した在線（接続し直していれば、同じ乗務員の在線）。</summary>
     private Ghost? ShuntGhostOf(PlayerInfo p)
@@ -518,7 +529,7 @@ public sealed class PlayerRegistry(GameData data, CentralControl central)
                 && p.AppearReason == null && p.CoupledInto == null && !LeavesLine(p))
                 AddGhost(p, leaving ? p.ShuntSpot : null);
             // ボタンを押したあと、運転画面のまま動いてその場所を出たら取り消す
-            if (leaving && nowIn && !circuits.All(c => c == ShuntSpotOf(p.ShuntSpot)?.Circuit)) p.ShuntMove = ShuntMoveState.None;
+            if (leaving && nowIn && !(ShuntSpotOf(p.ShuntSpot) is { } ls && InSpot(ls, circuits))) p.ShuntMove = ShuntMoveState.None;
             p.ContinueDuty = report.ContinueDuty;
             p.TrainNumberTyped = report.TrainNumberTyped;
             var number = Truncate(NormalizeName(report.TrainNumber));
