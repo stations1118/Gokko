@@ -865,6 +865,13 @@ public sealed class AiTrains : BackgroundService
         var atEnd = next != null && (stopX == null || stopX > t.PathEnd - 2) && !t.Blocked && t.Speed == 0 && t.PathEnd - t.Head < 5 && !(t.FromShunt && !t.ShuntMoved); // 引上線で折り返した直後（まだ番線へ動いていない）は除く
         if (next != null && (stopX is { } at && t.Speed == 0 && Math.Abs(t.Head - at) < 0.5 || atEnd))
         {
+            // 番線への入換で番線に入って止まり、出発の進路が入換で来た道を戻る（江ノ原信号場の 13番線 → 12番線 → 4L）:
+            // 着いたことにする前に向きを変える（停止位置の表がない駅は、番線の回路の終わりで着いたことになり、向きを変えないまま出発の進路を待ち続ける）
+            if (t.FromShunt && t.ShuntMoved && t.PlanIndex == 0 && DepartGoesBack(t, next) && ReverseInPlatform(t, next, utcNow))
+            {
+                UpdateInfo(t);
+                return;
+            }
             // 連結: 停B（停止位置目標のない駅は、連結位置の 4m 手前）で一度止まり（完全に止まってから）、連結位置まで進む
             if (t.CoupleStage < 2 && CouplePartnerAt(t, next) != null && CouplePos(t, next) is { } cpos)
             {
@@ -1018,6 +1025,20 @@ public sealed class AiTrains : BackgroundService
     /// 番線に入って止まったら向きを変え、出発の停止位置にいることにする。道筋は番線の回路から作り直す（<see cref="TurnBack"/> と同じ）。
     /// 出発信号機が道筋の先にあれば（入換と出発が同じ向き。大道寺の Y線 → 番線）、何もしない。
     /// </summary>
+    /// <summary>
+    /// 今いる番線から出る出発の進路が、ここまで来た道筋の回路を通るか（＝入換と反対向きに出る。番線で向きを変える必要がある）。
+    /// 江ノ原信号場の 13番線 → 12番線（13RB）のあと 4L で出るときなど。
+    /// </summary>
+    private bool DepartGoesBack(Train t, PlanStop p)
+    {
+        if (!_rail.Stations.TryGetValue(p.StationId, out var st)) return false;
+        var here = t.Path.SelectMany(s => s.Circuits).LastOrDefault(c => c.Start < t.Head)?.Name;
+        if (here == null || st.TrackCircuit.FirstOrDefault(kv => kv.Value == here) is not { Value: not null } hit) return false;
+        if (!st.Routes[t.Dir].Depart.TryGetValue(hit.Key, out var depart)) return false;
+        var came = t.Path.SelectMany(s => s.Circuits).Select(c => c.Name).Where(c => c != here).ToHashSet();
+        return depart.SelectMany(r => r.Circuits).Any(came.Contains);
+    }
+
     private bool ReverseInPlatform(Train t, PlanStop p, DateTime utcNow)
     {
         if (!_rail.Stations.TryGetValue(p.StationId, out var st) || t.PathEnd - t.Head > SignalMargin + 3) return false;

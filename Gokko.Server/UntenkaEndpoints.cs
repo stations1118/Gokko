@@ -12,6 +12,7 @@ public static class UntenkaEndpoints
     public sealed record SaveRequest(string? Id, string? Name, List<TempTrains.TrainSpec>? Trains);
     public sealed record CheckRequest(string? Id, List<TempTrains.TrainSpec>? Trains);
     public sealed record ActRequest(string? Id, string? Action, string? Comment);
+    public sealed record UnyoRunRequest(string? Id, string? Unyo, bool On);
 
     public static void MapUntenkaEndpoints(this WebApplication app, RouteGroupBuilder dia)
     {
@@ -150,7 +151,7 @@ public static class UntenkaEndpoints
         {
             groups = temp.Groups().Where(x => x.Status == TempTrains.Approved || x.Applied).Select(x => new
             {
-                id = x.Id, name = x.Name, applied = x.Applied, owner = x.OwnerName, approvedBy = x.ApprovedBy,
+                id = x.Id, name = x.Name, applied = x.Applied, owner = x.OwnerName, approvedBy = x.ApprovedBy, off = x.OffUnyo,
                 trains = x.Trains.Select(t => new
                 {
                     unyo = t.Unyo, number = t.Number, type = t.Type, dest = t.Dest,
@@ -166,6 +167,15 @@ public static class UntenkaEndpoints
             var error = temp.Apply(req.Id, on);
             if (error != null) return Results.BadRequest(new { ok = false, message = error });
             log.Note($"司令用管理画面: 催物用臨時列車「{name}」を{(on ? "適用" : "取消")}しました");
+            return Results.Ok(new { ok = true });
+        });
+        // グループの運行番号ごとに、走らせる・走らせない
+        dia.MapPost("/temptrains/unyo", (UnyoRunRequest req, TempTrains temp, IncidentManager log) =>
+        {
+            var name = temp.Get(req.Id)?.Name;
+            var error = temp.SetUnyo(req.Id, req.Unyo, req.On);
+            if (error != null) return Results.BadRequest(new { ok = false, message = error });
+            log.Note($"司令用管理画面: 催物用臨時列車「{name}」の運行 {req.Unyo} を{(req.On ? "走らせる" : "走らせない")}にしました");
             return Results.Ok(new { ok = true });
         });
     }
