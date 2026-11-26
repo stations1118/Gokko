@@ -419,6 +419,20 @@ public sealed class CentralControl(GameClock clock)
         return n;
     }
 
+    /// <summary>
+    /// 列車がその駅を抜けた・その駅で走り終えたので、その駅の指示（番線・抑止・開通指示・駅扱いの強制進路・発車時刻）を消す。
+    /// 消さないと、終夜運転で翌日の同じ列番や、同じ列番でやり直した列車に、前の指示が効いてしまう。まだ通っていない駅の指示は残る。
+    /// 臨時停車・臨時通過・打ち切りは消さない: 浜園の臨時停車は関わる列車の時刻を変えていて（消すと、走っている列車の時刻が元に戻る）、
+    /// 打ち切りはダイヤグラムの計画の線を打ち切った駅で切るのに、走り終えたあとも使う。これらは、指示を外すか、ロープレ時刻の設定で消える。
+    /// 消したものがあれば true。
+    /// </summary>
+    public bool ForgetAt(string train, string station)
+    {
+        var key = (train, station);
+        lock (_lock)
+            return _tracks.Remove(key) | _holds.Remove(key) | _forces.Remove(key) | _manual.Remove(key) | _openAt.Remove(key);
+    }
+
     /// <summary>ResetManual の中身（_lock の中で）。臨時停車などの指示があったかを hadStops に返す。</summary>
     private int ResetManualCore(out bool hadStops)
     {

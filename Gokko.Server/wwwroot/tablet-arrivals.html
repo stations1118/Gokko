@@ -159,12 +159,18 @@
     app().innerHTML = `<div class="pick"><div class="pane"><h5>接近案内を出す駅</h5>
       <div class="row">${stations.map((s) => `<button data-st="${esc(s.id)}">${esc(s.name)}</button>`).join("") || "<span class='err'>駅がありません</span>"}</div></div>
       <div class="pane"><a href="menu.html" data-menu-link>‹ メニューに戻る</a>　<a href="tablet.html">乗務タブレットに戻る</a></div></div>`;
-    app().querySelectorAll("button[data-st]").forEach((b) => b.onclick = () => { choose(b.dataset.st); timer = timer || setInterval(refresh, 2000); });
+    app().querySelectorAll("button[data-st]").forEach((b) => b.onclick = () => { choose(b.dataset.st); timer = timer || setInterval(tick, 2000); });
   }
 
   let busy = false, timer = null;
+  // タブが裏にある間は、止めずに5回に1回だけ読む（別の窓の後ろに置いて映す使い方でも止まらないように）。
+  // アドレスに ?always=1 を付けると、裏でもいつもの間隔で読む
+  let hiddenTicks = 0;
+  const always = /[?&]always=1/.test(location.search);
+  const due = () => { if (always || !document.hidden) { hiddenTicks = 0; return true; } return ++hiddenTicks % 5 === 0; };
+  const tick = () => { if (due()) refresh(); };
   async function refresh() {
-    if (busy || !station || document.hidden) return; // タブが裏にある間は読まない
+    if (busy || !station) return;
     busy = true;
     try {
       const res = await fetch("/api/tid/arrivals?station=" + encodeURIComponent(station), { cache: "no-store" });
@@ -183,7 +189,7 @@
     try { stations = await (await fetch("/api/tid/arrivals/stations", { cache: "no-store" })).json(); } catch (e) { stations = []; }
     if (!station || !stations.some((s) => s.id === station)) { station = ""; pickScreen(); return; }
     await refresh();
-    timer = setInterval(refresh, 2000);
+    timer = setInterval(tick, 2000);
   })();
 </script>
 </body>

@@ -83,7 +83,12 @@
   }
 
   let polling = false; const poll = async () => { if (polling) return; polling = true; try { await refresh(); } finally { polling = false; } }; // 前の読み込みが終わっていなければ重ねて投げない（サーバーが遅いとき、要求が積み重なって配信まで詰まるため）
-  GokkoClock.ready.then(() => { poll(); setInterval(() => { if (!document.hidden) poll(); }, 1000); }); // タブが裏にある間は読まない
+  // タブが裏にある間は、止めずに5回に1回だけ読む（別の窓の後ろに置いて映す使い方でも止まらないように）。
+  // アドレスに ?always=1 を付けると、裏でもいつもの間隔で読む
+  let hiddenTicks = 0;
+  const always = /[?&]always=1/.test(location.search);
+  const due = () => { if (always || !document.hidden) { hiddenTicks = 0; return true; } return ++hiddenTicks % 5 === 0; };
+  GokkoClock.ready.then(() => { poll(); setInterval(() => { if (due()) poll(); }, 1000); });
   document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); }); // 見える所に戻ったら、すぐ読む
 })();
 </script>
