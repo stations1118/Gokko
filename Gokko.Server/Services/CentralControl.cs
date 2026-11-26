@@ -195,6 +195,12 @@ public sealed class CentralControl(GameClock clock)
         lock (_lock) return _cuts.GetValueOrDefault(train);
     }
 
+    /// <summary>臨時停車・臨時通過・打ち切りの指示を変えるたびに増える（自動運転列車の停車駅を作り直す合図）。</summary>
+    public int StopVersion { get; private set; }
+
+    /// <summary>臨時停車・臨時通過・打ち切りの指示が変わった（浜園の特急の臨時停車の時刻を作り直す合図）。</summary>
+    public event Action? StopsChanged;
+
     public void SetStop(string train, string station, string? kind)
     {
         lock (_lock)
@@ -205,6 +211,8 @@ public sealed class CentralControl(GameClock clock)
             else if (_cuts.GetValueOrDefault(train) == station) { _cuts.Remove(train); CutVersion++; }
         }
 
+        StopVersion++;
+        StopsChanged?.Invoke();
         var label = kind switch { "停車" => "臨時停車", "通過" => "臨時通過", "打ち切り" => "打ち切り", _ => "停車・通過を元に戻す" };
         Changed?.Invoke($"集中扱い: {train} {station} {label}");
     }
@@ -397,25 +405,40 @@ public sealed class CentralControl(GameClock clock)
     /// </summary>
     public int ResetManual()
     {
+        int n;
+        bool hadStops;
         lock (_lock)
         {
-            var n = _tracks.Count + _holds.Count + _forces.Count + _manual.Count + _openAt.Count + _stops.Count
-                + _orders.Count + _sectionOrders.Count;
-            _tracks.Clear();
-            _holds.Clear();
-            _forces.Clear();
-            _cancels.Clear();
-            _manual.Clear();
-            _openAt.Clear();
-            _stops.Clear();
-            if (_cuts.Count > 0) { _cuts.Clear(); CutVersion++; }
-            // 順序は消したうえで更新時刻を進める（同期で古い順序から書き戻されないように）
-            foreach (var k in _orders.Keys.ToList()) _orderStamps[k] = ++_stamp;
-            foreach (var k in _sectionOrders.Keys.ToList()) _sectionStamps[k] = ++_stamp;
-            _orders.Clear();
-            _sectionOrders.Clear();
-            return n;
+            n = ResetManualCore(out hadStops);
         }
+        if (hadStops)
+        {
+            StopVersion++;
+            StopsChanged?.Invoke();
+        }
+        return n;
+    }
+
+    /// <summary>ResetManual の中身（_lock の中で）。臨時停車などの指示があったかを hadStops に返す。</summary>
+    private int ResetManualCore(out bool hadStops)
+    {
+        var n = _tracks.Count + _holds.Count + _forces.Count + _manual.Count + _openAt.Count + _stops.Count
+            + _orders.Count + _sectionOrders.Count;
+        hadStops = _stops.Count > 0;
+        _tracks.Clear();
+        _holds.Clear();
+        _forces.Clear();
+        _cancels.Clear();
+        _manual.Clear();
+        _openAt.Clear();
+        _stops.Clear();
+        if (_cuts.Count > 0) { _cuts.Clear(); CutVersion++; }
+        // 順序は消したうえで更新時刻を進める（同期で古い順序から書き戻されないように）
+        foreach (var k in _orders.Keys.ToList()) _orderStamps[k] = ++_stamp;
+        foreach (var k in _sectionOrders.Keys.ToList()) _sectionStamps[k] = ++_stamp;
+        _orders.Clear();
+        _sectionOrders.Clear();
+        return n;
     }
 
 }

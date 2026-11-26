@@ -41,6 +41,7 @@ builder.Services.AddSingleton<SignalCalculator>();
 builder.Services.AddSingleton<CentralControl>();
 builder.Services.AddSingleton<TokuhatsuRinji>(); // 特発臨（運転整理のために司令員がその場で立てる臨時列車。メモリだけ）
 builder.Services.AddSingleton<EventStops>(); // 催物用臨停設定（司令用管理画面。再起動で消える）
+builder.Services.AddSingleton(sp => new TempStopRetime(dataDir, rail, sp.GetRequiredService<CentralControl>(), sp.GetRequiredService<EventStops>(), sp.GetService<ILogger<TempStopRetime>>())); // 浜園の特急の臨時停車の時刻（Data/TempStopRetime.json）
 builder.Services.AddSingleton<ConnectionTable>(); // 接続待ちの組（ダイヤの「(接)」から）
 builder.Services.AddSingleton<RouteEngine>();
 builder.Services.AddSingleton<ProtectionRadio>();
@@ -101,6 +102,12 @@ var incidentLog = app.Services.GetRequiredService<IncidentManager>();
 central.Changed += message => incidentLog.Note(message);
 rail.Turns.Changed += message => incidentLog.Note(message);
 app.Services.GetRequiredService<EventStops>().Changed += message => incidentLog.Note(message);
+// 浜園の特急の臨時停車: 指示・催物用臨停設定が変わったら、特急と関わる列車の時刻を臨停用にする・所定に戻す
+app.Services.GetRequiredService<EventStops>().BaseOf = d => rail.BaseDia.GetValueOrDefault(d.Number);
+var retime = app.Services.GetRequiredService<TempStopRetime>();
+retime.Changed += message => incidentLog.Note(message);
+central.StopsChanged += retime.Refresh;
+app.Services.GetRequiredService<EventStops>().Changed += _ => retime.Refresh();
 app.Services.GetRequiredService<PlayerRegistry>().Changed += message => incidentLog.Note(message);
 // 催物用の臨時列車: 起動したときに、適用していたものを重ね直す。取り消したら、走っている自動運転の列車も消す
 var aiTrains = app.Services.GetRequiredService<AiTrains>();

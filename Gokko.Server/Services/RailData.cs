@@ -299,6 +299,7 @@ public sealed class RailData
     /// <summary>
     /// ダイヤ。列車番号（正規化したもの）→ 列車。読み込みが済んだあとは書き換えない（読むだけ）。
     /// 催物用の臨時列車を適用している間は、所定のダイヤに臨時列車を足した別の表になる（<see cref="SetExtraTrains"/>）。
+    /// 臨時停車で時刻を変えた列車があれば、その列車も差し替えた表になる（<see cref="SetRetimed"/>）。
     /// </summary>
     public Dictionary<string, DiaTrain> Dia => _dia ?? _baseDia;
 
@@ -317,25 +318,55 @@ public sealed class RailData
     /// </summary>
     public List<string> SetExtraTrains(string source, IReadOnlyCollection<DiaTrain> extra)
     {
-        var skipped = new List<string>();
+        List<string> skipped;
         lock (_extraLock)
         {
             if (extra.Count == 0) _extra.Remove(source);
             else _extra[source] = extra.ToList();
-            if (_extra.Count == 0) _dia = null;
-            else
-            {
-                var d = new Dictionary<string, DiaTrain>(_baseDia);
-                foreach (var (src, list) in _extra)
-                    if (src != source)
-                        foreach (var t in list) d.TryAdd(t.Number, t);
-                if (_extra.TryGetValue(source, out var mine))
-                    foreach (var t in mine)
-                        if (!d.TryAdd(t.Number, t)) skipped.Add(t.Number);
-                _dia = d;
-            }
+            skipped = Rebuild(source);
         }
         Turns.DiaChanged();
+        return skipped;
+    }
+
+    // 所定のダイヤの列車を、時刻を変えたものに差し替える（列番 → 列車。浜園の特急の臨時停車の時刻など）
+    private Dictionary<string, DiaTrain> _retimed = new();
+
+    /// <summary>時刻を差し替えている列車（列番 → 差し替えた列車）。</summary>
+    public IReadOnlyDictionary<string, DiaTrain> Retimed => _retimed;
+
+    /// <summary>
+    /// 所定のダイヤの列車を、時刻を変えた列車に差し替える（<see cref="TempStopRetime"/>）。空なら所定に戻す。
+    /// 臨時列車と同じく、表を新しく作って参照を切り替える。所定のダイヤにない列番は差し替えない。
+    /// </summary>
+    public void SetRetimed(IReadOnlyDictionary<string, DiaTrain> retimed)
+    {
+        lock (_extraLock)
+        {
+            _retimed = retimed.Where(kv => _baseDia.ContainsKey(kv.Key)).ToDictionary(kv => kv.Key, kv => kv.Value);
+            Rebuild(null);
+        }
+        Turns.DiaChanged();
+    }
+
+    /// <summary>所定のダイヤに、時刻の差し替えと臨時列車を重ねた表を作り直す（_extraLock の中で）。source の出どころの足せなかった列番を返す。</summary>
+    private List<string> Rebuild(string? source)
+    {
+        var skipped = new List<string>();
+        if (_extra.Count == 0 && _retimed.Count == 0)
+        {
+            _dia = null;
+            return skipped;
+        }
+        var d = new Dictionary<string, DiaTrain>(_baseDia);
+        foreach (var (n, t) in _retimed) d[n] = t;
+        foreach (var (src, list) in _extra)
+            if (src != source)
+                foreach (var t in list) d.TryAdd(t.Number, t);
+        if (source != null && _extra.TryGetValue(source, out var mine))
+            foreach (var t in mine)
+                if (!d.TryAdd(t.Number, t)) skipped.Add(t.Number);
+        _dia = d;
         return skipped;
     }
 
