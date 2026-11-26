@@ -26,6 +26,9 @@ public static class Protocol
     /// <summary>出発要求ボタン（在線共有モード）。駅に止まっている自列車の出発進路を要求する。戻り値 string（結果のお知らせ）。</summary>
     public const string RequestDeparture = "RequestDeparture";
 
+    /// <summary>クライアント → サーバー: ランカーブ（1駅間の走り方。RunCurve の JSON を gzip したもの）。駅に止まったときに1回だけ。</summary>
+    public const string UploadRunCurve = "UploadRunCurve";
+
     /// <summary>入換で動かすボタン（X線入換・X線停車中。在線共有モード）。戻り値 string（結果のお知らせ）。</summary>
     public const string ShuntMove = "ShuntMove";
 

@@ -144,6 +144,26 @@ public sealed partial class ServerLink
         }
     }
 
+    /// <summary>
+    /// ランカーブ（1駅間の走り方）を送る（駅に止まったときに1回だけ。gzip で縮めて送る）。つながっていなければ捨てる（手元には残さない）。
+    /// </summary>
+    public async Task UploadRunCurveAsync(RunCurve curve)
+    {
+        var conn = _conn;
+        if (conn == null || !_joined) return;
+        try
+        {
+            using var buffer = new MemoryStream();
+            using (var gz = new System.IO.Compression.GZipStream(buffer, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true))
+                System.Text.Json.JsonSerializer.Serialize(gz, curve);
+            await conn.InvokeAsync<bool>(Protocol.UploadRunCurve, buffer.ToArray());
+        }
+        catch (Exception)
+        {
+            // 送れなくても運転には関係ない
+        }
+    }
+
     public async Task<string> RequestDepartureAsync()
     {
         var conn = _conn;
