@@ -119,7 +119,7 @@ public sealed class UnyoCars
     }
 
     /// <summary>CSV を行と列に分ける（"" で囲んだ列の中のカンマ・改行・"" に対応）。</summary>
-    private static List<List<string>> ParseCsv(string text)
+    internal static List<List<string>> ParseCsv(string text)
     {
         var rows = new List<List<string>>();
         var row = new List<string>();

@@ -22,11 +22,14 @@ var rail = RailData.Load(dataDir, data.Line);
 // 踏切の特発を戻せる軌道回路（上下別の閉塞で）
 var crossingNotes = new List<string>();
 data.SetCrossingCircuits(CrossingBlocks.Load(Path.Combine(dataDir, "CrossingBlocks.csv"), data.Line, rail, data, crossingNotes));
+// 停止位置目標（何両停目がどこにあるか。Data/StopMarkers.up.csv・StopMarkers.down.csv）
+var stopMarkers = StopMarkers.Load(dataDir, rail.BaseDia.Values.SelectMany(d => d.Stops).Select(s => s.Name));
 
 builder.Services.AddSingleton(options);
 builder.Services.AddSingleton(options.Random); // 管理画面から書き換える（運転会中だけ有効。再起動で appsettings の値に戻る）
 builder.Services.AddSingleton(data);
 builder.Services.AddSingleton(rail);
+builder.Services.AddSingleton(stopMarkers); // 停止位置目標（将来の車掌単独乗務・自動運転列車の停止位置に使う）
 builder.Services.AddSingleton(sp => new DutyRosters(dataDir, rail, sp.GetService<ILogger<DutyRosters>>())); // 行路表（Data/Duties*.csv から勤怠管理で選ぶ。既定は Duties.csv。なければ空）
 builder.Services.AddSingleton(sp => new CrewRoster(dataDir, sp.GetService<ILogger<CrewRoster>>()) { PasswordUntil = options.Discord.PasswordUntil }); // 乗務員と行路の割り当て（Data/Crew.db）
 builder.Services.AddSingleton<DiscordAuth>(); // 乗務員の Discord ログイン
@@ -86,6 +89,8 @@ app.Logger.LogInformation("データ: 踏切 {Crossings}件、区間設定 {Sect
     data.Crossings.Count, data.CrossingZones.Count, data.Reasons.Count, dataDir);
 foreach (var n in crossingNotes) app.Logger.LogWarning("{Note}", n);
 app.Logger.LogInformation("踏切の閉塞: {Count}件（CrossingBlocks.csv）", data.CrossingCircuits.Count);
+app.Logger.LogInformation("停止位置目標: 上り {Up}件、下り {Down}件", stopMarkers.Entries.Count(e => e.Dir == Dir.Up), stopMarkers.Entries.Count(e => e.Dir == Dir.Down));
+foreach (var n in stopMarkers.Problems) app.Logger.LogWarning("停止位置目標: {Note}", n);
 app.Logger.LogInformation("進路: 駅 {Stations}件（うち扱う駅 {Control}件）、進路 {Routes}件、信号機 {Signals}件、標準運転時分 {RunTimes}区間",
     rail.Stations.Count, rail.ControlStations.Count(), rail.Routes.Count, rail.Signals.Count, rail.RunTimes.Count);
 

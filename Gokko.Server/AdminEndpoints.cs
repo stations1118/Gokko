@@ -520,6 +520,26 @@ public static class AdminEndpoints
         // Discord の紐づけを外す（Discord を作り直した人など。外すとログアウトする。本人は Discord で申請し直す。社員番号を入れれば、この人に戻せる）
         admin.MapPost("/crew/discord/unlink", (CrewLoginRequest req, CrewRoster crew) =>
             crew.UnlinkDiscord(req.Id) is { } err ? Results.BadRequest(new { message = err }) : Results.Ok(new { ok = true }));
+        // 停止位置目標（Data/StopMarkers.*.csv）を読んだ中身を確かめる。
+        // 何も付けなければ全部と読んだときのおかしな所。station と cars を付けると、その駅・番線・向きでその両数が止まる停目（dir は up・down、track は 1・X・引上 など）
+        admin.MapGet("/stop-markers", (StopMarkers markers, string? station, string? dir, string? track, int? cars) =>
+        {
+            static object View(StopMarkers.Entry e) => new
+            {
+                dir = e.Dir == Dir.Up ? "up" : "down", station = e.Station, track = e.Track, label = e.Label, row = e.Row,
+                markers = e.Markers.Select(m => new { cars = m.Cars, offset = m.Offset }),
+            };
+            if (station == null)
+                return Results.Ok(new { problems = markers.Problems, count = markers.Entries.Count, entries = markers.Entries.Select(View) });
+
+            var dirs = dir?.ToLowerInvariant() switch { "up" or "上り" => [Dir.Up], "down" or "下り" => [Dir.Down], _ => new[] { Dir.Up, Dir.Down } };
+            return Results.Ok(new
+            {
+                results = dirs.Select(d => markers.Find(d, station, track) is { } e
+                    ? (object)new { found = true, entry = View(e), choice = cars is { } n ? e.Choose(n) : null }
+                    : new { found = false, dir = d == Dir.Up ? "up" : "down", station, track }),
+            });
+        });
         // Discord で申請した人（承認すると名簿に入る。社員番号を入れて申請した人は、その人に紐づく）
         admin.MapGet("/load", (ServerLoad load) => Results.Ok(load.View())); // サーバーの負荷（直近1時間）
         admin.MapGet("/crew/applications", (CrewRoster crew) => Results.Ok(new { applications = crew.Applications() }));

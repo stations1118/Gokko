@@ -27,6 +27,8 @@
     <Content Include="Data\UnyoCars.csv" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <!-- 列番ごとの両数（運行の両数より優先。運転区間の外で連結・解放して両数が変わる列車） -->
     <Content Include="Data\TrainCars.csv" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <!-- 停止位置目標（上り・下り）。ユーザーが作った CSV をそのまま置く（見出しの距離と、各距離にある停目の両数） -->
+    <Content Include="Data\StopMarkers.up.csv;Data\StopMarkers.down.csv" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <!-- 管理画面。exe の場所を基準に読むので、dotnet build の出力にもコピーする -->
     <Content Update="wwwroot\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
