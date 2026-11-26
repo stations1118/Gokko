@@ -458,6 +458,9 @@ public static class AdminEndpoints
 
         // 停目までの距離の表（クライアントの自動運転が乗務の初めに1回だけ読む。距離の計算はクライアント）。中身は起動時のデータで決まるので1回だけ作る
         Gokko.Common.StopTargetTable? stopTargets = null;
+        // 自動運転の見込みの値（クライアントが乗務を始めたときに1回だけ読む。ファイルがなければ空の表）
+        app.MapGet("/api/brake-profiles", (BrakeProfiles profiles) => Results.Ok(profiles.Current));
+
         app.MapGet("/api/stop-targets", (AiTrains ai, StopMarkers markers, RailData rail) =>
             Results.Ok(stopTargets ??= StopTargets.Build(ai, markers, rail)));
 
@@ -555,6 +558,9 @@ public static class AdminEndpoints
         // 停止位置目標（Data/StopMarkers.*.csv）を読んだ中身を確かめる。
         // 何も付けなければ全部と読んだときのおかしな所。station と cars を付けると、その駅・番線・向きでその両数が止まる停目（dir は up・down、track は 1・X・引上 など）
         // ランカーブ（1駅間の走り方の記録）を、日・利用者・形式・駅・自動/手動で選んで返す。points=true で行も含める
+        // 自動運転の見込みを、この何日か（既定 30日）のランカーブから作り直して Data/BrakeProfiles.json に保存する（押したときだけ集計する）
+        admin.MapPost("/brake-profiles/build", (BrakeProfiles profiles, int? days) => Results.Ok(profiles.Build(days ?? DailyLog.KeepDays)));
+
         admin.MapGet("/run-curves", (RunCurves runs, string? date, string? crew, string? model, string? station, string? mode, bool? points, int? limit) =>
             Results.Ok(runs.Find(date, crew, model, station, mode, points == true, Math.Clamp(limit ?? 500, 1, 5000))));
 

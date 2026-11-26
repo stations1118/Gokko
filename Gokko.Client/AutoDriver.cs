@@ -1,4 +1,5 @@
 using System.Globalization;
+using Gokko.Common;
 using TrainCrew;
 
 namespace Gokko.Client;
@@ -24,8 +25,8 @@ public sealed class AutoDriver
     private const double PlanDecel = 2.0;      // 先の制限・停止信号まで減速しきれるかを見るときの減速度（km/h/s）
     private const double PlanMargin = 20;      // 同じく、減速しきるのに要る距離に足す余裕（m）
     private const double PatternDecel = 2.6;   // 減速しきる点まで、この減速度が要るようになったらブレーキを入れ始める（km/h/s。B5 の目安 2.8 に少し余裕）
-    private const double BrakeLag = 0.8;       // ブレーキが効き始めるまでの遅れ（秒）。この間に進む分を、残り距離から引いて見る
-    private const int HoldMs = 2000;           // 段を変えたら、これだけは保つ（ブレーキシリンダの圧が上がって効ききるまで。行ったり来たりしない）
+    private const double DefaultLag = 0.8;     // ブレーキが効き始めるまでの遅れ（秒）の目安。見込みの表に形式の値があればそれ
+    private const int DefaultHoldMs = 2000;    // 段を変えたら、これだけは保つ（ブレーキシリンダの圧が上がって効ききるまで。行ったり来たりしない）。表に遅れがあれば遅れ＋1.2秒
     private const double StopTolerance = 1.5;  // 保ったあと、このままの減速度で止まる位置の見込みがこれ以上ずれたら段を変える（m）
     private const double FinalSpeed = 8;       // この速度（km/h）からは B2 で止める（B1 は抑速ブレーキの列車があるので使わない）
     private const int FinalNotch = 2;
@@ -64,6 +65,20 @@ public sealed class AutoDriver
     /// <summary>覚えたブレーキの効き方（実際の減速度 ÷ 目安。ランカーブに残す）。</summary>
     public double Gain => _gain;
 
+    /// <summary>
+    /// ランカーブから集計した見込みの値（形式ごとの段の効き方・効き始めの遅れ、駅ごとの補正）。乗務を始めたときにサーバーから1回だけ読む。
+    /// なければ（読めなかった・まだ集計していない）目安で走る。
+    /// </summary>
+    public BrakeProfileTable? Profiles { get; set; }
+
+    /// <summary>今の駅で、停目までの残りに足している補正（m。ランカーブに残す）。</summary>
+    public double StopOffset { get; private set; }
+
+    private BrakeProfile? _profile;  // 今の形式の効き方（表になければ null）
+    private string? _profileModel; // 効き方を選んだ形式（まだ選んでいなければ null）
+    private double BrakeLag => _profile is { LagSec: > 0 } p ? Math.Clamp(p.LagSec, 0.3, 2.0) : DefaultLag;
+    private long HoldMs => _profile is { LagSec: > 0 } p ? (long)Math.Clamp(p.LagSec * 1000 + 1200, 1500, 3000) : DefaultHoldMs;
+
     /// <summary>今していること（操作盤に出す）。</summary>
     public string Note { get; private set; } = "";
 
@@ -77,6 +92,13 @@ public sealed class AutoDriver
         // 停車駅の一覧は途中で届かなくなることがあるので、前に届いたものを使い続ける
         if (raw.stationList is { Count: > 0 } list) _stations = list.ToList();
         var stations = _stations;
+        // 形式が変わったら（運転を始めた・別の列車）、見込みの表からその形式の効き方を選び直す
+        var model = raw.CarStates is { Count: > 0 } cars ? cars[0].CarModel ?? "" : "";
+        if (model != _profileModel)
+        {
+            _profileModel = model;
+            _profile = Profiles?.Models.FirstOrDefault(p => p.Model == model);
+        }
         var pos = raw.TotalLength;
         if (stations.Count == 0) return Hold("停車駅の一覧を待っています", MaxBrake); // 届くまでは走らない（止まる駅が分からない）
 
@@ -120,7 +142,9 @@ public sealed class AutoDriver
                 meters = stop.Remaining;
                 confirmed = stop.Kind == StopDistanceKind.Confirmed || stop.Track == stop.ScenarioTrack;
             }
-            dStop = meters + (confirmed ? StopBias : -RoughMargin);
+            // 駅ごとの補正（自動運転がこの駅・番線でいつも手前・先に止まる分を打ち消す。確定のときだけ）
+            StopOffset = confirmed && Profiles?.Stops.FirstOrDefault(c => c.StopPosName == (st.StopPosName ?? "") && c.Track == stop.Track) is { } corr ? corr.Offset : 0;
+            dStop = meters + StopOffset + (confirmed ? StopBias : -RoughMargin);
         }
 
         // 止まっている
@@ -346,10 +370,17 @@ public sealed class AutoDriver
     }
 
     /// <summary>この段で見込める減速度（入れてから止まるまでの平均。効き始めの遅れ込み。目安 × 覚えた比）。</summary>
-    private double Decel(int notch) => BrakeDecel[Math.Clamp(notch, 2, MaxBrake)] * _gain;
+    private double Decel(int notch) => Steady(notch) / SteadyFactor;
 
     /// <summary>この段が効ききったあとの減速度（目安 × 効ききった分 × 覚えた比）。</summary>
-    private double Steady(int notch) => BrakeDecel[Math.Clamp(notch, 2, MaxBrake)] * SteadyFactor * _gain;
+    private double Steady(int notch) => Base(notch) * _gain;
+
+    /// <summary>この段の効ききった減速度の見込み（表に形式の値があればそれ、なければ目安 × 効ききった分）。</summary>
+    private double Base(int notch)
+    {
+        var n = Math.Clamp(notch, 2, MaxBrake);
+        return _profile is { } p && n < p.Decel.Length && p.Decel[n] > 0 ? p.Decel[n] : BrakeDecel[n] * SteadyFactor;
+    }
 
     /// <summary>要る減速度に足りる一番弱い段（B2〜B7）。</summary>
     private int NotchFor(double need)
@@ -363,7 +394,7 @@ public sealed class AutoDriver
     private void Learn(double decel, double speed)
     {
         if (_brake < 2 || speed < 10) return;
-        var ratio = Math.Clamp(decel / (BrakeDecel[_brake] * SteadyFactor), 0.6, 1.5);
+        var ratio = Math.Clamp(decel / Base(_brake), 0.6, 1.5);
         _gain = Math.Clamp(_gain * 0.8 + ratio * 0.2, 0.6, 1.5);
     }
 
