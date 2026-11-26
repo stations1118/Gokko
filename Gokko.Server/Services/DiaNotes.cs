@@ -254,9 +254,37 @@ public static class DiaNotes
                 foreach (var (z, k) in ByStation.GetValueOrDefault(last.Key) ?? [])
                     if (z != x && z.Dir == x.Dir && k == z.Stops.FindIndex(p => p.At != null)
                         && z.Stops[k].Arr == last.Arr && z.Stops[k].Dep == last.Dep)
+                    {
                         Hide(z, k);
+                        Join(x, z);
+                    }
+                if (x.Train.Turn is { Kind: "折返", Number: { } tn2 } && Trains.TryGetValue(tn2, out var t2)) Join(x, t2);
+                if (x.Train.Next is { } nx2 && Trains.TryGetValue(nx2.Number, out var y2)) Join(x, y2);
             }
+            // 列番を変える先の列車（時刻表に2本で載っている所）も、前の列車と同じ時から始発の駅にいる
+            foreach (var x in Trains.Values)
+                if (x.Train.Next is { } nx && _arrived.TryGetValue(x, out var a0) && Trains.TryGetValue(nx.Number, out var y)
+                    && y.Stops.FindIndex(p => p.At != null) is var yf && yf >= 0 && x.Stops.FindIndex(p => p.At != null) is var xf && xf >= 0
+                    && y.Stops[yf].Key == x.Stops[xf].Key)
+                    _arrived.TryAdd(y, a0);
         }
+
+        // 同じ車両（折り返し・列番の変更でつながる列車）の組。自分の折り返す前・後の列車とは交換しない
+        private readonly Dictionary<View, View> _vehicle = new();
+
+        private View Root(View v)
+        {
+            while (_vehicle.TryGetValue(v, out var p) && p != v) v = p;
+            return v;
+        }
+
+        private void Join(View a, View b)
+        {
+            var (ra, rb) = (Root(a), Root(b));
+            if (ra != rb) _vehicle[rb] = ra;
+        }
+
+        private bool SameVehicle(View a, View b) => Root(a) == Root(b);
 
         /// <summary>
         /// この列車が k の駅にいる時間。始発の駅は、折り返す前の列車が着いた時から（わからなければ発の <see cref="OriginHoldSeconds"/> 秒前から）。
@@ -267,6 +295,16 @@ public static class DiaNotes
                 && _arrived.TryGetValue(t, out var from) && Wrap(dep - from) is var w && w >= 0 && w <= 3 * 3600)
                 return (dep - Math.Min(w, OriginStaySeconds), dep);
             return t.Span(k, true);
+        }
+
+        /// <summary>この列車が k の駅で単線から出て、単線にはさまれた複線へ入るか。</summary>
+        private bool ExitsToShort(View t, int k)
+        {
+            var key = t.Stops[k].Key;
+            if (t.PrevTimed(k) is not { } p || !SingleBetween(t.Stops[p].Key, key) || t.NextTimed(k) is not { } n) return false;
+            var next = t.Stops[n].Key;
+            if (SingleBetween(key, next)) return false;
+            return _short.Contains(next) || SingleTrack.Any(g => g.Contains(next));
         }
 
         /// <summary>列車 u が、その駅の前か後で単線を通るか（時刻表にその駅がない列車は、通るとみる）。</summary>
@@ -344,7 +382,8 @@ public static class DiaNotes
                         && u.Stops[j].At is { } ua && Math.Abs(Wrap(ua - t.Stops[k].At!.Value)) <= 3 * 3600)
                         others.Add(u);
 
-            foreach (var u in others) Pair(r, t, timed, u);
+            foreach (var u in others)
+                if (!SameVehicle(t, u)) Pair(r, t, timed, u);
             return r;
         }
 
@@ -363,6 +402,10 @@ public static class DiaNotes
                     // （大道寺始発で館浜方へ出る列車のように、単線を通らない相手は、遅れても関係しない）。
                     // 単線にはさまれた複線の駅なら、単線から出てきたばかりの相手は次に単線に入る駅に、そうでなければこの駅に書く
                     if (t.EntersSingle(k)) { if (TouchesSingle(u, key)) Add(r, k, u, us.P); }
+                    // 単線から、単線にはさまれた複線へ出る駅（日野森・三郷・西赤山・珠川信）: 相手がこの列車の来た単線へ入るなら書く
+                    // （この列車が遅れたら、相手が単線に入るのを待たされる。その駅を始発の相手は書かない）
+                    else if (ExitsToShort(t, k) && u.IndexOf(key) is { } ju && u.PrevTimed(ju) != null && u.NextTimed(ju) is { } nu && SingleBetween(key, u.Stops[nu].Key))
+                        Add(r, k, u, us.P);
                     else if (!Entry(r, t, timed, k, u) && _short.Contains(key)) Add(r, k, u, us.P);
                     return;
                 }
