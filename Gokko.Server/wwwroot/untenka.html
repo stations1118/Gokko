@@ -1178,6 +1178,15 @@
     // 所定の列車: 薄く。関係する列車は少し濃く。運行は折返でつなぐ
     const byNo = new Map(shownPlan.map((p) => [p.name, p]));
     const faint = [], strong = [];
+    // 引上線へ入る時刻: 着いて1分ほどで入る。ただし引上線に前の列車がいれば、その列車が出てから（着く順に決める）
+    const enterAt = new Map(), viaFree = new Map();
+    for (const p of shownPlan.filter((x) => x.shunt && x.sh.pts.length >= 2).sort((x, y) => x.sh.pts[x.sh.pts.length - 1].t - y.sh.pts[y.sh.pts.length - 1].t)) {
+      const nx = p.turn && byNo.get(p.turn), a = p.sh.pts[p.sh.pts.length - 1], b = nx && nx.sh.pts[0], vk = viaKey(p.shunt.via);
+      if (!b || vk == null || vk === b.track || a.z !== b.z) continue;
+      const key = `${a.z}:${vk}`, t = Math.max(a.t + 60, viaFree.get(key) ?? -Infinity);
+      enterAt.set(p.name, t);
+      viaFree.set(key, Math.max(t + 60, sec(p.shunt.time) ?? b.t - 120) + 60); // 出る番線へ移り終えたら、引上線は空く
+    }
     for (const p of shownPlan) {
       if (p.sh.pts.length < 2) continue;
       const out = rel.has(p.name) ? strong : faint, color = DC[p.type] || "#e6e8eb";
@@ -1187,7 +1196,7 @@
       if (nx && nx.sh.pts.length) {
         // 入換して折り返す列車は、入換先の段（5番線・Y線・E線など）を通る
         const b = nx.sh.pts[0], via = p.shunt && p.shunt.via;
-        const shunt = p.shunt && { t: sec(p.shunt.time) ?? b.t - 120, track: via ? viaKey(via) : b.track, label: via || (b.track != null ? `${b.track}番線` : "") };
+        const shunt = p.shunt && { t: sec(p.shunt.time) ?? b.t - 120, enter: enterAt.get(p.name), track: via ? viaKey(via) : b.track, label: via || (b.track != null ? `${b.track}番線` : "") };
         out.push(link(L, p.sh.pts[p.sh.pts.length - 1], b, color, 1.1, shunt));
       }
     }
@@ -1293,7 +1302,8 @@
   }
 
   // 運行のつなぎ線: 着いた駅で、次の列車が出るまで横に引く（番線が変わるなら、出る1分前に移る）。駅が違えば点線でつなぐ。
-  // 入換（shunt）なら、入換の時刻に引上線などの段（詳細表示で段があれば）へ移り、出る1分前に発車の番線へ移る
+  // 入換（shunt）なら、着いて1分ほどで引上線などの段（詳細表示で段があれば）へ入り、入換の時刻に発車の番線へ移る
+  // （入換の時刻は、引上線から発車の番線へ動き出す時刻。そのまま番線を移るだけの入換は、入換の時刻に移る）
   function link(L, a, b, color, width, shunt) {
     if (b.t < a.t) return "";
     if (a.z !== b.z) return `<line x1="${L.x(a.t)}" y1="${L.y(a.z, a.track)}" x2="${L.x(b.t)}" y2="${L.y(b.z, b.track)}" stroke="${color}" stroke-width="${width}" stroke-dasharray="3 3"/>`;
@@ -1307,9 +1317,15 @@
         const t2 = ts + Math.min(60, span);
         pts = [[a.t, ya], [ts, ya], [t2, yv], [b.t, yb]];
       } else {
-        // 引上線へ入って戻る: 入る・出るに1分ずつ（間が短ければ3つに分けて、入換先の段に必ず線が残るように）
-        const mv = Math.min(60, span / 3);
-        pts = [[a.t, ya], [ts, ya], [ts + mv, yv], [b.t - mv, yv], [b.t, yb]];
+        // 引上線へ入って戻る: 着いて1分ほどで（前の列車がいれば出てから）入り、入換の時刻に出る。入る・出るに1分ずつ。
+        // 間が短ければ3つに分けて、入換先の段に必ず線が残るように
+        const i0 = Math.min(Math.max(a.t, shunt.enter ?? a.t + 60), b.t), i1 = Math.min(i0 + 60, b.t);
+        const o0 = Math.min(Math.max(i1, shunt.t), b.t), o1 = Math.min(o0 + 60, b.t);
+        if (o0 - i1 >= 30) pts = [[a.t, ya], [i0, ya], [i1, yv], [o0, yv], [o1, yb], [b.t, yb]];
+        else {
+          const mv = Math.min(60, (b.t - a.t) / 3);
+          pts = [[a.t, ya], [Math.max(a.t, b.t - 3 * mv), ya], [b.t - 2 * mv, yv], [b.t - mv, yv], [b.t, yb]];
+        }
       }
     } else pts = [[a.t, ya], [Math.max(a.t, b.t - 60), ya], [b.t, yb]];
     return `<polyline points="${pts.map(([t, y]) => `${L.x(t).toFixed(1)},${y.toFixed(1)}`).join(" ")}" fill="none" stroke="${color}" stroke-width="${width}"${shunt ? ` stroke-dasharray="6 2"` : ""}><title>${shunt ? `入換（${esc(shunt.label || "")}）` : "折返"}</title></polyline>`;
