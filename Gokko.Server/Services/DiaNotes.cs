@@ -37,6 +37,9 @@ public static class DiaNotes
     /// <summary>路線の端まで続く複線ですれ違った相手を、単線に入る駅にまとめて書くのは、相手がその駅を出てからこの秒数のうちに着くときだけ。</summary>
     public const int LineEndWindowSeconds = 12 * 60;
 
+    /// <summary>大道寺から館浜方の複線ですれ違った相手を書くのは、相手が大道寺を出てから、この列車が大道寺を出るまでがこの秒数未満のとき（分で数えて10分まで）。</summary>
+    public const int DepartWindowSeconds = 11 * 60;
+
     /// <summary>始発の列車が、発の何秒前から駅にいるとみるか（交換を探すとき）。</summary>
     public const int OriginHoldSeconds = 10 * 60;
 
@@ -266,6 +269,14 @@ public static class DiaNotes
             return t.Span(k, true);
         }
 
+        /// <summary>列車 u が、その駅の前か後で単線を通るか（時刻表にその駅がない列車は、通るとみる）。</summary>
+        private bool TouchesSingle(View u, string key)
+        {
+            if (u.IndexOf(key) is not { } j) return true;
+            return (u.PrevTimed(j) is { } p && SingleBetween(u.Stops[p].Key, key))
+                   || (u.NextTimed(j) is { } n && SingleBetween(key, u.Stops[n].Key));
+        }
+
         private bool Hidden(View u, int j) => _hidden.TryGetValue(u, out var h) && j <= h;
 
         /// <summary>相手にする列車 u の、その駅の番号（列番を変える前の列車が走る所は null）。</summary>
@@ -348,9 +359,10 @@ public static class DiaNotes
                 if (Math.Abs(Wrap(us.From - ts.From)) > 3 * 3600) break;
                 if (Wrap(us.From - ts.To) <= 0 && Wrap(us.To - ts.From) >= 0)
                 {
-                    // 駅に同時にいる: この駅から単線に入るなら、この駅に書く。
+                    // 駅に同時にいる: この駅から単線に入り、相手も単線を通る（単線から来たか、単線へ出る）なら、この駅に書く
+                    // （大道寺始発で館浜方へ出る列車のように、単線を通らない相手は、遅れても関係しない）。
                     // 単線にはさまれた複線の駅なら、単線から出てきたばかりの相手は次に単線に入る駅に、そうでなければこの駅に書く
-                    if (t.EntersSingle(k)) Add(r, k, u, us.P);
+                    if (t.EntersSingle(k)) { if (TouchesSingle(u, key)) Add(r, k, u, us.P); }
                     else if (!Entry(r, t, timed, k, u) && _short.Contains(key)) Add(r, k, u, us.P);
                     return;
                 }
@@ -373,7 +385,9 @@ public static class DiaNotes
         /// <summary>
         /// k から先で最初に単線に入る駅に、相手 u が単線から出てきて間もなく着くなら、そこに書く。書いたら true。
         /// 間もなく: 二木戸から新大路方の複線からなら <see cref="LineEndWindowSeconds"/> 秒以内
-        /// （その複線ですれ違った列車をまとめて書く。この列車が走り始めてからすれ違ったものだけ。大道寺から館浜方の複線は書かない）、
+        /// （その複線ですれ違った列車をまとめて書く。この列車が走り始めてからすれ違ったものだけ）、
+        /// 大道寺から館浜方の複線からなら、相手が大道寺を出てからこの列車が大道寺を出るまで <see cref="DepartWindowSeconds"/> 秒未満
+        /// （相手が遅れたら、この列車が単線に入るのを待たされる範囲。大道寺止まりの相手は書かない）、
         /// 単線にはさまれた複線からなら <see cref="CrossWindowSeconds"/> 秒以内。
         /// </summary>
         private bool Entry(Dictionary<int, List<(View, Pt)>> r, View t, List<int> timed, int k, View u)
@@ -382,9 +396,19 @@ public static class DiaNotes
             {
                 if (!t.EntersSingle(m)) continue;
                 var lineEnd = LineEnd(t, m);
-                // 路線の端まで続く複線ですれ違った列車は、二木戸（新大路方の複線）でだけまとめて書く。
-                // 大道寺から館浜方の複線は、相手が遅れても待たずに出られるので書かない
-                if (lineEnd && !LineEndBatch.Contains(t.Stops[m].Key)) return false;
+                if (lineEnd && !LineEndBatch.Contains(t.Stops[m].Key))
+                {
+                    // 大道寺から館浜方の複線: この列車が出る時刻から数える
+                    if (PartnerIndex(u, t.Stops[m].Key) is { } jd && u.PrevTimed(jd) is { } pd && u.NextTimed(jd) != null
+                        && SingleBetween(u.Stops[pd].Key, u.Stops[jd].Key)
+                        && TSpan(t, m) is { } td && u.Span(jd, false) is { } ud
+                        && Wrap(td.To - ud.To) is var dg && dg >= 0 && dg < DepartWindowSeconds)
+                    {
+                        Add(r, m, u, u.Stops[jd]);
+                        return true;
+                    }
+                    return false;
+                }
                 if (lineEnd && SpanAt(u, t.Stops[timed[0]].Key) is { } u0 && TSpan(t, timed[0]) is { } t0 && Wrap(u0.From - t0.From) < 0)
                     return false; // この列車が走り始める前に、もうすれ違っていた
                 if (PartnerIndex(u, t.Stops[m].Key) is { } jm && u.PrevTimed(jm) is { } up
