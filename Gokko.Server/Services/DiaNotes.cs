@@ -15,7 +15,9 @@ namespace Gokko.Server.Services;
 ///         「この列車が止まらない駅へ行く」か「先の駅にこの列車より早く着く」もの。回送・試運転は連絡を作らない・相手にしない
 /// ・交換: 単線の区間（考察による。<see cref="SingleTrack"/>）で行き違う反対向きの列車。
 ///         駅に同時にいるなら、その駅から単線に入るときだけその駅に書く。
-///         複線の区間ですれ違ったなら、単線から出てきたばかりの列車（<see cref="CrossWindowSeconds"/> 秒以内）は、次に単線に入る駅に書く。
+///         複線の区間ですれ違ったなら、単線から出てきたばかりの列車は、次に単線に入る駅に書く
+///         （路線の端まで続く複線（二木戸から新大路方・大道寺から館浜方）は <see cref="LineEndWindowSeconds"/> 秒以内をまとめて、
+///          単線にはさまれた複線は <see cref="CrossWindowSeconds"/> 秒以内）。
 ///         そうでなく、単線にはさまれた複線の駅（明神川・奥峯口）の手前ですれ違ったなら、その駅に書く
 ///         （相手の時刻表にその駅がなければ、前後の駅の時刻から割り振った通過時刻で書く）。
 ///         始発の列車は、発の <see cref="OriginHoldSeconds"/> 秒前から駅にいるとみる
@@ -31,6 +33,9 @@ public static class DiaNotes
 
     /// <summary>複線の区間ですれ違った相手を、単線に入る駅に書くのは、相手がその駅を出てからこの秒数のうちに着くときだけ。</summary>
     public const int CrossWindowSeconds = 160;
+
+    /// <summary>路線の端まで続く複線ですれ違った相手を、単線に入る駅にまとめて書くのは、相手がその駅を出てからこの秒数のうちに着くときだけ。</summary>
+    public const int LineEndWindowSeconds = 12 * 60;
 
     /// <summary>始発の列車が、発の何秒前から駅にいるとみるか（交換を探すとき）。</summary>
     public const int OriginHoldSeconds = 10 * 60;
@@ -217,7 +222,7 @@ public static class DiaNotes
                         // 駅に同時にいる: この駅から単線に入るなら、この駅に書く。
                         // 単線にはさまれた複線の駅なら、単線から出てきたばかりの相手は次に単線に入る駅に、そうでなければこの駅に書く
                         if (t.EntersSingle(k)) Add(r, k, u, us.P);
-                        else if (_short.Contains(key) && !Entry(r, t, timed, k, u)) Add(r, k, u, us.P);
+                        else if (!Entry(r, t, timed, k, u) && _short.Contains(key)) Add(r, k, u, us.P);
                         break;
                     }
                     if (Wrap(us.To - ts.From) < 0)
@@ -239,17 +244,23 @@ public static class DiaNotes
         }
 
         /// <summary>
-        /// k から先で最初に単線に入る駅に、相手 u が単線から出てきてから <see cref="CrossWindowSeconds"/> 秒以内に着くなら、そこに書く。書いたら true。
+        /// k から先で最初に単線に入る駅に、相手 u が単線から出てきて間もなく着くなら、そこに書く。書いたら true。
+        /// 間もなく: 路線の端まで続く複線（二木戸から新大路方・大道寺から館浜方）からなら <see cref="LineEndWindowSeconds"/> 秒以内
+        /// （その複線ですれ違った列車をまとめて書く。この列車が走り始めてからすれ違ったものだけ）、
+        /// 単線にはさまれた複線からなら <see cref="CrossWindowSeconds"/> 秒以内。
         /// </summary>
-        private static bool Entry(Dictionary<int, List<(View, Pt)>> r, View t, List<int> timed, int k, View u)
+        private bool Entry(Dictionary<int, List<(View, Pt)>> r, View t, List<int> timed, int k, View u)
         {
             foreach (var m in timed.Where(m => m >= k))
             {
                 if (!t.EntersSingle(m)) continue;
+                var lineEnd = LineEnd(t, m);
+                if (lineEnd && SpanAt(u, t.Stops[timed[0]].Key) is { } u0 && t.Span(timed[0], true) is { } t0 && Wrap(u0.From - t0.From) < 0)
+                    return false; // この列車が走り始める前に、もうすれ違っていた
                 if (u.IndexOf(t.Stops[m].Key) is { } jm && u.PrevTimed(jm) is { } up
                     && SingleBetween(u.Stops[up].Key, u.Stops[jm].Key)
                     && t.Span(m, true) is { } tm && u.Span(jm, false) is { } um
-                    && Wrap(tm.From - um.To) is var gap && gap >= 0 && gap <= CrossWindowSeconds)
+                    && Wrap(tm.From - um.To) is var gap && gap >= 0 && gap <= (lineEnd ? LineEndWindowSeconds : CrossWindowSeconds))
                 {
                     Add(r, m, u, u.Stops[jm]);
                     return true;
@@ -257,6 +268,17 @@ public static class DiaNotes
                 return false;
             }
             return false;
+        }
+
+        /// <summary>この列車が m の駅で単線に入るとき、後ろ（来た方）が路線の端まで複線か（単線にはさまれた複線でないか）。</summary>
+        private bool LineEnd(View t, int m)
+        {
+            var key = t.Stops[m].Key;
+            if (t.NextTimed(m) is not { } n || !_order.TryGetValue(key, out var x) || !_order.TryGetValue(t.Stops[n].Key, out var y)) return false;
+            var back = y > x ? -1 : 1;
+            foreach (var (st, i) in _order)
+                if ((i - x) * back > 0 && SingleTrack.Any(g => g.Contains(st)) && !SingleBetween(st, key)) return false;
+            return true;
         }
 
         private static void Add(Dictionary<int, List<(View, Pt)>> r, int k, View u, Pt p)
