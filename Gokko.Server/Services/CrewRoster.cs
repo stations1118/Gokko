@@ -65,6 +65,9 @@ public sealed class CrewRoster
 
     /// <summary>司令員が何も操作しないまま、この時間がたったら自動で退勤させる（退勤忘れ）。</summary>
     public static readonly TimeSpan DispatcherIdleLimit = TimeSpan.FromMinutes(30);
+    /// <summary>出勤した乗務員が、タブレットも開かず運転もしないまま、この時間がたったら自動で退勤させる（行路を外す。退勤忘れ）。</summary>
+    public static readonly TimeSpan CrewIdleLimit = TimeSpan.FromMinutes(30);
+    private readonly Dictionary<string, DateTime> _crewActive = new(); // 社員番号 → 乗務員が最後にタブレットを開いた・運転していた時刻（UTC。保存しない）
     private readonly Dictionary<string, (int Count, DateTime Until)> _failures = new(StringComparer.OrdinalIgnoreCase);
 
     public sealed class CrewUser
@@ -1243,6 +1246,7 @@ public sealed class CrewRoster
             {
                 foreach (var d in _assign.Where(x => x.Value == u.Id).Select(x => x.Key).ToList()) _assign[d] = nid;
                 if (_seen.Remove(u.Id, out var seen)) _seen[nid] = seen;
+                if (_crewActive.Remove(u.Id, out var active)) _crewActive[nid] = active;
                 if (_attend.Remove(u.Id, out var at)) _attend[nid] = at;
                 if (_lastDuty.Remove(u.Id, out var ld)) _lastDuty[nid] = ld;
                 foreach (var x in _extras.Where(x => x.User == u.Id)) x.User = nid;
@@ -1456,14 +1460,15 @@ public sealed class CrewRoster
         }
     }
 
-    /// <summary>出勤を付ける・外す（勤怠管理の画面から）。うまくいかなければ理由を返す。</summary>
+    /// <summary>出勤を付ける・外す（勤怠管理の画面から）。外すのは退勤と同じ（行路・臨変も外す）。うまくいかなければ理由を返す。</summary>
     public string? SetAttend(string? id, bool on)
     {
         lock (_lock)
         {
             if (Find(id) is not { } u) return "その人はいません";
-            if (on) _attend.TryAdd(u.Id, DateTime.UtcNow); else _attend.Remove(u.Id);
-            SetAttendance(u.Id, _attend.TryGetValue(u.Id, out var at) ? at : null);
+            if (!on) { LeaveLocked(u); return null; }
+            _attend.TryAdd(u.Id, DateTime.UtcNow);
+            SetAttendance(u.Id, _attend[u.Id]);
             return null;
         }
     }
@@ -1477,31 +1482,44 @@ public sealed class CrewRoster
         lock (_lock)
         {
             if (Find(id) is not { } u) return (null, "ユーザーがいません");
-            var released = DutiesOfLocked(u.Id);
-            var owned = _assign.Where(x => x.Value == u.Id).Select(x => x.Key).ToList(); // 臨変の行路は、本来の担当者のものなので外さない
-            foreach (var d in owned) { _assign.Remove(d); _auto.Remove(d); }
-            _extras.RemoveAll(x => x.User == u.Id);
-            _attend.Remove(u.Id);
-            ExecuteUpdate((connection, transaction) =>
-            {
-                Execute(connection, transaction, "DELETE FROM attendance WHERE user_id = $id", ("$id", u.Id));
-                Execute(connection, transaction, "DELETE FROM extras WHERE user_id = $id", ("$id", u.Id));
-                Execute(connection, transaction, "DELETE FROM assignments WHERE user_id = $id", ("$id", u.Id));
-                foreach (var duty in owned)
-                    Execute(connection, transaction, "DELETE FROM auto_assignments WHERE duty = $duty", ("$duty", duty));
-            });
-            return (released, null);
+            return (LeaveLocked(u), null);
         }
     }
 
-    /// <summary>全員の出勤を外す（運転会のおわりに。司令員・信号扱いの出勤も）。割り当てはそのまま。</summary>
+    /// <summary>退勤の中身（ロックの中で呼ぶ）。出勤・担当の行路・臨変を外す。外した行路番号を返す。</summary>
+    private List<string> LeaveLocked(CrewUser u)
+    {
+        var released = DutiesOfLocked(u.Id);
+        var owned = _assign.Where(x => x.Value == u.Id).Select(x => x.Key).ToList(); // 臨変の行路は、本来の担当者のものなので外さない
+        foreach (var d in owned) { _assign.Remove(d); _auto.Remove(d); }
+        _extras.RemoveAll(x => x.User == u.Id);
+        _attend.Remove(u.Id);
+        _crewActive.Remove(u.Id);
+        ExecuteUpdate((connection, transaction) =>
+        {
+            Execute(connection, transaction, "DELETE FROM attendance WHERE user_id = $id", ("$id", u.Id));
+            Execute(connection, transaction, "DELETE FROM extras WHERE user_id = $id", ("$id", u.Id));
+            Execute(connection, transaction, "DELETE FROM assignments WHERE user_id = $id", ("$id", u.Id));
+            foreach (var duty in owned)
+                Execute(connection, transaction, "DELETE FROM auto_assignments WHERE duty = $duty", ("$duty", duty));
+        });
+        return released;
+    }
+
+    /// <summary>
+    /// 全員の出勤を外す（運転会のおわりに。司令員・信号扱いの出勤も）。乗務で出勤していた人の行路（臨変も）も外す（退勤と同じ）。
+    /// 出勤していない人に残っている割り当てはそのまま。
+    /// </summary>
     public int ClearAttendance()
     {
         lock (_lock)
         {
             var n = _attend.Count + _roleAttend.Values.Sum(x => x.Count);
+            foreach (var uid in _attend.Keys.ToList())
+                if (Find(uid) is { } u) LeaveLocked(u);
             _attend.Clear();
             _roleAttend.Clear();
+            _crewActive.Clear();
             ExecuteUpdate((connection, transaction) =>
             {
                 Execute(connection, transaction, "DELETE FROM attendance");
@@ -1509,6 +1527,39 @@ public sealed class CrewRoster
             });
             return n;
         }
+    }
+
+    /// <summary>乗務員がタブレットを開いた（乗務員の自動退勤の数え直し）。</summary>
+    public void CrewActive(string? id)
+    {
+        if (string.IsNullOrEmpty(id)) return;
+        lock (_lock) _crewActive[id] = DateTime.UtcNow;
+    }
+
+    /// <summary>自動で退勤させた乗務員（社員番号と、外した行路）を知らせる。ロックの外で呼ぶ。</summary>
+    public event Action<string, List<string>>? CrewAutoLeft;
+
+    /// <summary>
+    /// 乗務員の自動退勤（サーバーが1分ごとに呼ぶ）。driving はいまゲームで運転している乗務員の社員番号（運転していれば数え直す）。
+    /// 出勤・タブレットを開いた・運転していた・サーバーの起動のうち遅いほうから CrewIdleLimit たった人を退勤させ、行路を外す。
+    /// </summary>
+    public void ExpireIdleCrew(IEnumerable<string> driving)
+    {
+        var gone = new List<(string Id, List<string> Released)>();
+        lock (_lock)
+        {
+            var now = DateTime.UtcNow;
+            foreach (var id in driving) _crewActive[id] = now;
+            foreach (var (uid, at) in _attend.ToList())
+            {
+                var last = new[] { at, _startUtc, _crewActive.GetValueOrDefault(uid) }.Max();
+                if (now - last < CrewIdleLimit || Find(uid) is not { } u) continue;
+                gone.Add((u.Id, LeaveLocked(u)));
+                _log?.LogInformation("乗務員 ID:{Id} を自動で退勤させました（{Minutes}分操作なし）", u.Id, (int)CrewIdleLimit.TotalMinutes);
+            }
+        }
+        if (gone.Count > 0 && CrewAutoLeft is { } h)
+            foreach (var (id, released) in gone) h(id, released);
     }
 
     // ---- 司令員・信号扱いの出勤（乗務の出勤・行路とは別。その役職の画面を開く前に、タブレット・乗務メニューで出勤する） ----
@@ -1755,6 +1806,7 @@ public sealed class CrewRoster
         {
             if (Find(id) is not { } u) return (null, "ユーザーがいません");
             _attend.TryAdd(u.Id, DateTime.UtcNow);
+            _crewActive[u.Id] = DateTime.UtcNow;
             string? picked = null;
             var has = HasDuty(u.Id, roster);
             if (!has) picked = PickFor(u, roster);
@@ -1787,6 +1839,60 @@ public sealed class CrewRoster
         }
     }
 
+    /// <summary>出勤簿で選べる行路（誰も持っておらず、ほかの人が持っている行路と列車が重ならないもの）の番号。</summary>
+    public HashSet<string> PickableDuties(DutyRoster roster)
+    {
+        lock (_lock)
+        {
+            var taken = TakenTrains(roster);
+            return roster.Duties.Where(d => !_assign.ContainsKey(d.Id) && !_extras.Any(x => x.Duty == d.Id)
+                                            && !d.Items.Any(x => x.Kind != "休憩" && taken.Contains(x.Train)))
+                .Select(d => d.Id).ToHashSet();
+        }
+    }
+
+    /// <summary>
+    /// 出勤簿で行路を選んで出勤する。出勤を付け、その行路を担当にする（手で選んだので「自」は付けない）。
+    /// 選べるのは、誰も持っていない行路で、ほかの人が持っている行路と列車が重ならないもの（所属は問わない）。
+    /// すでに行路を持っている人は選べない（退勤してから選び直す）。同時に2人が選んだときは、先に届いたほうが取る。
+    /// </summary>
+    public (AttendResult? Ok, string? Error) AttendWithDuty(string id, string? dutyId, DutyRoster roster)
+    {
+        if (roster.DutyById(dutyId ?? "") is not { } duty) return (null, $"行路 {dutyId} はいまの行路表にありません");
+        lock (_lock)
+        {
+            if (Find(id) is not { } u) return (null, "ユーザーがいません");
+            if (HasDuty(u.Id, roster))
+                return (null, $"すでに行路 {string.Join("・", DutiesOfLocked(u.Id))} を持っています。選び直すときは、いったん退勤してください");
+            if (_assign.ContainsKey(duty.Id) || _extras.Any(x => x.Duty == duty.Id))
+                return (null, $"行路 {duty.Id} は、ほかの人が先に選びました。ほかの行路を選んでください");
+            var taken = TakenTrains(roster);
+            if (duty.Items.FirstOrDefault(x => x.Kind != "休憩" && taken.Contains(x.Train)) is { } clash)
+                return (null, $"行路 {duty.Id} の {clash.Train} は、ほかの人の行路と重なっています。ほかの行路を選んでください");
+
+            _attend.TryAdd(u.Id, DateTime.UtcNow);
+            _crewActive[u.Id] = DateTime.UtcNow;
+            _assign[duty.Id] = u.Id;
+            _auto.Remove(duty.Id);
+            _lastDuty[u.Id] = duty.Id;
+            ExecuteUpdate((connection, transaction) =>
+            {
+                Execute(connection, transaction, "DELETE FROM attendance WHERE user_id = $id", ("$id", u.Id));
+                Execute(connection, transaction,
+                    "INSERT INTO attendance (user_id, utc) VALUES ($id, $utc)",
+                    ("$id", u.Id), ("$utc", DateTimeText(_attend[u.Id])));
+                Execute(connection, transaction,
+                    "INSERT INTO assignments (duty, user_id) VALUES ($duty, $id) ON CONFLICT(duty) DO UPDATE SET user_id = excluded.user_id",
+                    ("$duty", duty.Id), ("$id", u.Id));
+                Execute(connection, transaction, "DELETE FROM auto_assignments WHERE duty = $duty", ("$duty", duty.Id));
+                Execute(connection, transaction,
+                    "INSERT INTO last_duties (user_id, duty) VALUES ($id, $duty) ON CONFLICT(user_id) DO UPDATE SET duty = excluded.duty",
+                    ("$id", u.Id), ("$duty", duty.Id));
+            });
+            return (new AttendResult(u.Id, DutiesOfLocked(u.Id), duty.Id, $"出勤しました。行路 {duty.Id} を担当します"), null);
+        }
+    }
+
     /// <summary>
     /// 列番を入れて開いたとき: まだ行路がなければ、その列車を受け持つ行路を割り当てる（出勤も付ける）。
     /// 空いている行路（ほかの人と列車が重ならないもの。所属が合うものから）があればそれ。なければ、その列車の最初の行路を臨変で持つ。
@@ -1807,6 +1913,7 @@ public sealed class CrewRoster
             }
 
             _attend.TryAdd(u.Id, DateTime.UtcNow);
+            _crewActive[u.Id] = DateTime.UtcNow;
             var taken = TakenTrains(roster);
             var mine = u.Depot.Length > 0 ? u.Depot[..1] : "";
             var free = candidates.Where(d => !_assign.ContainsKey(d.Id) && !_extras.Any(x => x.Duty == d.Id)

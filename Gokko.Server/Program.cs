@@ -101,6 +101,16 @@ var aiTrains = app.Services.GetRequiredService<AiTrains>();
 app.Services.GetRequiredService<TempTrains>().Removed += numbers => aiTrains.RemoveNumbers(numbers);
 var crewRoster = app.Services.GetRequiredService<CrewRoster>();
 crewRoster.DispatcherAutoLeft += id => incidentLog.Note($"司令員 ID:{id} を自動で退勤させました（{(int)CrewRoster.DispatcherIdleLimit.TotalMinutes}分操作なし）");
+// 乗務員の自動退勤: 1分ごとに、タブレットも開かず運転もしないまま30分たった人を退勤させ、行路を外す（ほかの人が選べるように）
+crewRoster.CrewAutoLeft += (id, released) => incidentLog.Note($"乗務員 ID:{id} を自動で退勤させました（{(int)CrewRoster.CrewIdleLimit.TotalMinutes}分操作なし）"
+    + (released.Count > 0 ? $"。行路 {string.Join("・", released)} を外しました" : ""));
+var crewPlayers = app.Services.GetRequiredService<PlayerRegistry>();
+var crewIdleTimer = new System.Threading.Timer(_ =>
+{
+    try { crewRoster.ExpireIdleCrew(crewPlayers.CrewTrains().Select(x => x.CrewId).ToList()); }
+    catch (Exception ex) { app.Logger.LogWarning(ex, "乗務員の自動退勤で失敗しました"); }
+}, null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
+app.Lifetime.ApplicationStopping.Register(() => crewIdleTimer.Dispose());
 if (string.IsNullOrEmpty(options.AdminKey))
     app.Logger.LogWarning("Gokko:AdminKey が未設定です。管理画面は使えません");
 if (string.IsNullOrEmpty(options.DiaPassword))
