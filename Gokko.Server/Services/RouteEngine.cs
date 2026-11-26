@@ -900,6 +900,7 @@ public sealed partial class RouteEngine
             foreach (var id in _runs.Keys.Where(id => snapshot.All(p => p.ConnectionId != id)).ToList())
             {
                 RunLog(now, _runs[id], "扱いを外しました（参加者の一覧からいなくなった）");
+                ForgetArrived(_runs[id], now);
                 _runs.Remove(id);
             }
             foreach (var id in _mirroredTo.Keys.Where(id => !_runs.ContainsKey(id)).ToList()) _mirroredTo.Remove(id);
@@ -935,7 +936,10 @@ public sealed partial class RouteEngine
                 // 出現待ち: 継続乗務の開始番線が違う、または他の列車がいる・他の列車の進路が開通している軌道回路に現れた列車は、
                 // その回路が空く（先の列車が抜ける）まで、サーバーの列車として扱わない（進路を作らず、在線位置にも出さない）
                 if (existing != null)
+                {
                     RunLog(now, existing, $"扱いを外しました（列番が {number} になったので、その列番の列車として作り直す）");
+                    ForgetArrived(existing, now);
+                }
                 _runs.Remove(p.ConnectionId);
                 if (p.AppearReason != null)
                 {
@@ -1758,6 +1762,23 @@ public sealed partial class RouteEngine
         _log.Note($"{(driverEnd || st.DriverEnd ? "運転士の打ち切り・入換" : byEvent ? "催物用臨停設定" : "列車別設定")}: {run.Train} {st.St.Name} {(ov ?? "指定解除")}（{stop}{(terminal ? "・終着" : "")}）");
     }
 
+    /// <summary>
+    /// 列車が駅を抜けた・終着に着いて走り終えたとき、その駅の指示（番線・抑止・開通指示・発車時刻。CentralControl.ForgetAt）を消す。
+    /// 列車が現れたときにもう過ぎていた駅（作ったときから「済」の駅）の指示は消さない（手前からやり直す列車のために残す）。
+    /// </summary>
+    private void ForgetOrders(TrainRun run, StationRun st, DateTime now, string why)
+    {
+        if (_central.ForgetAt(run.Train, st.St.Id))
+            RouteLogLine(now, $"{run.Train} {st.St.Name} の指示（番線・抑止・開通指示・発車時刻）を消しました（{why}）");
+    }
+
+    /// <summary>扱いを外す列車が、終着の番線に入りきっていれば（走り終えた）、終着の駅の指示を消す。途中でいなくなった列車の指示は残す。</summary>
+    private void ForgetArrived(TrainRun run, DateTime now)
+    {
+        if (run.Stations.FirstOrDefault(s => !s.Done && s.Terminal && s.InTrackUtc != null) is { } end)
+            ForgetOrders(run, end, now, "終着に着いて走り終えた");
+    }
+
     private void UpdateStations(TrainRun run, DateTime now)
     {
         var step = run.Dir.Step();
@@ -1768,6 +1789,7 @@ public sealed partial class RouteEngine
             {
                 st.Done = true;
                 st.DoneUtc = now;
+                ForgetOrders(run, st, now, "駅を抜けた");
                 foreach (var req in run.Requests.Where(r => r.Station == st && !r.Seen)) req.Released = true;
                 // 通過駅は数が多いので書かない（止まる駅・始発・終着だけ）
                 if (st.IsStart || st.Terminal || st.StopType != "通過")
