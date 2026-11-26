@@ -1054,7 +1054,11 @@ public sealed class AiTrains : BackgroundService
     private static bool TrackFitsDir(StationDef st, Dir dir, int track)
     {
         var r = st.Routes[dir];
-        return r.Depart.ContainsKey(track) || r.Arrive.ContainsKey(track) || r.Shunts.Any(s => s.From == track || s.To == track) || r.ShuntOuts.Any(o => o.From == track);
+        // 入換は、番線の回路で書いたもの（大道寺5番線の上りの入換は「TH65_5T から」）も数える。数えないと、5番線で 1653 が上りの 2152 に変われない
+        var circuit = st.TrackCircuit.GetValueOrDefault(track);
+        return r.Depart.ContainsKey(track) || r.Arrive.ContainsKey(track)
+               || r.Shunts.Any(s => s.From == track || s.To == track || circuit != null && s.FromCircuit == circuit)
+               || r.ShuntOuts.Any(o => o.From == track);
     }
 
     /// <summary>軌道回路がその駅の番線の回路で、その番線がその向きの列車の使わない番線なら、その理由。番線でない回路（引上線の分岐など）は null。</summary>

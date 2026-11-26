@@ -160,9 +160,8 @@
           // 増結車（連777・連875C）と切り離した車両（回2131）: E線で折り返し、E線から番線へ
           { "fromCircuit": "TH65_ET", "fromLabel": "E線", "to": 3, "routes": ["29LC"] },
           { "fromCircuit": "TH65_ET", "fromLabel": "E線", "to": 4, "routes": ["29LD"] },
-          // X線（藤江方の本線）にいる列車: X線から 1〜6番線へ（駅扱いの入換。3番線へは 31LC から入換の 27L、4番線へは 31LD から入換の 28L）
-          { "fromCircuit": "TH65_XT", "fromLabel": "X線", "to": 1, "routes": ["31LA"] },
-          { "fromCircuit": "TH65_XT", "fromLabel": "X線", "to": 2, "routes": ["31LB"] },
+          // X線（藤江方の本線）にいる列車: X線から 3〜6番線へ（3番線へは 31LC から入換の 27L、4番線へは 31LD から入換の 28L）。
+          // 1・2番線へは上りだけに書く（下りに書くと、下りの列車が 1・2番線を使えることになる）。駅扱いの一覧は上り・下りの両方から出す
           { "fromCircuit": "TH65_XT", "fromLabel": "X線", "to": 3, "routes": ["31LC", "27L"] },
           { "fromCircuit": "TH65_XT", "fromLabel": "X線", "to": 4, "routes": ["31LD", "28L"] },
           { "fromCircuit": "TH65_XT", "fromLabel": "X線", "to": 5, "routes": ["31L5"] },
