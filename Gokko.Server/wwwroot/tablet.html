@@ -38,15 +38,20 @@
   .grid { display: grid; }
   .stack { display: grid; align-content: start; min-width: 0; }
   @media (max-width: 760px) { .grid { grid-template-columns: minmax(0, 1fr) !important; } }
-  /* 列車を表示している間は、画面の高さに収める: 上の帯・次の駅・下の行はいつも見え、時刻表の白い部分だけがスクロールする（狭い画面では、今までどおりページごとスクロール） */
-  @media (min-width: 761px) {
+  /* 列車を表示している間は、画面の高さに収める: 上の帯・次の駅・下の行はいつも見え、時刻表の白い部分だけがスクロールする */
+  /* 幅の狭い窓（クライアントの最前面の窓など）でも同じ。1列のときは、行路の欄を下に低く出す */
+  @media (max-width: 760px) {
+    body.fit #app > .grid { grid-template-rows: minmax(0, 1fr) auto; }
+    body.fit #app > .grid > .stack:not(:has(> .staff)) { max-height: 18vh; }
+  }
+  @media all {
     body.fit { height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
     body.fit #app { flex: 1; min-height: 0; display: flex; flex-direction: column; }
     body.fit #app > .grid { flex: 1; min-height: 0; }
     body.fit #app > .grid > .stack { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; }
     body.fit #app > .grid > .stack:has(> .staff) { overflow: hidden; }
     body.fit #app > .grid > .stack > * { flex: none; }
-    body.fit #app > .grid > .stack > .staff { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+    body.fit #app > .grid > .stack > .staff:not(.train-next) { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
     body.fit .staff-scroll { flex: 1; min-height: 0; overflow: auto; }
     body.fit .staff-tt thead th { position: sticky; top: 0; z-index: 1; box-shadow: 0 1px 0 var(--rule); }
   }
@@ -131,6 +136,12 @@
   #onboard.show { display: block; }
   #onboard .ob-head { display: flex; gap: 8px; align-items: baseline; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
   #onboard .ob-head b { color: var(--fg); }
+  /* 放送装置の欄を小さくする（マイクの行を隠す・欄をたたむ）。入・切はこのブラウザに覚える */
+  #onboard .ob-tools { margin-left: auto; display: flex; gap: 10px; }
+  #onboard .ob-tools a { color: var(--muted); font-size: 12px; text-decoration: underline; cursor: pointer; }
+  #onboard.no-mic .ob-mic { display: none; }
+  #onboard.folded .ob-buttons, #onboard.folded .ob-mic, #onboard.folded .ob-msg { display: none; }
+  #onboard.folded .ob-head { margin-bottom: 0; }
   #onboard .ob-other { color: #fcd34d; }
   #onboard .ob-buttons { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
   #onboard button { font-size: 18px; font-weight: 700; padding: 12px 0; border-radius: 8px; border: 1px solid var(--line); background: #374151; color: var(--fg); cursor: pointer; touch-action: manipulation; }
@@ -155,7 +166,8 @@
 <body>
 <div id="app"></div>
 <div id="onboard">
-  <div class="ob-head"><b>放送装置</b><span id="ob-train"></span><span id="ob-other" class="ob-other"></span></div>
+  <div class="ob-head"><b>放送装置</b><span id="ob-train"></span><span id="ob-other" class="ob-other"></span>
+    <span class="ob-tools"><a id="ob-toggle-mic">マイクを隠す</a><a id="ob-fold">たたむ</a></span></div>
   <div class="ob-buttons">
     <button data-ob="Inside">車内</button><button data-ob="Outside">車外</button><button data-ob="Intercom">連絡</button>
   </div>
@@ -351,7 +363,7 @@
             t.inPlace != null ? `${esc(String(t.inPlace))}番線で列番変更、` : ""}${esc((t.time || "").slice(0, 5))}${esc(t.how || "")}${t.via ? `・${esc(t.via)}` : ""}）${changed}`
         : esc(t.kind) + (t.number ? `：${esc(t.number)}` : "") + changed);
     }
-    return out.length ? `<div class="staff"><div class="staff-foot">${out.join("<br>")}</div></div>` : "";
+    return out.length ? `<div class="staff train-next"><div class="staff-foot">${out.join("<br>")}</div></div>` : "";
   }
 
   // 次の駅。まだ走っていない列車は始発駅（サーバーが次の駅を決められないとき）
@@ -550,6 +562,21 @@
   // 放送装置（車内・車外・連絡）: PC のクライアントで運転士・車掌として乗っているときだけ、画面の下に出す（1秒ごとに読み直す）。
   // 押すたびに入・切。車内・車外・連絡はどれか1つ（サーバーが切り替える）。声は PC のマイクから送る
   const ob = document.getElementById("onboard");
+  // マイクの行を隠す・欄をたたむ（このブラウザに覚える。クライアントで声を送っているときなど、ブラウザのマイクを使わない人向け）
+  {
+    const getB = (k) => { try { return localStorage.getItem(k) === "1"; } catch (e) { return false; } };
+    const setB = (k, v) => { try { localStorage.setItem(k, v ? "1" : "0"); } catch (e) {} };
+    const apply = () => {
+      ob.classList.toggle("no-mic", getB("gokkoObNoMic"));
+      ob.classList.toggle("folded", getB("gokkoObFolded"));
+      document.getElementById("ob-toggle-mic").textContent = getB("gokkoObNoMic") ? "マイクを出す" : "マイクを隠す";
+      document.getElementById("ob-toggle-mic").hidden = getB("gokkoObFolded");
+      document.getElementById("ob-fold").textContent = getB("gokkoObFolded") ? "ひらく" : "たたむ";
+    };
+    document.getElementById("ob-toggle-mic").onclick = () => { setB("gokkoObNoMic", !getB("gokkoObNoMic")); apply(); };
+    document.getElementById("ob-fold").onclick = () => { setB("gokkoObFolded", !getB("gokkoObFolded")); apply(); };
+    apply();
+  }
   let obBusy = false, obMsgUntil = 0;
   // 放送装置の高さ（名前の行が折り返すと変わる）を、ページの下の余白に入れる
   new ResizeObserver(() => document.documentElement.style.setProperty("--ob-h", ob.offsetHeight + "px")).observe(ob);
