@@ -4235,6 +4235,8 @@ public sealed partial class RouteEngine
                     // 通過・到着の予想。今いる駅（始発・停車中）は今
                     var here = s.IsStart || r.Front == s.Zone;
                     DateTime? time = here ? now : arrAt.TryGetValue(s.Zone, out var at) ? at : null; // 待避線の延長を足した見込み
+                    var arriveAt = time; // 着（通過）の見込み。停車駅は、着の◆と発の◆に分けて描く
+                    DateTime? leaveAt = plan.DepAt.TryGetValue(s.Zone, out var lv) ? lv : null;
                     // スジずらしで発車時刻を決めた駅は、◆を発車時刻に置く（ずらした位置に残る）
                     var departAt = _central.OpenAt(r.Train, s.St.Id);
                     if (departAt != null && plan.DepAt.TryGetValue(s.Zone, out var dt)) time = dt;
@@ -4264,6 +4266,9 @@ public sealed partial class RouteEngine
                         passingStation = _data.PassingStations.ContainsKey(s.St.Id),
                         y = (double)s.Zone,
                         t = time,
+                        arriveAt,
+                        leaveAt,
+                        stops,
                         source,
                         openAt = open,
                         openSource,
@@ -4613,7 +4618,8 @@ public sealed partial class RouteEngine
         {
             if ((z - terminalZone) * step > 0) break; // 終着より先
             if (Arr(sid) is not { } a || Dep(sid) is not { } d) { if (z == terminalZone) break; continue; }
-            var arr = z == r.Front && atStation ? now : Utc(a + shift);
+            var here = z == r.Front && atStation;
+            var arr = here ? now : Utc(a + shift);
             if (arr < now) arr = now;
             // 先の列車に詰まる（駅間で追いつく・同じ番線がまだふさがっている）なら、その分だけ遅く着く（線の傾きが寝る）。延びた分は、この先の駅にも足す
             if ((z != r.Front || !atStation) && minArrive?.Invoke(z) is { } ma && ma > arr)
@@ -4621,7 +4627,12 @@ public sealed partial class RouteEngine
                 shift += (ma - arr).TotalSeconds * speed;
                 arr = ma;
             }
-            var dep = Utc(d + shift);
+            // 遅れていれば、停車時間を最小（標準の停車時分 DefaultDwellSeconds。ダイヤの停車時間より長くはしない）まで縮めて、最速で出る。
+            // 縮めた分だけ遅れを取り戻す（24分着・26分発に2分遅れて着けば、26分着・26分20秒発）。ダイヤより早くは出ない。今いる駅は、今から出られる
+            var minDwell = Math.Min(Math.Max(0, d - a), _data.DefaultDwellSeconds);
+            var depSec = here ? Math.Max(d, nowSec) : Math.Max(d, a + shift + minDwell);
+            shift = Math.Max(0, depSec - d);
+            var dep = Utc(depSec);
             if (dep < arr) dep = arr;
             arrAt[z] = arr;
             if (z != r.Front || !atStation) points.Add(new { t = arr, y = (double)z });
