@@ -275,7 +275,8 @@
     // 回路の継ぎ目（短い隙間）
     const ends = new Map();
     for (const s of L.segments) for (const p of [s.p[0], s.p[s.p.length - 1]]) { const k = p.join(); ends.set(k, (ends.get(k) || new Set()).add(s.c)); }
-    for (const [k, cs] of ends) if (cs.size > 1) { const [x, y] = k.split(',').map(Number); const e = el('rect', { x: X(x) - 2, y: Y(y) - 7, width: 4, height: 14, fill: '#000' }, g0); e.style.pointerEvents = 'none'; }
+    const joints = [];
+    for (const [k, cs] of ends) if (cs.size > 1) { const [x, y] = k.split(',').map(Number); const e = el('rect', { x: X(x) - 2, y: Y(y) - 7, width: 4, height: 14, fill: '#000' }, g0); e.style.pointerEvents = 'none'; joints.push(e); }
 
     // 転てつ器の分かれ目: 開いていない側は、分かれ目のすぐ先で線を切る（直進なら斜めの線を、渡るなら直線を。転換中は両方）。
     // 分かれ目は、反位（R）の線の端のうち、同じ転てつ器の定位（N）の線の上にある所。直線は横向きとして、斜めの線が向かう側を切る
@@ -286,22 +287,29 @@
     });
     const gCut = el('g', {}, root);
     gCut.style.pointerEvents = 'none';
-    const addCut = (l, keep, px, py, ux, uy) => cutEls.push({ l, keep, e: el('line', { x1: Math.round(px + ux * 4), y1: Math.round(py + uy * 4), x2: Math.round(px + ux * 12), y2: Math.round(py + uy * 12), stroke: '#000', 'stroke-width': 8, 'stroke-linecap': 'butt' }, gCut) });
-    for (const s of L.segments) {
-      const lg = legsOf(s);
+    const GAP = 12;
+    for (const se of segEls) {
+      const s = se.s, lg = legsOf(s);
       if (lg.length !== 1 || lg[0][2] !== 'R') continue;
-      const l = lg[0];
-      for (const [P, Q] of [[s.p[0], s.p[1]], [s.p[s.p.length - 1], s.p[s.p.length - 2]]]) {
+      const l = lg[0], pts = s.p.map(p => [X(p[0]), Y(p[1])]);
+      let trimmed = false;
+      for (const [i, j] of [[0, 1], [pts.length - 1, pts.length - 2]]) {
+        const P = s.p[i];
         if (!L.segments.some(o => o !== s && legsOf(o).some(m => m[0] === l[0] && m[1] === l[1] && m[2] === 'N') && onSeg(P, o))) continue;
-        const px = X(P[0]), py = Y(P[1]), dx = X(Q[0]) - px, dy = Y(Q[1]) - py, len = Math.hypot(dx, dy);
-        addCut(l, 'R', px, py, dx / len, dy / len);   // 斜めの線（反位でないとき切る）
-        addCut(l, 'N', px, py, Math.sign(dx), 0);     // 直線（定位でないとき切る）
+        const [px, py] = pts[i], dx = pts[j][0] - px, dy = pts[j][1] - py, len = Math.hypot(dx, dy);
+        // 斜めの線: 反位でないときは、分かれ目の端を GAP だけ縮めて描く（直線に少しも触れない）
+        pts[i] = [Math.round(px + dx / len * GAP), Math.round(py + dy / len * GAP)];
+        trimmed = true;
+        // 直線: 定位でないときは、分かれ目から斜めの線が向かう側を GAP だけ黒で切る
+        cutEls.push({ l, keep: 'N', e: el('line', { x1: px, y1: py, x2: px + Math.sign(dx) * GAP, y2: py, stroke: '#000', 'stroke-width': 6, 'stroke-linecap': 'butt' }, gCut) });
       }
+      if (trimmed) { se.full = se.line.getAttribute('points'); se.short = pts.map(p => p.join(',')).join(' '); }
     }
-    // 開いている側の線は、切れ目の上にもう一度描く（切れ目が渡っている線にかからないように）
+    // 直線の切れ目は分かれ目ちょうどから切るので、開いている側と転てつ器のない線は、切れ目の上にもう一度描いて元に戻す
     const gTop = el('g', { 'shape-rendering': 'crispEdges' }, root);
     gTop.style.pointerEvents = 'none';
-    for (const se of segEls) if (se.s.leg) se.top = el('polyline', { points: se.line.getAttribute('points'), fill: 'none', stroke: C.free, 'stroke-width': 4, 'stroke-linecap': 'butt', 'stroke-linejoin': 'miter' }, gTop);
+    for (const se of segEls) se.top = el('polyline', { points: se.line.getAttribute('points'), fill: 'none', stroke: C.free, 'stroke-width': 4, 'stroke-linecap': 'butt', 'stroke-linejoin': 'miter' }, gTop);
+    for (const e of joints) root.appendChild(e);   // 継ぎ目は描き直した線の上へ
 
     for (const d of L.dests) {
       const x = X(d.at[0]), y = Y(d.at[1]);
@@ -381,7 +389,7 @@
     const { green, flash } = routeSets(occ);
 
     const pointMoving = l => !S(l[0]) || S(l[0]).moving.includes(l[1]);
-    for (const { s, line, top } of segEls) {
+    for (const { s, line, top, full, short } of segEls) {
       let col = C.free;
       const lg = legsOf(s);
       const shut = lg.length && (lg.some(pointMoving) || !legOpen(s));   // 開いていない側（転換中は両方）は灰色のまま。分かれ目の切れ目で示す
@@ -389,6 +397,7 @@
       else if (occ.has(s.c)) col = C.occ;
       else if (green.has(s.c)) col = flash.has(s.c) && blink ? C.free : C.route;
       line.setAttribute('stroke', col);
+      if (short) line.setAttribute('points', shut ? short : full);   // 開いていない斜めの線は、分かれ目の端を縮める
       if (top) { top.setAttribute('stroke', col); top.style.display = shut ? 'none' : ''; }
     }
     for (const { l, keep, e } of cutEls) e.style.display = pointMoving(l) || S(l[0])?.point[l[1]] !== keep ? '' : 'none';
