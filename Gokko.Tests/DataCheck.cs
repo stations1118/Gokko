@@ -162,7 +162,15 @@ public static class DataCheck
                 ic.ExceptWith(over);
                 if (!pc.SetEquals(ic))
                     Diff("通る回路", id, name, $"盤だけ: {Join(pc.Except(ic))}　進路のデータだけ: {Join(ic.Except(pc))}");
-                var (pa, ia) = (Arr(r, "approach").ToHashSet(), ir.Approach.ToHashSet());
+                // 接近の回路。盤は、条件つきの接近（approachIf。ほかの進路・転てつ器の向きしだいで接近になる回路）も持っているので、合わせて比べる
+                var pa = Arr(r, "approach").ToHashSet();
+                foreach (var cond in Items(r, "approachIf"))
+                    foreach (var c in Arr(cond, "circuits"))
+                    {
+                        pa.Add(c);
+                        if (!circuits.Contains(c)) Err("回路の名前", id, name, $"盤の進路の条件つきの接近の回路 {c} が、回路の一覧にありません");
+                    }
+                var ia = ir.Approach.ToHashSet();
                 if (!pa.SetEquals(ia))
                     Diff("接近の回路", id, name, $"盤だけ: {Join(pa.Except(ia))}　進路のデータだけ: {Join(ia.Except(pa))}");
             }
