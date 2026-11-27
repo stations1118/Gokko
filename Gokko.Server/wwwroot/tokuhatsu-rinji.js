@@ -62,7 +62,7 @@ window.GokkoRinji = (() => {
       <option value="" ${!couple && !(link && linkTurn) ? "selected" : ""}>終点のあと: なし</option>
       ${link ? `<option value="link" ${!couple && linkTurn ? "selected" : ""}>終点のあと: 元の列車の後運用につなぐ（終点が同じ駅のとき）</option>` : ""}
       ${(plan.couple || []).map((c) => `<option value="c:${esc(c.train)}" ${couple === c.train ? "selected" : ""}>終点のあと: 連結 ${esc(c.train)}（${esc(c.type)}・${esc((c.time || "").slice(0, 5))}着・${c.track}番線）</option>`).join("")}
-    </select>${couple ? ` <span class="muted">列番は「連${esc(couple)}」、種別は回送になります（増結車）</span>` : ""}`;
+    </select>${couple ? ` <span class="muted">終点に着いたら、その番線で増結車「連${esc(couple)}」に変わって待ちます</span>` : ""}`;
   }
 
   // 表で直した時刻・番線を、案に書き戻す
@@ -120,7 +120,7 @@ window.GokkoRinji = (() => {
         自動運転の列車は、発駅に着いて止まったら特発臨の列番に変わって走ります（番線は着いた番線）。ユーザーの列車は、タブレットに特発臨が出るので、運転士に列番を入れ直してもらってください。
         元の列車の代わりに「出庫」を選ぶと、車庫から両数を決めて出せます。元の列車から立てたときは、元の列車の両数を引き継ぎます。
         「解放」を選ぶと、走っている列車がこの先で停車する駅で、両数を決めて切り離し、切り離した車両を特発臨として出します（「解」＋元の列番の車両が特発臨に変わります）。
-        「終点のあと」で「連結」を選ぶと、終点にあとから着く列車に増結します（列番は「連」＋その列番、種別は回送）。
+        「終点のあと」で「連結」を選ぶと、終点にあとから着く列車に増結します（終点に着いたら、増結車「連」＋その列番に変わって待ちます）。
         ダイヤグラムの◆の窓で「打ち切り」を選んでも、その駅から立てられます。ロープレ時刻を設定するか、サーバーを再起動すると消えます。</div>` : ""}`;
     const $ = (sel) => el.querySelector(sel);
     const f = (k) => el.querySelector(`[data-f="${k}"]`);
@@ -212,14 +212,11 @@ window.GokkoRinji = (() => {
       else if (t.dataset.f === "dep") form.dep = t.value.trim();
       else if (t.dataset.link !== undefined) form.linkTurn = t.checked;
       else if (t.dataset.after !== undefined) {
-        // 終点のあと: 連結なら、列番は「連」＋相手、種別は回送（時刻を回送で引き直す）
+        // 終点のあと: 連結なら、特発臨は自分の列番で走り、終点で増結車（連＋相手の列番）に変わる
         const v = t.value;
         form.couple = v.startsWith("c:") ? v.slice(2) : "";
         form.linkTurn = v === "link";
-        if (form.couple) {
-          form.number = "連" + form.couple; f("number").value = form.number; form.numberTouched = true;
-          if (form.type !== "回送") { form.type = "回送"; f("type").value = "回送"; readPlan($("[data-plan]"), plan, ""); draft(); return; }
-        }
+        readPlan($("[data-plan]"), plan, "");
         drawPlan();
       }
       else if (t.dataset.stop !== undefined && plan) {
@@ -244,11 +241,11 @@ window.GokkoRinji = (() => {
         plan = null; drawPlan();
       } else if (b.dataset.create !== undefined && plan) {
         readPlan($("[data-plan]"), plan, "");
-        form.number = form.couple ? "連" + form.couple : f("number").value.trim();
+        form.number = f("number").value.trim();
         if (!form.number) { msg("列番を入れてください"); return; }
         const c = cand();
         if (!(await GokkoDia.ask(`特発臨 ${form.number} を立てますか？`, confirmText(plan, form.number, c && !c.ai)
-          + (form.couple ? `終点で ${form.couple} に連結します。` : "")))) return;
+          + (form.couple ? `終点に着いたら連${form.couple}に変わり、${form.couple} に連結します。` : "")))) return;
         try {
           await api("POST", "/rinji", createBody(plan, form.number, form.linkTurn, form.couple));
           plan = null; form.couple = ""; form.numberTouched = false; form.number = ""; f("number").value = ""; form.dep = ""; f("dep").value = "";

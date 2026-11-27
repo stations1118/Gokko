@@ -1169,6 +1169,17 @@ public sealed class AiTrains : BackgroundService
         if (IsUserTrain(number)) { HandOver(t, number); return false; }
         if (_routes.DirOfTrain(number) is not { } dir || !_rail.Stations.TryGetValue(here.StationId, out var st)) return false;
         var i = nd.Stops.FindIndex(s => s.StationId == here.StationId);
+        // 増結車に変わる（特発臨の 臨回1186 → 連1185C。連の列車は、この駅だけの列車）: 着いた番線でそのまま列番を変え、連結を待つ
+        if (i == 0 && nd.Stops.Count == 1 && number.StartsWith("連"))
+        {
+            if (st.TrackCircuit.Where(kv => t.Info.TrackCircuits.Contains(kv.Value)).Select(kv => (int?)kv.Key).FirstOrDefault() is not { } ct
+                || !st.TrackCircuit.TryGetValue(ct, out var cc)) return false;
+            var was = t.Number;
+            Become(t, number, nd, dir, st, ct, cc, 0, null, utcNow);
+            t.Status = $"{st.Name} {ct}番線で増結車に変わりました（{was} → {number}）";
+            _log.Note($"にぎやかし: {was} は {st.Name} {ct}番線で {number} になりました（連結を待ちます）");
+            return true;
+        }
         if (i < 0 || i == nd.Stops.Count - 1) return false;
         // 番線は、いまいる番線の回路から（直接折返などで、ダイヤと違う番線に着いていることがある。大道寺は 2番線の代わりに 3番線）。
         // 回路から分からなければダイヤの番線
