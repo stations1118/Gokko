@@ -1390,7 +1390,9 @@ public sealed class AiTrains : BackgroundService
         foreach (var key in t.Info.GameRoutes)
         {
             if (!_rail.Routes.TryGetValue(key, out var d) || d.Circuits.Count == 0 || t.RedSignals.Contains(d.Signal)) continue;
-            if (ahead is { Count: > 0 } && d.Kind is "出発信号機" or "場内信号機" && !ahead.Contains(d.Signal)) continue;
+            // 先の信号機にない出発・場内の進路は、今いる回路を接近の区間に持つ（ここから出る）ものだけ。
+            // 江ノ原の 13番線は、信号機のつながりでは入換11R の次が入換13R だけで、出発2R が出てこない。2R の接近の区間は 13T
+            if (ahead is { Count: > 0 } && d.Kind is "出発信号機" or "場内信号機" && !ahead.Contains(d.Signal) && !d.Approach.Contains(lastCircuit)) continue;
             if (t.Path.Any(s => s.Route == d) || d.Circuits.Any(inPath.Contains)) continue;
             if (!near.Contains(d.Circuits[0]) && !near.Contains(d.Circuits[^1])) continue;
             if (RoutePath(d, lastCircuit) is not { Count: > 0 } path || !Continues(t, lastCircuit, d, path)) continue;
