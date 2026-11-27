@@ -354,7 +354,13 @@ public sealed class RelayStation
         }
     }
 
-    private IEnumerable<string> LitCircuits()
+    private IEnumerable<string> LitCircuits() => LitRoutes().SelectMany(x => x.Circuits);
+
+    /// <summary>
+    /// ラインライトを白く点ける進路と、その回路。盤は、この進路の転てつ器の向き（進路の points）で、回路のどちら側の灯を点けるか決める。
+    /// 盤の転てつ器の向きは、ゲームの一覧のほかの進路や列車からの推しで、進路と食い違ったまま残ることがある（新野崎で 23R・9R が分岐側に点いた）
+    /// </summary>
+    private IEnumerable<(string Route, List<string> Circuits)> LitRoutes()
     {
         foreach (var r in Data.Routes)
         {
@@ -367,7 +373,8 @@ public sealed class RelayStation
                 var from = _autoFrom.GetValueOrDefault(r.Name, -1);
                 cs = r.Groups.Skip(Math.Max(0, from)).Take(from == int.MaxValue ? 0 : int.MaxValue).SelectMany(g => g);
             }
-            foreach (var c in cs.Except(r.Overrun)) yield return c;
+            var list = cs.Except(r.Overrun).ToList();
+            if (list.Count > 0) yield return (r.Name, list);
         }
     }
 
@@ -796,6 +803,7 @@ public sealed class RelayStation
         caps = _caps.OrderBy(c => c).ToList(),   // 誤操作防止のキャップをかぶせたてこ・ボタン
         // ラインライトの白: 開通している進路の、列車がまだ通り終わっていない回路（LitCircuits）
         route = LitCircuits().Distinct().OrderBy(c => c).ToList(),
+        lit = LitRoutes().Select(x => new { r = x.Route, c = x.Circuits }).ToList(),   // 白く点ける進路ごとの回路（灯の側は進路の points で決める）
         set = _set.Keys.OrderBy(n => n).ToList(),
         go = GoRoutes().ToList(),   // 信号表示灯（信号が開いている進路）
         notInGame = _notInGame,   // 盤で取ったのに、列車が近づいてもゲームの一覧に載らない進路（転てつ不良の灯・信号表示灯の点滅）
@@ -858,7 +866,8 @@ public sealed class RelayStation
     private void InferPointsFromTrains()
     {
         if (_trains.Count == 0) return;
-        var claimed = Data.Routes.Where(r => _otherRoutes.Contains($"{Data.Interlock}/{r.Name}")).SelectMany(r => r.Points.Keys).ToHashSet();
+        // ゲームの一覧の進路と、盤で取ってある進路が使う転てつ器は、推しで変えない
+        var claimed = Data.Routes.Where(r => _otherRoutes.Contains($"{Data.Interlock}/{r.Name}") || _set.ContainsKey(r.Name)).SelectMany(r => r.Points.Keys).ToHashSet();
         foreach (var t in _trains)
         {
             if (!t.Occ.Any(_known.Contains)) continue;

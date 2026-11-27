@@ -593,6 +593,7 @@
   document.getElementById('zoomFit').onclick = () => { zv = null; applyView(); saveView(); };
 
   let st = null, S = null, view = null, offset = 0, blink = false, flashUntil = 0;
+  let routeOf = {};   // 進路の名前 → 駅データの進路（points でラインライトの側を決める）
 
   function build() {
     document.title = `${st.name} 信号制御盤`;
@@ -769,12 +770,21 @@
     const occ = new Set(S.occ), route = new Set(S.route);
     const moving = new Set(S.moving);
     // 灯が線路のどちら側にあるか。when（{"41":"N","43":"R"}）か point・pos で書く。今の転てつ器の向きが全部合い、転換中でない灯だけ点く
-    const condOk = t => Object.entries(t.when || (t.point ? { [t.point]: t.pos } : {})).every(([p, pos]) => S.point[p] === pos && !moving.has(p));
+    const condOf = t => Object.entries(t.when || (t.point ? { [t.point]: t.pos } : {}));
+    const condOk = t => condOf(t).every(([p, pos]) => S.point[p] === pos && !moving.has(p));
+    // 白く点ける進路の回路は、盤の転てつ器の今の向きでなく、その進路の転てつ器の向き（points）で側を決める。
+    // 盤の向きは進路と食い違ったまま残ることがあり、まっすぐの進路で分岐側に点いた（新野崎の 23R・9R）。進路の points にない転てつ器の側の灯は点けない
+    const litBy = {};   // 回路 → その回路を白く点ける進路の points の一覧
+    for (const { r, c } of S.lit || []) {
+      const pts = (routeOf[r] || {}).points || {};
+      for (const x of c) (litBy[x] = litBy[x] || []).push(pts);
+    }
+    const routeOk = t => litBy[t.c] && litBy[t.c].some(pts => condOf(t).every(([p, pos]) => pts[p] === pos));
     for (const { ts, e } of view.track) {
       let s = 'off';
-      const ok = ts.filter(condOk);
-      if (ok.some(t => occ.has(t.c))) s = 'red';   // 在線も、列車がいる向きの線にだけ点く
-      else if (ok.some(t => route.has(t.c))) s = 'white';   // 進路は白（ゲームの進路の一覧に出た進路の、列車がまだ通り終わっていない回路。盤で取った進路も自動の進路も。サーバーの LitCircuits）
+      // 在線も、列車がいる向きの線にだけ点く。進路が白く点いている回路は、進路の向きで
+      if (ts.some(t => occ.has(t.c) && (litBy[t.c] ? routeOk(t) : condOk(t)))) s = 'red';
+      else if (S.lit ? ts.some(routeOk) : ts.filter(condOk).some(t => route.has(t.c))) s = 'white';   // 進路は白（ゲームの進路の一覧に出た進路の、列車がまだ通り終わっていない回路。盤で取った進路も自動の進路も。サーバーの LitRoutes）
       setImg(e, `track-lamp-${s}`);
       e.style.filter = s === 'white' ? 'sepia(0.4) saturate(1.5)' : '';   // 白は少し黄色を混ぜる（古い盤のくすんだ白）
     }
@@ -865,6 +875,7 @@
     const res = await fetch(`/api/relay/${ST}/station`);
     if (!res.ok) { startEl.style.display = 'none'; window.relayPick?.(`駅 ${ST} の盤はありません。ほかの駅を選んでください`); return; }   // 盤のない駅: 駅を選ぶ画面を出す
     st = await res.json();
+    routeOf = Object.fromEntries((st.routes || []).map(r => [r.name, r]));
     build();
     restorePlaced();
     connect();
