@@ -1,7 +1,7 @@
 // 受けた声の味付け（Web Audio）。列車無線と内線電話で共通。自分の声（送る側）にはかけない。
 // ・無線: PC のクライアント（RadioVoice）と同じ。300Hz より低い音と 3kHz より高い音を削り（2段ずつ）、軽く歪ませる。雑音は混ぜない
 // ・電話: 電話の帯域（300〜3400Hz）に絞り、受話器らしく 2kHz あたりを少し持ち上げ、ごく軽く歪ませる。通話中だけ回線の「サー」をうっすら
-// 使い方: const fx = GokkoVoiceFx.radio(ctx, 0.6)  … 声を fx.input へつなぎ、fx.output を音量などへつなぐ。fx.setStrength(0〜1)。0 で素の声
+// 使い方: const fx = GokkoVoiceFx.radio(ctx)       … 声を fx.input へつなぎ、fx.output を音量などへつなぐ（強さは 100% で固定）
 //        const fx = GokkoVoiceFx.phone(ctx)       … 同じくつなぐ。回線の向こうから聞こえる音（呼出中の音・保留音など）も fx.input へ。
 //                                                   fx.setLine(true) で回線の音（通話中だけ）、使い終わったら fx.close()
 (() => {
@@ -26,25 +26,12 @@
     return nodes;
   }
 
-  // 無線（クライアントの RadioVoice と同じ: 300Hz ハイパス2段・3kHz ローパス2段・歪み 1 + 5 × 強さ）
-  function radio(ctx, strength = 0.6) {
+  // 無線（クライアントの RadioVoice と同じ: 300Hz ハイパス2段・3kHz ローパス2段・歪み 1 + 5 × 強さ。強さは 100%）
+  function radio(ctx) {
     const input = ctx.createGain(), output = ctx.createGain();
-    const dry = ctx.createGain(), wet = ctx.createGain();
-    const shaper = ctx.createWaveShaper(); shaper.oversample = "2x";
-    chain(ctx, [input, filter(ctx, "highpass", 300), filter(ctx, "highpass", 300), filter(ctx, "lowpass", 3000), filter(ctx, "lowpass", 3000), shaper, wet, output]);
-    input.connect(dry); dry.connect(output);
-    let current = -1;
-    function setStrength(s) {
-      s = Math.min(1, Math.max(0, Number(s) || 0));
-      if (s === current) return;
-      current = s;
-      const on = s > 0;
-      dry.gain.value = on ? 0 : 1;
-      wet.gain.value = on ? 1 : 0;
-      if (on) shaper.curve = curve(1 + 5 * s);
-    }
-    setStrength(strength);
-    return { input, output, setStrength, get strength() { return current; } };
+    const shaper = ctx.createWaveShaper(); shaper.oversample = "2x"; shaper.curve = curve(6);
+    chain(ctx, [input, filter(ctx, "highpass", 300), filter(ctx, "highpass", 300), filter(ctx, "lowpass", 3000), filter(ctx, "lowpass", 3000), shaper, output]);
+    return { input, output };
   }
 
   let noiseBuf = null;

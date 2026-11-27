@@ -159,7 +159,6 @@
 
     <div class="info">
       <div class="row"><span>音量</span><input id="volume" type="range" min="0" max="2" step="0.05"></div>
-      <div class="row"><span>無線風</span><input id="effect" type="range" min="0" max="1" step="0.05"><span id="effectVal"></span></div>
       <div id="callsBox"></div>
       <div id="hint">黄色のボタンで受信を始めます。聞こえるのは共通通話と一斉通告だけです（話すことはできません）。</div>
       <div class="err" id="error"></div>
@@ -223,25 +222,12 @@
     try { localStorage.setItem("gokkoRadioMonitorVolume", String(volume)); } catch (e) {}
   };
 
-  // 無線風（受けた声だけにかける。PC のクライアントと同じ味付け。0 で素の声）
-  let effect = 0.6;
-  try { const e = localStorage.getItem("gokkoRadioEffect"); if (e != null) effect = Number(e); } catch (e) {}
-  if (!(effect >= 0 && effect <= 1)) effect = 0.6;
-  $("effect").value = effect;
-  const effectText = () => { $("effectVal").textContent = effect > 0 ? Math.round(effect * 100) + "%" : "切"; };
-  effectText();
-  $("effect").oninput = () => {
-    effect = Number($("effect").value);
-    if (voiceFx) voiceFx.setStrength(effect);
-    effectText();
-    try { localStorage.setItem("gokkoRadioEffect", String(effect)); } catch (e) {}
-  };
 
   async function openAudio() {
     if (!ctx) {
       ctx = new (window.AudioContext || window.webkitAudioContext)();
       outGain = ctx.createGain(); outGain.gain.value = volume; outGain.connect(ctx.destination);
-      voiceFx = GokkoVoiceFx.radio(ctx, effect); voiceFx.output.connect(outGain); // 受けた声は無線風にしてから音量へ
+      voiceFx = GokkoVoiceFx.radio(ctx); voiceFx.output.connect(outGain); // 受けた声は無線風にしてから音量へ
       ctx.onstatechange = render;
     }
     await ctx.resume();
