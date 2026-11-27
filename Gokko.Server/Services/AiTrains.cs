@@ -30,6 +30,7 @@ public sealed class AiTrains : BackgroundService
     private const double Accel = 0.65;          // m/s²（約 2.3km/h/s）
     private const double Decel = 0.70;          // m/s²（約 2.5km/h/s）
     private const double ProtectionDecel = 1.1; // m/s²（防護受信時、約4 km/h/s）
+    private const double OvershootMax = 30;     // 停止位置をこれだけ過ぎて止まっても、その駅に着いたとする
     private const double SignalMargin = 8;      // R の信号機の何 m 手前で止まるか
     private const double CarLength = 20;
     private const double DefaultStationCircuit = 150;
@@ -436,7 +437,20 @@ public sealed class AiTrains : BackgroundService
             if (!_trains.TryGetValue(id, out var t)) return;
             t.Received = true;
             t.RedSignals = state.Signals.Where(s => s.Phase == "R").Select(s => s.Name).ToHashSet();
-            foreach (var r in state.Routes) t.Info.GameRoutes.Add((r.Interlocking, r.RouteName));
+            // 自分の今の列番の進路だけを受け取る。終着で折り返して列番を変えた直後は、進路の判断（RouteEngine）がまだ前の列番の列車として
+            // 作った配信が1回届くことがあり、その進路（着いたときの場内など）を受け取ると、もう誰も消さないまま手元に残る。
+            // 残った進路は、前の信号が赤で進めないときに「開いている自分の進路」として拾われ、来た道を引き返してしまう
+            // （日野森で 1250 → 1251 に折り返した列車が、出発したあと上り場内 2RA で1番線へ戻り、単線区間が詰まった）。
+            // 途中駅で列番が変わる列車（592C → 592）は、列番は元のまま、進路の判断が次の列番に読み替える（進路には次の列番が付く）。
+            // 読み替える前（次の列番はダイヤの Next）と、読み替えたあと（ダイヤはもう次の列番のもの）の、どちらの進路も受け取る
+            var mine = new HashSet<string> { RailData.NormalizeTrain(t.Number), RailData.NormalizeTrain(t.Dia.Number) };
+            if (t.Dia.Next?.Number is { } nextNumber) mine.Add(RailData.NormalizeTrain(nextNumber));
+            foreach (var r in state.Routes)
+            {
+                var forTrain = RailData.NormalizeTrain(r.TrainNumber);
+                if (forTrain.Length > 0 && !mine.Contains(forTrain)) continue;
+                t.Info.GameRoutes.Add((r.Interlocking, r.RouteName));
+            }
             SyncPanelRoutes(t, panel);
             foreach (var r in state.DeleteRoutes)
             {
@@ -900,7 +914,10 @@ public sealed class AiTrains : BackgroundService
         // 駅に着いた（停止位置の表がなく、線路の終わり（先に信号機がない）で止まったときも、次の停車駅に着いたとする）
         // 停止位置が線路の終わりより先にある（回路の長さの見込みが短い行き止まりなど）ときも、線路の終わりで止まったら着いたとする
         var atEnd = next != null && (stopX == null || stopX > t.PathEnd - 2) && !t.Blocked && t.Speed == 0 && t.PathEnd - t.Head < 5 && !(t.FromShunt && !t.ShuntMoved); // 引上線で折り返した直後（まだ番線へ動いていない）は除く
-        if (next != null && (stopX is { } at && t.Speed == 0 && Math.Abs(t.Head - at) < 0.5 || atEnd))
+        // 停止位置を少し過ぎて止まったときも、着いたとする
+        // （大道寺の引上線から番線へ入った 1881C: 入換が遅れ、止まりかけた所で出発の 6L が開いて道筋が延び、停止位置を 1.3m 過ぎて止まった。
+        //  先へは進めず、着いたことにもならず、出発の進路を開けたまま止まり続けて、後ろの列車が詰まった）
+        if (next != null && (stopX is { } at && t.Speed == 0 && (Math.Abs(t.Head - at) < 0.5 || t.Head > at && t.Head - at < OvershootMax) || atEnd))
         {
             // 番線への入換で番線に入って止まり、出発の進路が入換で来た道を戻る（江ノ原信号場の 13番線 → 12番線 → 4L）:
             // 着いたことにする前に向きを変える（停止位置の表がない駅は、番線の回路の終わりで着いたことになり、向きを変えないまま出発の進路を待ち続ける）
