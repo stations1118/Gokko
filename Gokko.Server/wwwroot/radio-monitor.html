@@ -110,6 +110,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js"></script>
 <script src="menulink.js"></script>
 <script src="crewsession.js"></script>
+<script src="voicefx.js"></script>
 <script>
   // 小窓（iframe）や ?embed=1 のときは、受信機を小さい窓に収める
   try { if (window.top !== window.self || new URLSearchParams(location.search).get("embed") === "1") document.documentElement.classList.add("embed"); } catch (e) { document.documentElement.classList.add("embed"); }
@@ -209,7 +210,7 @@
   };
 
   // ---- 音 ----
-  let ctx = null, opus = null, outGain = null, listening = false, rxUntil = 0, lastSender = "";
+  let ctx = null, opus = null, outGain = null, voiceFx = null, listening = false, rxUntil = 0, lastSender = "";
   const voices = new Map(); // 話した人の接続ID → { decoder, waiting, next, last }
   let volume = 1;
   try { volume = Number(localStorage.getItem("gokkoRadioMonitorVolume") || "1"); } catch (e) {}
@@ -221,10 +222,12 @@
     try { localStorage.setItem("gokkoRadioMonitorVolume", String(volume)); } catch (e) {}
   };
 
+
   async function openAudio() {
     if (!ctx) {
       ctx = new (window.AudioContext || window.webkitAudioContext)();
       outGain = ctx.createGain(); outGain.gain.value = volume; outGain.connect(ctx.destination);
+      voiceFx = GokkoVoiceFx.radio(ctx); voiceFx.output.connect(outGain); // 受けた声は無線風にしてから音量へ
       ctx.onstatechange = render;
     }
     await ctx.resume();
@@ -290,7 +293,7 @@
     if (!pcm || pcm.length === 0) return;
     const buffer = ctx.createBuffer(1, pcm.length, RATE);
     buffer.getChannelData(0).set(pcm);
-    const src = ctx.createBufferSource(); src.buffer = buffer; src.connect(outGain);
+    const src = ctx.createBufferSource(); src.buffer = buffer; src.connect(voiceFx.input);
     // 少し貯めてから流す（届く間隔のゆれを吸収する）。遅れすぎたら詰め直す
     const t = ctx.currentTime;
     if (v.next < t + 0.02 || v.next > t + 0.6) v.next = t + 0.12;

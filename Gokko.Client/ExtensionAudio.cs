@@ -76,6 +76,7 @@ public sealed class ExtensionAudio : IDisposable
         _tones.RingBack = active is { Status: "outgoing" } && _state?.HandsetLinked != true;
         _tones.HoldMusic = active is { Status: "talking", PeerHeld: true } && _state?.HandsetLinked != true;
         _tones.Dial = DialTone && active == null && incoming == null && _state?.CanUse == true && _state?.HandsetLinked != true;
+        _tones.Line = active is { Status: "talking", PeerHeld: false } && _state?.HandsetLinked != true; // 話している間だけ回線の「サー」
 
         // 話している通話の相手だけ残す
         var parties = _talking?.Parties.Select(p => p.Id).ToHashSet() ?? new HashSet<string>();
@@ -217,7 +218,7 @@ public sealed class ExtensionAudio : IDisposable
             if (_mixer == null) return;
             if (!_voices.TryGetValue(packet.SenderId, out var voice))
             {
-                voice = new RadioVoice { Gain = _volume, Effect = false };
+                voice = new RadioVoice { Gain = _volume, Phone = new PhoneBand() };
                 _voices[packet.SenderId] = voice;
                 _mixer.AddMixerInput(voice);
             }
@@ -249,19 +250,28 @@ public sealed class ExtensionAudio : IDisposable
     }
 }
 
-/// <summary>電話の音（呼出音・リングバック・保留音・キャッチホン・ボタンの音）。音のファイルは使わず、ここで作る。</summary>
+/// <summary>
+/// 電話の音（呼出音・リングバック・保留音・キャッチホン・ボタンの音）。音のファイルは使わず、ここで作る。
+/// 回線の向こうから聞こえる音（リングバック・保留音・キャッチホン・発信音・回線の「サー」）は電話の帯域に通す。電話機のベルとボタンの音はそのまま。
+/// </summary>
 internal sealed class PhoneTones : ISampleProvider
 {
     private const int Rate = TrainRadioFormat.SampleRate;
     public WaveFormat WaveFormat { get; } = WaveFormat.CreateIeeeFloatWaveFormat(Rate, 1);
 
     public volatile bool Ring, RingBack, HoldMusic, Waiting, Keitai, Dial;
+
+    /// <summary>話している間: 回線の「サー」をうっすら流す。</summary>
+    public volatile bool Line;
     public volatile float Volume = 1f;
 
     private long _ringT, _backT, _holdT, _waitT, _dialT;
     private double _p1, _p2;
     private volatile int _keyLeft;
     private double _k1, _k2, _kp1, _kp2;
+    private readonly PhoneBand _band = new();
+    private readonly Random _noise = new();
+    private double _hiss;
 
     private static readonly Dictionary<char, (int, int)> Dtmf = new()
     {
@@ -285,7 +295,7 @@ internal sealed class PhoneTones : ISampleProvider
     {
         for (var i = 0; i < count; i++)
         {
-            double s = 0;
+            double s = 0, line = 0;
             if (Ring)
             {
                 var t = _ringT++ % (Rate * 3) / (double)Rate; // 3秒ごと
@@ -301,7 +311,7 @@ internal sealed class PhoneTones : ISampleProvider
             if (RingBack)
             {
                 var t = _backT++ % (Rate * 3) / (double)Rate;
-                if (t < 1.0) s += (Tone(392, ref _p1) + Tone(408, ref _p2)) * 0.05; // 400Hz を 16Hz でゆらした呼出音
+                if (t < 1.0) line += (Tone(392, ref _p1) + Tone(408, ref _p2)) * 0.05; // 400Hz を 16Hz でゆらした呼出音
             }
             else _backT = 0;
 
@@ -313,7 +323,7 @@ internal sealed class PhoneTones : ISampleProvider
                 {
                     if (t < at + d)
                     {
-                        if (t - at < d * 0.9) s += (Tone(f, ref _p1) + 0.5 * Tone(f * 2, ref _p2)) * 0.04;
+                        if (t - at < d * 0.9) line += (Tone(f, ref _p1) + 0.5 * Tone(f * 2, ref _p2)) * 0.04;
                         break;
                     }
 
@@ -325,14 +335,14 @@ internal sealed class PhoneTones : ISampleProvider
             if (Waiting)
             {
                 var t = _waitT++ % (Rate * 4) / (double)Rate;
-                if (t < 0.12 || (t >= 0.25 && t < 0.37)) s += Tone(440, ref _p2) * 0.07;
+                if (t < 0.12 || (t >= 0.25 && t < 0.37)) line += Tone(440, ref _p2) * 0.07;
             }
             else _waitT = 0;
 
             if (Dial)
             {
                 var t = _dialT++ % (Rate / 2) / (double)Rate;
-                if (t < 0.25) s += Tone(400, ref _p2) * 0.04; // 内線発信音（ツーツーツー）
+                if (t < 0.25) line += Tone(400, ref _p2) * 0.04; // 内線発信音（ツーツーツー）
             }
             else _dialT = 0;
 
@@ -342,6 +352,9 @@ internal sealed class PhoneTones : ISampleProvider
                 s += (Tone(_k1, ref _kp1) + Tone(_k2, ref _kp2)) * 0.05;
             }
 
+            _hiss += ((Line ? 0.006 : 0) - _hiss) * 0.0003; // 入り切りはなめらかに
+            line += (_noise.NextDouble() * 2 - 1) * _hiss;
+            s += _band.Process((float)line);
             buffer[offset + i] = (float)(s * Volume);
         }
 

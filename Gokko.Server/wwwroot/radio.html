@@ -66,6 +66,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js"></script>
 <script src="menulink.js"></script>
 <script src="crewsession.js"></script>
+<script src="voicefx.js"></script>
 </head>
 <body>
 <main>
@@ -178,7 +179,7 @@
   };
 
   // ---- 音 ----
-  let ctx = null, opus = null, encoder = null, stream = null, micNode = null, outGain = null;
+  let ctx = null, opus = null, encoder = null, stream = null, micNode = null, outGain = null, voiceFx = null;
   let conn = null, status = null, closed = false;
   let muted = false, gateUntil = 0, micLevel = 0, rxLevel = 0;
   const voices = new Map(); // 話した人の接続ID → { decoder, next, last }
@@ -191,6 +192,7 @@
     if (outGain) outGain.gain.value = volume;
     try { localStorage.setItem("gokkoRadioVolume", String(volume)); } catch (e) {}
   };
+
 
   // マイクの音を 16kHz・640 サンプル（40ms）ずつにまとめる（AudioWorklet。入力の速さは端末による）
   const CAPTURE = `
@@ -230,6 +232,7 @@
     ctx = new (window.AudioContext || window.webkitAudioContext)();
     await ctx.resume();
     outGain = ctx.createGain(); outGain.gain.value = volume; outGain.connect(ctx.destination);
+    voiceFx = GokkoVoiceFx.radio(ctx); voiceFx.output.connect(outGain); // 受けた声は無線風にしてから音量へ
     // 先に無音を鳴らして、iPhone で音が出る状態にする
     const silent = ctx.createBufferSource(); silent.buffer = ctx.createBuffer(1, 1, ctx.sampleRate); silent.connect(ctx.destination); silent.start();
 
@@ -307,7 +310,7 @@
     rxLevel = Math.max(rxLevel, Math.min(peak * volume, 1));
     const buffer = ctx.createBuffer(1, pcm.length, RATE);
     buffer.getChannelData(0).set(pcm);
-    const src = ctx.createBufferSource(); src.buffer = buffer; src.connect(outGain);
+    const src = ctx.createBufferSource(); src.buffer = buffer; src.connect(voiceFx.input);
     // 少し貯めてから流す（届く間隔のゆれを吸収する）。遅れすぎたら詰め直す
     const t = ctx.currentTime;
     if (v.next < t + 0.02 || v.next > t + 0.6) v.next = t + 0.12;
@@ -458,7 +461,7 @@
     for (const v of voices.values()) { try { v.decoder && v.decoder.free(); } catch (e) {} }
     voices.clear();
     try { wakeLock && wakeLock.release(); } catch (e) {}
-    ctx = null; stream = null; micNode = null; encoder = null; wakeLock = null;
+    ctx = null; voiceFx = null; stream = null; micNode = null; encoder = null; wakeLock = null;
     updateResume();
   }
 

@@ -11,6 +11,21 @@ internal sealed class Biquad
     public static Biquad HighPass(float freq, float rate, float q = 0.707f) => Make(freq, rate, q, true);
     public static Biquad LowPass(float freq, float rate, float q = 0.707f) => Make(freq, rate, q, false);
 
+    /// <summary>ある周波数のあたりだけ持ち上げる（dB）。</summary>
+    public static Biquad Peaking(float freq, float rate, float q, float db)
+    {
+        var w = 2 * Math.PI * freq / rate;
+        var alpha = Math.Sin(w) / (2 * q);
+        var cos = Math.Cos(w);
+        var a = Math.Pow(10, db / 40);
+        var a0 = 1 + alpha / a;
+        return new Biquad
+        {
+            _b0 = (float)((1 + alpha * a) / a0), _b1 = (float)(-2 * cos / a0), _b2 = (float)((1 - alpha * a) / a0),
+            _a1 = (float)(-2 * cos / a0), _a2 = (float)((1 - alpha / a) / a0)
+        };
+    }
+
     private static Biquad Make(float freq, float rate, float q, bool high)
     {
         var w = 2 * Math.PI * freq / rate;
@@ -45,6 +60,26 @@ internal sealed class Biquad
 }
 
 /// <summary>
+/// 電話の帯域（300〜3400Hz）。受話器らしく 2kHz あたりを少し持ち上げ、ごく軽く歪ませる。
+/// 内線電話の受けた声と、回線の向こうから聞こえる音（呼出中の音・保留音など）に使う。Web（voicefx.js）と同じ。
+/// </summary>
+internal sealed class PhoneBand
+{
+    private const float Rate = TrainRadioFormat.SampleRate;
+    private const float Drive = 1.8f;
+    private static readonly float Norm = (float)Math.Tanh(Drive);
+    private readonly Biquad _hp1 = Biquad.HighPass(300, Rate), _hp2 = Biquad.HighPass(300, Rate);
+    private readonly Biquad _peak = Biquad.Peaking(2000, Rate, 0.9f, 4);
+    private readonly Biquad _lp1 = Biquad.LowPass(3400, Rate), _lp2 = Biquad.LowPass(3400, Rate);
+
+    public float Process(float x)
+    {
+        x = _lp2.Process(_lp1.Process(_peak.Process(_hp2.Process(_hp1.Process(x)))));
+        return (float)Math.Tanh(x * Drive) / Norm * 0.9f;
+    }
+}
+
+/// <summary>
 /// 話している人1人分の受話の音。届いた音声をためて流し、人ごとの音量と無線風の音をかける。
 /// 無線風: 声の高い音と低い音を削り（300〜3000Hz）、軽く歪ませる（雑音は混ぜない）。
 /// </summary>
@@ -70,6 +105,9 @@ internal sealed class RadioVoice : ISampleProvider
 
     public volatile bool Effect = true;
     public volatile float Strength = 0.6f;
+
+    /// <summary>内線電話の声: 無線風の代わりに電話の帯域にする（<see cref="Effect"/> は見ない）。</summary>
+    public PhoneBand? Phone { get; init; }
 
     /// <summary>最後に音声が届いた時刻（Environment.TickCount64）。</summary>
     public long LastPacketTick { get; private set; } = Environment.TickCount64;
@@ -125,7 +163,8 @@ internal sealed class RadioVoice : ISampleProvider
         for (var i = 0; i < count; i++)
         {
             float x = i < got ? BitConverter.ToInt16(_bytes, i * 2) / 32768f : 0f;
-            if (effect)
+            if (Phone != null) x = Phone.Process(x);
+            else if (effect)
             {
                 x = _lp2.Process(_lp1.Process(_hp2.Process(_hp1.Process(x))));
                 x = (float)Math.Tanh(x * drive) / norm * 0.9f;
