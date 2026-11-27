@@ -1,6 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 104 104" width="104" height="104">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 104 122" width="104" height="122">
   <!-- 着点ボタンのキャップ（誤操作防止）。着点ボタンにかぶせる透明な筒を、真上から見た形。てこのキャップ（lever-cap.svg）と同じ大きさの筒。
-       大きさは 104×104 で、筒の中心は (52,52)。着点ボタンの白い頭の中心に合わせて重ねる -->
+       盤は斜めに立っているので、筒は重みで下がり、内側の上のふちがボタンの座に掛かって止まる。
+       大きさは 104×122 で、着点ボタンの白い頭の中心を (52,52) に合わせて重ねる。筒の中心はそれより 18 下の (52,70) -->
   <defs>
     <radialGradient id="in" cx="52" cy="49" r="46" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#dfe8ee" stop-opacity="0.03"/><stop offset="0.8" stop-color="#dfe8ee" stop-opacity="0.08"/><stop offset="1" stop-color="#dfe8ee" stop-opacity="0.2"/>
@@ -10,7 +11,7 @@
     </linearGradient>
     <clipPath id="c"><circle cx="52" cy="49" r="44"/></clipPath>
   </defs>
-  <g transform="translate(0 3)">
+  <g transform="translate(0 21)">
   <!-- 盤に落ちる影 -->
   <circle cx="54.5" cy="52" r="45" fill="none" stroke="#05070a" stroke-width="5" opacity="0.28"/>
   <!-- 筒の中（うすく曇った透明） -->
