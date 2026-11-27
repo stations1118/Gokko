@@ -39,6 +39,22 @@
   footer button.wait small { color: #d9a56a; }
   footer .gap { flex: 1; }
   footer .sub { min-width: 0; font-size: 16px; padding: 6px 12px; align-self: flex-end; color: var(--dim); border-color: #5a5a5a; }
+  /* 小窓（在線位置・ダイヤグラムなど）と時計。信号制御盤と同じ形（denshirendo/tools.js） */
+  .pop { position: fixed; z-index: 40; background: #101312; border: 1px solid #66756f; border-radius: 6px; box-shadow: 0 6px 24px rgba(0,0,0,.6);
+         display: flex; flex-direction: column; overflow: hidden; font-family: system-ui, sans-serif; }
+  .pop .grip { position: absolute; right: 0; bottom: 0; width: 18px; height: 18px; cursor: nwse-resize; z-index: 1;
+               background: linear-gradient(135deg, transparent 50%, rgba(230,236,232,.75) 50% 58%, transparent 58% 68%, rgba(230,236,232,.75) 68% 76%, transparent 76%); }
+  .pop .bar { flex: none; display: flex; align-items: center; gap: 6px; padding: 3px 6px 3px 10px; background: #2a3330; color: #e6ece8; font-size: 13px; cursor: move; }
+  .pop .bar span { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .pop .bar .zoom { width: 80px; flex: none; }
+  .pop .bar button { background: none; border: none; color: #e6ece8; font-size: 16px; cursor: pointer; padding: 0 4px; }
+  .pop iframe { flex: 1; border: 0; width: 100%; background: #fff; }
+  body.dragging .pop iframe { pointer-events: none; }
+  .pop.stowed { display: none; }
+  footer button.stowed { box-shadow: inset 0 -3px 0 var(--route); }
+  #floatClock { position: fixed; z-index: 39; cursor: move; touch-action: none; filter: drop-shadow(0 4px 10px rgba(0,0,0,.55)); }
+  #floatClock svg { display: block; width: 100%; height: 100%; }
+  #floatClock .grip { position: absolute; right: 0; bottom: 0; width: 16%; height: 24%; cursor: nwse-resize; }
   #login { position: fixed; right: 40px; bottom: 120px; z-index: 5; background: #000; color: var(--text); border: 2px solid var(--free); padding: 10px 12px; font-size: 16px; display: none; }
   #login.open { display: block; }
   #login input { display: block; width: 190px; margin: 4px 0 8px; padding: 4px; font: inherit; background: #111; color: var(--text); border: 1px solid var(--free); border-radius: 0; }
@@ -68,6 +84,13 @@
     <button id="cancelBtn">取消</button>
     <span id="areas" style="display:contents"></span>
     <span class="gap"></span>
+    <button class="sub" data-pop="tid.html?embed=1" data-title="在線位置">TID</button>
+    <button class="sub" data-pop="diagramview.html" data-title="ダイヤグラム">ダイヤ</button>
+    <button class="sub" data-pop="menu.html" data-title="乗務メニュー">タブレット</button>
+    <button class="sub" data-pop="radio-monitor.html?embed=1" data-title="列車無線モニター" data-w="280" data-h="460">無線</button>
+    <button class="sub" id="popUrl" title="ほかの画面を小窓で開く">ほか…</button>
+    <button class="sub" id="clockBtn" title="時計を出す・しまう">時計</button>
+    <button class="sub" id="phoneBtn" title="内線電話機を出す・しまう">電話</button>
     <button class="sub" id="who">ログイン</button>
     <button class="sub" data-menu-link onclick="location.href='menu.html'">メニュー</button>
   </footer>
@@ -489,5 +512,9 @@
   })();
 })();
 </script>
+<script>window.GokkoPhoneStation = (new URLSearchParams(location.search).get('screen') || 'TH61-TH59').split('-')[0];   // 内線電話機は画面の最初の駅の電話</script>
+<script src="denshirendo/tools.js"></script>
+<script src="extension/extphone.js"></script>
+<script src="extension/panelphone.js"></script>
 </body>
 </html>

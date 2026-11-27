@@ -1,10 +1,10 @@
-// 信号制御盤（relaypanel.html）の内線電話機。右上の「電話」で出し入れする。盤の上のどこにでも置ける（上の帯を引っぱる）。
+// 信号制御盤（relaypanel.html）・電子連動装置（denshirendo.html）の内線電話機。右上の「電話」で出し入れする。盤の上のどこにでも置ける（上の帯を引っぱる）。
 // ・駅は盤と同じ（?st=…。付けなければ TH71）。ログインは盤の右上と同じ（ログインした人なら誰でも出られる）
 // ・一度開くと、しまっても電話機はつながったまま（着信があると「電話」のボタンが点滅し、電話機が出てくる）
 // ・大きさは上の帯の ⊖ ⊕ か、右下の角を引っぱって変える（覚えておく。初めは画面の高さに収まる大きさ）
 (() => {
   const params = new URLSearchParams(location.search);
-  const ST = (params.get("st") || "TH71").replace(/[^A-Za-z0-9]/g, "");
+  const ST = (window.GokkoPhoneStation || params.get("st") || "TH71").replace(/[^A-Za-z0-9]/g, "");   // 電子連動装置の画面は GokkoPhoneStation で駅を決める
   const button = document.getElementById("phoneBtn");
   if (!button || !window.GokkoExtPhone) return;
 
