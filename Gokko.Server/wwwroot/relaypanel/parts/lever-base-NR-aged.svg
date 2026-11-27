@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 104 100" width="104" height="100">
+  <!-- 古びた版（作られて 20 年ぐらい）。もとの絵 lever-base-NR.svg に、小さな塗りのはげ・くすみ・うすい黄ばみをかけたもの。大きさ・軸はもとと同じ。もとの絵を直したら作り直す -->
+  <defs><filter id="worn" x="-5%" y="-5%" width="110%" height="110%" color-interpolation-filters="sRGB">
+    <feTurbulence type="fractalNoise" baseFrequency="0.09 0.13" numOctaves="3" seed="45" result="n1"/>
+    <feColorMatrix in="n1" values="0 0 0 0 0.62  0 0 0 0 0.61  0 0 0 0 0.56  9 0 0 0 -6.2" result="chip0"/><feComponentTransfer in="chip0" result="chip"><feFuncA type="linear" slope="0.35"/></feComponentTransfer>
+    <feTurbulence type="fractalNoise" baseFrequency="0.02 0.03" numOctaves="2" seed="55" result="n2"/>
+    <feColorMatrix in="n2" values="0 0 0 0 0.3  0 0 0 0 0.26  0 0 0 0 0.18  0 1.8 0 0 -1.05" result="dirt"/>
+    <feColorMatrix in="SourceGraphic" values="0.96 0.02 0.01 0 0  0.015 0.955 0.01 0 0  0.015 0.03 0.9 0 0  0 0 0 1 0" result="y"/>
+    <feComposite in="dirt" in2="y" operator="atop" result="d"/><feComposite in="chip" in2="d" operator="atop"/>
+  </filter></defs>
+  <g filter="url(#worn)">
+  <!-- てこの座（NR）。扇形の黒い板。細い線のふち、軸のまわりの輪、左右の小ねじ。軸の中心は (52,70)。字は倒す位置（左・まっすぐ上・右）に彫ってある -->
+  <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a2f3b"/><stop offset="1" stop-color="#14161d"/></linearGradient></defs>
+  <g transform="translate(52 70) scale(0.9) translate(-52 -70)">
+  <path d="M3,41 Q52,9 101,41 C98,57 86,70 77.5,81 A27.5,27.5 0 0 1 26.5,81 C18,70 6,57 3,41 Z" fill="#14202a" opacity="0.4" transform="translate(2 3)"/>
+  <path d="M3,41 Q52,9 101,41 C98,57 86,70 77.5,81 A27.5,27.5 0 0 1 26.5,81 C18,70 6,57 3,41 Z" fill="url(#g)" stroke="#c9cfd8" stroke-width="1" stroke-linejoin="round"/>
+  <circle cx="52" cy="70" r="21.5" fill="#3b404d" stroke="#0d0e14" stroke-width="1"/>
+  <path d="M33.5,81 A21.5,21.5 0 0 0 73.5,70 A21.5,21.5 0 0 1 33.5,81 Z" fill="#232631"/>
+  <circle cx="52" cy="70" r="17" fill="#15171e"/>
+  <g fill="#6a7080" stroke="#0d0e14" stroke-width="0.8"><circle cx="22" cy="60" r="2.4"/><circle cx="82" cy="60" r="2.4"/></g>
+  <g>
+    <path fill="#eef2fa" transform="translate(47.86 39.43) scale(0.115)" d="M9.2,-3.4L9.2,-73.6Q9.2,-75.1 10.3,-76.2Q11.3,-77.2 12.8,-77.2L17.2,-77.2Q18.2,-77.2 19.1,-76.7Q20.0,-76.1 20.4,-75.2L55.6,-9.6L55.6,-73.8Q55.6,-75.3 56.7,-76.4Q57.8,-77.4 59.2,-77.4Q60.7,-77.4 61.8,-76.4Q62.8,-75.3 62.8,-73.8L62.8,-3.6Q62.8,-2.1 61.8,-1.1Q60.7,0.0 59.2,0.0L54.8,0.0Q53.8,0.0 52.9,-0.6Q52.0,-1.1 51.6,-2.0L16.4,-67.6L16.4,-3.4Q16.4,-1.9 15.3,-0.9Q14.2,0.2 12.8,0.2Q11.3,0.2 10.3,-0.9Q9.2,-1.9 9.2,-3.4Z"/>
+    <path fill="#eef2fa" transform="rotate(32 77 39.5) translate(72.97 43.93) scale(0.115)" d="M9.3,-3.4L9.3,-73.6Q9.3,-75.1 10.4,-76.2Q11.4,-77.2 12.9,-77.2L41.1,-77.2Q47.2,-77.2 52.3,-74.3Q57.4,-71.3 60.4,-66.3Q63.4,-61.3 63.4,-55.3Q63.4,-48.0 59.0,-42.3Q54.6,-36.5 47.6,-34.4L64.4,-5.2Q65.0,-4.4 65.0,-3.4Q65.0,-1.9 63.9,-0.9Q62.8,0.2 61.4,0.2Q60.4,0.2 59.6,-0.3Q58.7,-0.8 58.2,-1.7L39.9,-33.5L16.5,-33.5L16.5,-3.4Q16.5,-1.9 15.5,-0.9Q14.4,0.2 12.9,0.2Q11.4,0.2 10.4,-0.9Q9.3,-1.9 9.3,-3.4ZM56.2,-55.3Q56.2,-59.3 54.2,-62.7Q52.2,-66.1 48.7,-68.0Q45.2,-70.0 41.1,-70.0L16.5,-70.0L16.5,-40.7L41.1,-40.7Q45.2,-40.7 48.7,-42.7Q52.2,-44.6 54.2,-48.0Q56.2,-51.4 56.2,-55.3Z"/>
+  </g>
+  </g>
+  </g>
+</svg>
