@@ -58,16 +58,16 @@ public sealed class ExtensionResult
     public string Message { get; set; } = "";
 }
 
-/// <summary>電話帳の1件（司令・駅・列車）。</summary>
+/// <summary>電話帳の1件（司令・駅・運転士・車掌）。</summary>
 public sealed class ExtensionEntry
 {
-    /// <summary>内線番号（列車なら列番）。</summary>
+    /// <summary>内線番号（運転士・車掌なら社員番号）。</summary>
     public string Number { get; set; } = "";
 
-    /// <summary>「司令」「津崎駅」「1040列車」など。</summary>
+    /// <summary>「司令」「津崎駅」「1040A 運転士」など。</summary>
     public string Label { get; set; } = "";
 
-    /// <summary>"dispatcher"・"station"・"train"。</summary>
+    /// <summary>"dispatcher"・"station"・"driver"・"conductor"。</summary>
     public string Kind { get; set; } = "";
 
     /// <summary>出られる人がいるか（いなければかけられない）。</summary>
@@ -82,7 +82,7 @@ public sealed class ExtensionParty
     /// <summary>接続 ID（画面には出さない）。</summary>
     public string Id { get; set; } = "";
 
-    /// <summary>「津崎駅」「司令」「1040列車 運転士」など。</summary>
+    /// <summary>「津崎駅」「司令」「1040A 運転士」など。</summary>
     public string Label { get; set; } = "";
 
     /// <summary>保留にしている。</summary>
@@ -130,10 +130,10 @@ public sealed class ExtensionState
     /// <summary>自分の接続 ID（届いた音声が自分のものか見分ける）。スマホの受話器なら、結んでいる PC の接続 ID。</summary>
     public string SelfId { get; set; } = "";
 
-    /// <summary>自分の回線の名前（「司令」「津崎駅」「1040列車 運転士」）。</summary>
+    /// <summary>自分の回線の名前（「司令」「津崎駅」「1040A 運転士」）。</summary>
     public string Label { get; set; } = "";
 
-    /// <summary>自分の内線番号（列車なら列番）。</summary>
+    /// <summary>自分の内線番号（運転士・車掌なら社員番号）。</summary>
     public string Number { get; set; } = "";
 
     /// <summary>"dispatcher"・"station"・"driver"・"conductor"。使えないときは空。</summary>
@@ -150,6 +150,9 @@ public sealed class ExtensionState
     /// <summary>自分が関わる通話（着信・呼出・通話・保留）。</summary>
     public List<ExtensionCall> Calls { get; set; } = new();
 
-    /// <summary>電話帳（番号順）。</summary>
+    /// <summary>電話帳（ワンタッチのボタン。司令と駅だけ）。</summary>
     public List<ExtensionEntry> Directory { get; set; } = new();
+
+    /// <summary>乗務員の一覧（いま参加している運転士・車掌。番号は社員番号。列番の順）。ワンタッチには載せない。</summary>
+    public List<ExtensionEntry> Crew { get; set; } = new();
 }

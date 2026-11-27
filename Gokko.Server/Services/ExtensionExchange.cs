@@ -4,8 +4,9 @@ namespace Gokko.Server.Services;
 
 /// <summary>
 /// 内線電話の交換機（列車無線とは別の回線。同時に通話してよい）。
-/// ・回線: 司令（司令員みんなで1つ）・駅（盤のある駅ごと。信号制御盤の電話機を開いた人みんなで1つ）・列車（列番ごと。運転士と車掌）
-/// ・番号: 司令と駅は管理画面で決める（<see cref="ExtensionBook"/>）。列車は列番
+/// ・回線: 司令（司令員みんなで1つ）・駅（盤のある駅ごと。信号制御盤の電話機を開いた人みんなで1つ）・乗務員（運転士・車掌の携帯。1人ずつ）
+/// ・番号: 司令と駅は管理画面で決める（<see cref="ExtensionBook"/>）。乗務員は社員番号（8けた）。列番は変わるので番号にしない
+///   電話帳のワンタッチは司令と駅だけ。乗務員は「乗務員」の一覧（列番と社員番号）から選ぶか、社員番号を押してかける
 /// ・かけると、相手の回線の電話機がみな鳴り、誰か1人が出たら通話になる（45秒で取り消し）
 /// ・保留: 保留にした人の声は送らず、相手の声も届かない（相手には保留音）。保留のあいだ、ほかの電話をかけたり受けたりできる
 ///   別の通話に出る・かける・保留から戻ると、いまの通話は自動で保留になる（同時に話せるのは1件だけ）
@@ -23,7 +24,7 @@ public sealed class ExtensionExchange(
     private const double StoppedKmh = 0.5;
     private const double BudgetBurst = 4;
 
-    public const string KindDispatcher = "dispatcher", KindStation = "station", KindDriver = "driver", KindConductor = "conductor", KindTrain = "train";
+    public const string KindDispatcher = "dispatcher", KindStation = "station", KindDriver = "driver", KindConductor = "conductor";
 
     /// <summary>電話機1台（PC の接続、または信号制御盤のブラウザ）。</summary>
     private sealed record Terminal(string Id, string Line, string Label, string Kind, bool CanUse, string Reason, string CrewId, DateTime JoinedUtc);
@@ -133,24 +134,31 @@ public sealed class ExtensionExchange(
         foreach (var p in players.Snapshot())
         {
             if (PlayerRegistry.IsVirtual(p.ConnectionId)) continue;
-            var train = p.TrainNumber.Trim();
             var stopped = Math.Abs(p.ReportedSpeed) < StoppedKmh;
-            list[p.ConnectionId] = train.Length == 0
-                ? new Terminal(p.ConnectionId, "", "運転士（列番未設定）", KindDriver, false, "列番を設定すると使えます", p.CrewId, p.JoinedUtc)
-                : new Terminal(p.ConnectionId, "T:" + train, $"{train}列車 運転士", KindDriver, stopped, stopped ? "" : "走行中は使えません（停車中だけ）", p.CrewId, p.JoinedUtc);
+            list[p.ConnectionId] = CrewTerminal(p.ConnectionId, p.CrewId, p.TrainNumber, KindDriver, stopped ? "" : "走行中は使えません（停車中だけ）", p.JoinedUtc);
         }
 
         foreach (var c in relay.Conductors())
-        {
-            var train = c.TrainNumber.Trim();
-            list[c.ConnectionId] = train.Length == 0
-                ? new Terminal(c.ConnectionId, "", "車掌（列番未設定）", KindConductor, false, "列番を設定すると使えます", c.CrewId, c.JoinedUtc)
-                : new Terminal(c.ConnectionId, "T:" + train, $"{train}列車 車掌", KindConductor, true, "", c.CrewId, c.JoinedUtc);
-        }
+            list[c.ConnectionId] = CrewTerminal(c.ConnectionId, c.CrewId, c.TrainNumber, KindConductor, "", c.JoinedUtc);
 
         foreach (var (id, s) in _stations)
             list[id] = new Terminal(id, "S:" + s.Station, StationLabel(s.Station), KindStation, true, "", s.CrewId, s.At);
         return list;
+    }
+
+    /// <summary>
+    /// 運転士・車掌の携帯（回線は "C:社員番号"。1人に1回線）。名前は「1040A 運転士」（列番がなければ「運転士」）。
+    /// 社員番号がない接続（ログインしていない）は使えない。busyReason が空でなければ、いまは使えない（運転士の走行中）。
+    /// </summary>
+    private static Terminal CrewTerminal(string id, string crewId, string train, string kind, string busyReason, DateTime joinedUtc)
+    {
+        crewId = crewId.Trim();
+        train = train.Trim();
+        var role = kind == KindDriver ? "運転士" : "車掌";
+        var label = train.Length > 0 ? $"{train} {role}" : role;
+        return crewId.Length == 0
+            ? new Terminal(id, "", label, kind, false, "社員番号でログインすると使えます", crewId, joinedUtc)
+            : new Terminal(id, "C:" + crewId, label, kind, busyReason.Length == 0, busyReason, crewId, joinedUtc);
     }
 
     /// <summary>線区の中の駅か（赤山町 TH58 〜 館浜 TH76。三郷など線区の外の盤は電話帳に載せない）。</summary>
@@ -177,11 +185,11 @@ public sealed class ExtensionExchange(
         return name.EndsWith("信号場") ? name : name + "駅";
     }
 
-    private string LineLabel(string line) => line switch
+    private string LineLabel(string line, Dictionary<string, Terminal> terms) => line switch
     {
         "D" => "司令",
         _ when line.StartsWith("S:") => StationLabel(line[2..]),
-        _ when line.StartsWith("T:") => line[2..] + "列車",
+        _ when line.StartsWith("C:") => terms.Values.Where(t => t.Line == line).OrderByDescending(t => t.JoinedUtc).FirstOrDefault()?.Label ?? $"社員番号 {line[2..]}",
         _ => line
     };
 
@@ -189,11 +197,11 @@ public sealed class ExtensionExchange(
     {
         "D" => book.Dispatcher,
         _ when line.StartsWith("S:") => book.Station(line[2..]),
-        _ when line.StartsWith("T:") => line[2..],
+        _ when line.StartsWith("C:") => line[2..],
         _ => ""
     };
 
-    /// <summary>番号から回線を探す（司令・駅の番号が先。なければ列番）。</summary>
+    /// <summary>番号から回線を探す（司令・駅の番号が先。なければ社員番号）。</summary>
     private string? Resolve(string? number, Dictionary<string, Terminal> terms)
     {
         number = (number ?? "").Trim();
@@ -201,8 +209,8 @@ public sealed class ExtensionExchange(
         if (number == book.Dispatcher) return "D";
         foreach (var (id, _) in NumberedStations())
             if (book.Station(id) == number) return "S:" + id;
-        var train = "T:" + number;
-        return terms.Values.Any(t => t.Line == train) ? train : null;
+        var crew = "C:" + number;
+        return terms.Values.Any(t => t.Line == crew) ? crew : null;
     }
 
     /// <summary>スマホの受話器（PC の接続ID → スマホの接続ID）。同じ社員番号の、いちばん新しい PC の参加に結ぶ。</summary>
@@ -325,19 +333,19 @@ public sealed class ExtensionExchange(
             var line = Resolve(number, terms);
             if (line == null) return Result(false, $"番号 {number?.Trim()} は、いま使われていません");
             if (line == me.Line) return Result(false, "自分の番号です");
-            if (!Present(terms, line, id)) return Result(false, $"{LineLabel(line)} には、いま出られる人がいません");
+            if (!Present(terms, line, id)) return Result(false, $"{LineLabel(line, terms)} には、いま出られる人がいません");
             if (_calls.Values.Any(c => c.Legs.Any(l => l.Terminal == id) && c.Legs.Any(l => l.Line == line && l.Terminal == null)))
-                return Result(false, $"{LineLabel(line)} を呼び出し中です");
+                return Result(false, $"{LineLabel(line, terms)} を呼び出し中です");
 
             HoldOthers(id, null);
             var now = clock.GetUtcNow();
             var call = new Call { Id = ++_serial };
             call.Legs.Add(new Leg { Line = me.Line, Label = me.Label, Terminal = id, Since = now });
-            call.Legs.Add(new Leg { Line = line, Label = LineLabel(line), Since = now });
+            call.Legs.Add(new Leg { Line = line, Label = LineLabel(line, terms), Since = now });
             call.Budgets[id] = new Budget(now);
             _calls[call.Id] = call;
             _revision++;
-            return Result(true, $"{LineLabel(line)} を呼び出しています");
+            return Result(true, $"{LineLabel(line, terms)} を呼び出しています");
         }
     }
 
@@ -355,7 +363,7 @@ public sealed class ExtensionExchange(
             var now = clock.GetUtcNow();
             var call = new Call { Id = ++_serial, Page = true };
             call.Legs.Add(new Leg { Line = me.Line, Label = me.Label, Terminal = id, Owner = true, Since = now });
-            foreach (var line in stations) call.Legs.Add(new Leg { Line = line, Label = LineLabel(line), Since = now });
+            foreach (var line in stations) call.Legs.Add(new Leg { Line = line, Label = LineLabel(line, terms), Since = now });
             call.Budgets[id] = new Budget(now);
             _calls[call.Id] = call;
             _revision++;
@@ -433,14 +441,14 @@ public sealed class ExtensionExchange(
             var line = Resolve(number, terms);
             if (line == null) return Result(false, $"番号 {number?.Trim()} は、いま使われていません");
             if (line == other.Line) return Result(false, "相手と同じ番号には転送できません");
-            if (!Present(terms, line, other.Terminal)) return Result(false, $"{LineLabel(line)} には、いま出られる人がいません");
+            if (!Present(terms, line, other.Terminal)) return Result(false, $"{LineLabel(line, terms)} には、いま出られる人がいません");
 
             var now = clock.GetUtcNow();
             RemoveLeg(call, mine);
-            call.Legs.Add(new Leg { Line = line, Label = LineLabel(line), Since = now, TransferredBy = mine.Label });
+            call.Legs.Add(new Leg { Line = line, Label = LineLabel(line, terms), Since = now, TransferredBy = mine.Label });
             other.Held = false; // 転送のあいだ保留にしていても、相手には呼出音を聞かせる
             _revision++;
-            return Result(true, $"{other.Label} を {LineLabel(line)} へ転送しました");
+            return Result(true, $"{other.Label} を {LineLabel(line, terms)} へ転送しました");
         }
     }
 
@@ -477,13 +485,20 @@ public sealed class ExtensionExchange(
             var now = clock.GetUtcNow();
 
             // 電話帳（ワンタッチのボタン）: 司令所と、線区の中の盤のある駅（館浜→赤山町の順）。誰もいなくても初めから並べる。
-            // 列車は載せない（列番を押せばかけられる）
+            // 乗務員は載せない（ワンタッチは駅で固定。乗務員は下の一覧から選ぶか、社員番号を押す）
             var directory = new List<ExtensionEntry>
             {
                 new() { Number = book.Dispatcher, Label = "司令所", Kind = KindDispatcher, Present = Present(terms, "D") }
             };
             foreach (var (sid, _) in Enumerable.Reverse(NumberedStations()).Where(s => InLine(s.Id)))
                 directory.Add(new ExtensionEntry { Number = book.Station(sid), Label = StationLabel(sid), Kind = KindStation, Present = Present(terms, "S:" + sid) });
+
+            // 乗務員の一覧: いま参加している運転士・車掌（列番の順。列番のない人は後ろ）。番号は社員番号
+            var crew = terms.Values.Where(t => t.Line.StartsWith("C:"))
+                .GroupBy(t => t.Line).Select(g => g.OrderByDescending(t => t.JoinedUtc).First())
+                .OrderBy(t => t.Label.Contains(' ') ? 0 : 1).ThenBy(t => t.Label, StringComparer.Ordinal)
+                .Select(t => new ExtensionEntry { Number = t.Line[2..], Label = t.Label, Kind = t.Kind, Present = true })
+                .ToList();
 
             var views = new Dictionary<string, ExtensionState>();
             foreach (var me in terms.Values)
@@ -552,7 +567,8 @@ public sealed class ExtensionExchange(
                     Reason = me.Reason,
                     HandsetLinked = links.ContainsKey(me.Id),
                     Calls = calls,
-                    Directory = directory.Where(d => !(me.Line.Length > 0 && LineNumber(me.Line) == d.Number)).ToList()
+                    Directory = directory.Where(d => !(me.Line.Length > 0 && LineNumber(me.Line) == d.Number)).ToList(),
+                    Crew = crew.Where(d => me.Line != "C:" + d.Number).ToList()
                 };
             }
 

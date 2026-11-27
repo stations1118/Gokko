@@ -5,7 +5,7 @@ namespace Gokko.Server.Services;
 
 /// <summary>
 /// 内線番号の帳面（Data/Extensions.json）。司令と、盤のある駅ごとの番号を、管理画面で決める。
-/// 列車は列番がそのまま番号になる（帳面には入れない）。番号は数字だけ（1〜8けた）。
+/// 運転士・車掌は社員番号（8けた）がそのまま番号になる（帳面には入れない）。司令・駅の番号は数字だけ（1〜7けた。8けたは社員番号と重なるので使わない）。
 /// 初めは 司令 = 100、駅 = 駅ID の数字（TH65 → 65）。
 /// </summary>
 public sealed class ExtensionBook
@@ -58,7 +58,7 @@ public sealed class ExtensionBook
         return digits.Length > 0 ? digits : stationId;
     }
 
-    public static bool IsValidNumber(string? n) => n is { Length: >= 1 and <= 8 } && n.All(char.IsAsciiDigit);
+    public static bool IsValidNumber(string? n) => n is { Length: >= 1 and <= 7 } && n.All(char.IsAsciiDigit);
 
     /// <summary>番号を決め直す。誤りがあればそのわけを返し、何も変えない。</summary>
     public string? Set(string? dispatcher, Dictionary<string, string>? stations, IReadOnlyCollection<string> stationIds)
@@ -68,9 +68,9 @@ public sealed class ExtensionBook
         foreach (var id in stationIds)
             map[id] = (stations != null && stations.TryGetValue(id, out var n) ? n : DefaultStation(id))?.Trim() ?? "";
 
-        if (!IsValidNumber(dispatcher)) return "司令の番号は、数字 1〜8けたで決めてください";
+        if (!IsValidNumber(dispatcher)) return "司令の番号は、数字 1〜7けたで決めてください";
         foreach (var (id, n) in map)
-            if (!IsValidNumber(n)) return $"{id} の番号は、数字 1〜8けたで決めてください";
+            if (!IsValidNumber(n)) return $"{id} の番号は、数字 1〜7けたで決めてください";
         var all = map.Values.Append(dispatcher).ToList();
         var dup = all.GroupBy(x => x).FirstOrDefault(g => g.Count() > 1);
         if (dup != null) return $"番号 {dup.Key} が重なっています";
