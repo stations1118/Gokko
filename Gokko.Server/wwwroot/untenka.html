@@ -665,7 +665,7 @@
     if (t.turnHow === "連結") {
       // このグループの列車と、所定の列車（増結車が番線に入ったあとに着く列車。近い順に40本まで）
       const at = (x) => x.stops.find((s) => s.st === end.st);
-      // 連結できる番線（場内が2段あり、手前で止まってから番線の場内で入れる番線）に着く列車だけ
+      // 連結できる番線（手前で止まってから、入換信号機で番線へ入れる番線）に着く列車だけ
       const canCouple = (x) => { const r = stById[end.st]?.rules?.[dirOf(x)], tk = at(x).track; return !r || tk == null || (r.couple || []).includes(tk); };
       const ok = (x) => x !== t && at(x) && at(x).stop === "停" && x.stops[x.stops.length - 1] !== at(x) && canCouple(x);
       const when = (x) => sec(at(x).arr || at(x).dep) ?? 0, ready = sec(end.arr || end.dep);
