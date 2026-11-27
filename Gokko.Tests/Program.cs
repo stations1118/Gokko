@@ -40,13 +40,20 @@ public static class Program
         var outDir = Path.GetFullPath(opt.OutDir ?? Path.Combine(root, "Gokko.Tests", "out"));
         Directory.CreateDirectory(outDir);
 
-        Console.WriteLine($"走らせて確かめる試験: 時間帯 {string.Join("・", opt.Slices)} から {opt.Minutes}分ずつ、{opt.Speed}倍速、同時に {opt.Parallel}本");
+        // 走らせる場面: 時間帯を指定したら、その時間帯をダイヤどおりに。指定がなければ、既定の場面を全部（Scenarios.cs）
+        var scenarios = opt.Slices != null ? opt.Slices.Select(s => Scenario.Plain(s, opt.Minutes)).ToList() : Scenario.All(opt.Minutes);
+        if (opt.Only != null) scenarios = scenarios.Where(s => s.Name.Contains(opt.Only) || s.Slice == opt.Only).ToList();
+        if (opt.SelfTest) scenarios = [Scenario.Plain("17:30", Math.Max(opt.Minutes, 30))];
+        if (scenarios.Count == 0) { Console.WriteLine("走らせる場面がありません"); return 2; }
+
+        Console.WriteLine($"走らせて確かめる試験: {scenarios.Count}つの場面、{opt.Speed}倍速、同時に {opt.Parallel}本");
+        foreach (var s in scenarios) Console.WriteLine($"  ・{s.Slice} から {s.Minutes}分 {s.Name}（{s.About}）");
         var gate = new SemaphoreSlim(opt.Parallel);
         var port = opt.Port;
-        var runs = opt.Slices.Select(async (slice, i) =>
+        var runs = scenarios.Select(async (scenario, i) =>
         {
             await gate.WaitAsync();
-            try { return await new Run(slice, opt, serverDir, outDir, port + i).GoAsync(); }
+            try { return await new Run(scenario, opt, serverDir, outDir, port + i).GoAsync(); }
             finally { gate.Release(); }
         }).ToList();
         var results = await Task.WhenAll(runs);
@@ -56,12 +63,17 @@ public static class Program
         Console.WriteLine();
         foreach (var r in results)
         {
-            var fresh = r.Violations.Where(v => !known.Covers(v)).ToList();
+            // 既知の不具合を再現する場面は、破った決まりを全部「分かっている」にする
+            var issue = r.Scenario.KnownIssue;
+            var fresh = issue != null ? new List<Violation>() : r.Violations.Where(v => !known.Covers(v)).ToList();
             var old = r.Violations.Count - fresh.Count;
-            Console.WriteLine($"== {r.Slice} から {opt.Minutes}分: 列車 {r.TrainsSeen}本、破った決まり {fresh.Count}件" + (old > 0 ? $"（ほかに、分かっているもの {old}件）" : "")
+            Console.WriteLine($"== {r.Scenario.Slice} から {r.Scenario.Minutes}分 {r.Scenario.Name}: 列車 {r.TrainsSeen}本、破った決まり {fresh.Count}件" + (old > 0 ? $"（ほかに、分かっているもの {old}件）" : "")
                               + (r.Error != null ? $"　※ {r.Error}" : ""));
             foreach (var v in fresh) Console.WriteLine($"  ✗ [{v.Rule}] {v.GameTime} {v.Train} {v.Text}");
-            foreach (var v in r.Violations.Where(known.Covers)) Console.WriteLine($"  （分かっている）[{v.Rule}] {v.GameTime} {v.Train} {v.Text}");
+            foreach (var v in r.Violations.Where(v => issue != null || known.Covers(v))) Console.WriteLine($"  （分かっている）[{v.Rule}] {v.GameTime} {v.Train} {v.Text}");
+            if (issue != null)
+                Console.WriteLine(r.Violations.Count > 0 ? $"  ※ 既知の不具合の場面です: {issue}"
+                    : "  ※ 既知の不具合の場面ですが、今回は決まりを破りませんでした。直ったなら、Scenarios.cs のこの場面の KnownIssue を外してください");
             if (fresh.Count > 0 || r.Error != null) failed++;
         }
         Console.WriteLine();
@@ -71,7 +83,7 @@ public static class Program
             Console.WriteLine(caught ? "確かめ 合格: わざと入れた抑止を「詰まり」として捕まえました" : "確かめ 不合格: わざと入れた抑止を捕まえられませんでした（試験が効いていません）");
             return caught ? 0 : 1;
         }
-        Console.WriteLine(failed == 0 ? "合格: 決まりを破った所はありません" : $"不合格: {failed}つの時間帯で決まりを破りました。記録は {outDir} にあります");
+        Console.WriteLine(failed == 0 ? "合格: 決まりを破った所はありません" : $"不合格: {failed}つの場面で決まりを破りました。記録は {outDir} にあります");
         return failed == 0 ? 0 : 1;
     }
 
@@ -101,15 +113,13 @@ public static class Program
     }
 }
 
-public sealed record Options(List<string> Slices, int Minutes, double Speed, int Parallel, int Port, string? ServerDir, string? OutDir, bool SelfTest)
+public sealed record Options(List<string>? Slices, int Minutes, double Speed, int Parallel, int Port, string? ServerDir, string? OutDir, bool SelfTest, string? Only)
 {
-    /// <summary>既定の時間帯: 朝の出庫・朝ラッシュ・昼・夕ラッシュ・夜の入庫。</summary>
-    private static readonly string[] DefaultSlices = ["05:00", "07:30", "12:00", "17:30", "22:30"];
-
     public static Options? Parse(string[] args)
     {
-        var slices = DefaultSlices.ToList();
-        int minutes = 60, parallel = 3, port = 5210;
+        List<string>? slices = null;
+        string? only = null;
+        int minutes = 60, parallel = 5, port = 5210;
         double speed = 8;
         string? server = null, outDir = null;
         var selfTest = false;
@@ -126,23 +136,25 @@ public sealed record Options(List<string> Slices, int Minutes, double Speed, int
                 case "--server": server = Next(); break;
                 case "--out": outDir = Next(); break;
                 // 試験そのものの確かめ: 走っている列車を1本わざと抑止して、「詰まり」を捕まえられるかを見る（捕まえたら合格）
-                case "--selftest": selfTest = true; slices = [slices.Contains("17:30") ? "17:30" : slices[0]]; minutes = Math.Max(minutes, 30); break;
+                case "--selftest": selfTest = true; break;
+                // 名前にこの言葉を含む場面（または、この時刻から始まる場面）だけ走らせる
+                case "--only": only = Next(); break;
                 default:
-                    Console.WriteLine("使い方: dotnet run --project Gokko.Tests -- [--slices 07:30,17:30] [--minutes 60] [--speed 8] [--parallel 3] [--server ビルド済みのフォルダ] [--out 記録の置き場]");
+                    Console.WriteLine("使い方: dotnet run --project Gokko.Tests -- [--data] [--only 抑止] [--slices 07:30,17:30] [--minutes 60] [--speed 8] [--parallel 3] [--server ビルド済みのフォルダ] [--out 記録の置き場]");
                     return null;
             }
         }
-        return new Options(slices, minutes, speed, parallel, port, server, outDir, selfTest);
+        return new Options(slices, minutes, speed, parallel, port, server, outDir, selfTest, only);
     }
 }
 
 /// <summary>破った決まり1件。</summary>
 public sealed record Violation(string Rule, string GameTime, string Train, string Text);
 
-public sealed record RunResult(string Slice, int TrainsSeen, List<Violation> Violations, string? Error);
+public sealed record RunResult(Scenario Scenario, int TrainsSeen, List<Violation> Violations, string? Error);
 
-/// <summary>1つの時間帯を走らせる（サーバー1つ）。</summary>
-public sealed class Run(string slice, Options opt, string serverDir, string outDir, int port)
+/// <summary>1つの場面を走らせる（サーバー1つ）。</summary>
+public sealed class Run(Scenario scenario, Options opt, string serverDir, string outDir, int port)
 {
     private const string Key = "sim-test-key"; // 手元で起動する試験用のサーバーだけで使う管理キー
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(10) };
@@ -150,7 +162,9 @@ public sealed class Run(string slice, Options opt, string serverDir, string outD
 
     public async Task<RunResult> GoAsync()
     {
-        var name = slice.Replace(":", "");
+        var name = scenario.Folder;
+        var slice = scenario.Slice;
+        var ops = new List<string>();
         var work = Path.Combine(Path.GetTempPath(), "gokko-tests", $"run-{name}-{Guid.NewGuid().ToString("N")[..6]}");
         CopyDir(serverDir, work);
         // 前の記録・名簿は持ち込まない
@@ -180,14 +194,23 @@ public sealed class Run(string slice, Options opt, string serverDir, string outD
             await PostAsync(url, "clock", new { speed = opt.Speed });
             await PostAsync(url, "ai-trains/mode", new { on = true });
 
-            var realSeconds = opt.Minutes * 60 / opt.Speed;
+            var realSeconds = scenario.Minutes * 60 / opt.Speed;
             var started = Stopwatch.StartNew();
             var injected = !opt.SelfTest;
+            var driver = new Driver(_http, url, text => { lock (ops) ops.Add(text); }, DoubleTrackStations(work));
+            var steps = new Queue<Step>(scenario.Steps.OrderBy(x => x.At));
             while (started.Elapsed.TotalSeconds < realSeconds)
             {
                 await Task.Delay(1000);
                 if (server.HasExited) throw new InvalidOperationException("サーバーが止まりました");
                 if (!injected && started.Elapsed.TotalSeconds > 20) injected = await InjectHoldAsync(url);
+                // 場面の操作: 始めてからのロープレ時刻の分になったら入れる
+                while (steps.Count > 0 && started.Elapsed.TotalSeconds * opt.Speed / 60 >= steps.Peek().At)
+                {
+                    var step = steps.Dequeue();
+                    lock (ops) ops.Add($"[{step.At}分] {step.Text}");
+                    await step.Do(driver);
+                }
                 var tid = await _http.GetFromJsonAsync<JsonElement>($"{url}/api/tid/state");
                 var ai = await _http.GetFromJsonAsync<JsonElement>($"{url}/api/admin/ai-trains");
                 var dia = await _http.GetFromJsonAsync<JsonElement>($"{url}/api/admin/diagram");
@@ -215,13 +238,15 @@ public sealed class Run(string slice, Options opt, string serverDir, string outD
         Directory.CreateDirectory(keep);
         File.WriteAllText(Path.Combine(keep, "server.log"), log);
         File.WriteAllLines(Path.Combine(keep, "violations.txt"), rules.Violations.Select(v => $"[{v.Rule}] {v.GameTime} {v.Train} {v.Text}"));
+        File.WriteAllLines(Path.Combine(keep, "operations.txt"), ops); // 入れた操作（どの列車に何をしたか）
         var logs = Path.Combine(work, "logs");
         if (Directory.Exists(logs))
             foreach (var f in Directory.GetFiles(logs)) File.Copy(f, Path.Combine(keep, Path.GetFileName(f)), true);
         try { Directory.Delete(work, true); } catch { }
 
-        Console.WriteLine($"  {slice} から {opt.Minutes}分 … 終わり（列車 {rules.TrainsSeen}本・破った決まり {rules.Violations.Count}件）");
-        return new RunResult(slice, rules.TrainsSeen, rules.Violations, error);
+        Console.WriteLine($"  {slice} から {scenario.Minutes}分 {scenario.Name} … 終わり（列車 {rules.TrainsSeen}本・破った決まり {rules.Violations.Count}件）");
+        foreach (var o in ops) Console.WriteLine($"      {o}");
+        return new RunResult(scenario, rules.TrainsSeen, rules.Violations, error);
     }
 
     /// <summary>試験そのものの確かめ用: 走っている列車を1本、2つ先の駅で抑止する（外さない）。入れられたら true。</summary>
@@ -239,6 +264,16 @@ public sealed class Run(string slice, Options opt, string serverDir, string outD
             return true;
         }
         return false;
+    }
+
+    /// <summary>複線の駅（サーバーのデータ Stations.json から）。</summary>
+    private static HashSet<string> DoubleTrackStations(string serverDir)
+    {
+        using var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(serverDir, "Data", "Stations.json")),
+            new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true });
+        return doc.RootElement.EnumerateArray()
+            .Where(s => s.TryGetProperty("track", out var t) && t.GetString() == "複線")
+            .Select(s => s.GetProperty("id").GetString() ?? "").ToHashSet();
     }
 
     private async Task<bool> WaitUpAsync(string url)
