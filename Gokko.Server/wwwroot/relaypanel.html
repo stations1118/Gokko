@@ -118,6 +118,10 @@
 // 駅を選ぶ画面。?st= がなければ、盤は読まずにこれだけを出す。選ぶと ?st=<駅ID> を付けて開き直す（?test=1 などはそのまま）
 (() => {
   const params = new URLSearchParams(location.search);
+  // 電子連動装置にした駅は、denshirendo.html を開く（駅 → 画面。日野森～西赤山は 1 つの画面）
+  const DENSHI = { TH61: 'TH61-TH59', TH59: 'TH61-TH59' };
+  const denshi = id => { const q = new URLSearchParams(); q.set('screen', DENSHI[id]); if (params.get('test')) q.set('test', params.get('test')); location.href = 'denshirendo.html?' + q; };
+  if (DENSHI[params.get('st')]) { denshi(params.get('st')); return; }
   const has = !!params.get('st');
   const pick = document.getElementById('pick'), list = document.getElementById('pickList');
   async function open(msg) {
@@ -131,7 +135,8 @@
       for (const s of sts) {
         const b = document.createElement('button');
         b.textContent = s.name;
-        if (!s.ready) { b.disabled = true; const m = document.createElement('small'); m.textContent = '準備中'; b.appendChild(m); }
+        if (!s.ready || (s.screen === 'denshirendo' && !DENSHI[s.id])) { b.disabled = true; const m = document.createElement('small'); m.textContent = '準備中'; b.appendChild(m); }
+        else if (DENSHI[s.id]) b.onclick = () => denshi(s.id);
         else b.onclick = () => { params.set('st', s.id); location.search = params.toString(); };
         if (s.id === params.get('st')) b.style.borderColor = '#e6c35c';
         list.appendChild(b);
