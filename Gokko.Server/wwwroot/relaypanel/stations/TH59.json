@@ -26,7 +26,7 @@
   "destButtons": [],
   "routes": [
     {"name": "13R", "lever": "13", "side": "R", "points": {"21": "R"}, "circuits": ["TH59_21イT", "TH59_21ロT"], "departure": true, "approach": ["上り238T", "上り242T", "上り246T", "上り250T", "TH59_11RT"], "approachTime": 60, "stops": []},
-    {"name": "11R", "lever": "11", "side": "R", "points": {}, "circuits": ["TH59_11RT"], "approach": ["上り238T", "上り242T", "上り246T", "上り250T"], "approachTime": 60, "stops": [], "overrun": ["TH59_21イT"]},
+    {"name": "11R", "lever": "11", "side": "R", "points": {}, "circuits": ["TH59_11RT"], "approach": ["上り238T", "上り242T", "上り246T", "上り250T"], "approachTime": 60, "stops": []},
     {"name": "13L", "lever": "13", "side": "L", "points": {"21": "N"}, "circuits": ["TH59_21ロT", "TH59_13LT"], "approach": ["TH58_2RT", "NA2T", "NA1T"], "approachTime": 60, "stops": []},
     {"name": "12L", "lever": "12", "side": "L", "points": {}, "circuits": ["TH59_12LT"], "departure": true, "approach": ["NA2T", "NA1T", "TH59_21ロT", "TH59_13LT"], "approachTime": 60, "stops": []}
   ],
