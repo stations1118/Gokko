@@ -49,6 +49,7 @@
   .hit { cursor: pointer; }
 </style>
 <script src="menulink.js"></script>
+<script src="crewsession.js"></script>
 </head>
 <body>
 <!-- 電子連動装置（試作）。denshirendo.html?screen=TH61-TH59 で開く（付けなければ日野森・西赤山）。?test=1 で線路をクリックして在線を置ける（試験用）。
@@ -104,8 +105,8 @@
   const Y = y => Math.round(L.grid.y0 + y * L.grid.dy);
 
   // ---- ログイン（駅扱いの切り換えに使う。信号制御盤と同じく、役職「信号扱い」の人だけ） ----
-  const store = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }, del(k) { try { localStorage.removeItem(k); } catch (e) {} } };
-  let crew = store.get('relayCrew');
+  // ログインの持ち方は信号制御盤と同じ（crewsession.js）。メニューから開いた・信号制御盤の駅を選ぶ画面から来たときは、そのログインのまま
+  let crew = GokkoCrew.get();   // { id, token }
   const who = document.getElementById('who'), login = document.getElementById('login'), loginMsg = document.getElementById('loginMsg');
   const showWho = () => { who.textContent = crew ? `ID:${crew.id}` : 'ログイン'; };
   showWho();
@@ -113,7 +114,7 @@
     if (crew) {
       if (!confirm(`ID:${crew.id} をログアウトしますか？`)) return;
       try { await fetch('/api/tid/logout', { method: 'POST', headers: { 'X-Crew-Token': crew.token } }); } catch (e) {}
-      crew = null; store.del('relayCrew'); showWho(); return;
+      crew = null; GokkoCrew.logout(); showWho(); return;
     }
     login.classList.add('open'); document.getElementById('loginId').focus();
   };
@@ -125,7 +126,7 @@
       const res = await fetch('/api/tid/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, password, passphrase: document.getElementById('loginPass').value }) });
       const j = await res.json();
       if (!res.ok) { loginMsg.textContent = j.message || 'ログインできません'; return; }
-      crew = { id: j.id, token: j.token }; store.set('relayCrew', crew); showWho();
+      crew = { id: j.id, token: j.token }; GokkoCrew.login(j.id, j.token); showWho();
       document.getElementById('loginPw').value = '';
       login.classList.remove('open');
     } catch (e) { loginMsg.textContent = 'サーバーにつながりません'; }
@@ -137,7 +138,10 @@
       if (crew) headers['X-Crew-Token'] = crew.token;
       const res = await fetch(`/api/relay/${st}/op`, { method: 'POST', headers, body: JSON.stringify({ op, id, dir }) });
       const j = await res.json();
-      if (!j.ok && j.message && j.message.includes('ログイン')) login.classList.add('open');
+      if (!j.ok && j.message && j.message.includes('ログイン')) {
+        if (j.message.startsWith('盤を扱うには')) { crew = null; GokkoCrew.clear(); showWho(); }   // 合い札がもう使えない
+        login.classList.add('open');
+      }
       return j;
     } catch (e) { return null; }
   }
