@@ -240,7 +240,9 @@ public sealed class RelayStation
         Data = data;
         DataJson = dataJson;
         foreach (var r in data.Routes)
-            r.Groups = r.LockGroups is { Count: > 0 } g ? g : r.Circuits.Select(c => new List<string> { c }).ToList();
+            // 鎖錠の区分は、書いていなければ回路ごと。過走余裕（overrun）の回路は列車が入らないので区分にしない
+            // （入れると、その区分がいつまでも解けず、進路が残る。新野崎の 25LC は着点 SC の先の 4LT が過走余裕）
+            r.Groups = r.LockGroups is { Count: > 0 } g ? g : r.Circuits.Except(r.Overrun).Select(c => new List<string> { c }).ToList();
         _routes = data.Routes.ToDictionary(r => r.Name);
         _pointCircuit = data.Points.ToDictionary(p => p.N, p => p.All.ToList());
         _known = data.Routes.SelectMany(r => r.Circuits.Concat(r.Approach).Concat(r.ApproachIf.SelectMany(a => a.Circuits))).Concat(data.Points.SelectMany(p => p.All))
