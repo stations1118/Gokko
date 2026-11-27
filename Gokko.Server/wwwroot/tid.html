@@ -641,7 +641,7 @@
     // 信号制御盤で取った進路（駅扱い）も同じ色で出す。列車の名前はないので、接近区間と、進路の回路全部（all。行き先の番線も）で枝を選ぶ。
     // 列車が入ると circuits は鎖錠中の区分（6LT・24T など）だけになり、行き先が分からないと長いほうの渡り線を選んでしまう
     for (const pn of s.panels || []) for (const r of pn.routes)
-      routeMaps.push({ r: { ...r, train: null }, map: liveRoutePath(r, [...(r.approach || []), ...(r.all || [])]) });
+      routeMaps.push({ r: { ...r, train: null }, map: liveRoutePath(r, [...(r.approach || []), ...(r.all || []), ...(r.dest ? [r.dest] : [])]) });
     for (const { r, map } of routeMaps) for (const lines of map.values()) p.push(poly(r.open ? "route" : "wait", lines));
 
     // 在線: その列車の進路が通る回路は、進路の枝で塗る。そうでない回路は、列車がいる回路どうしをつなぐ枝で塗る。

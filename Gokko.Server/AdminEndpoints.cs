@@ -480,7 +480,7 @@ public static class AdminEndpoints
         {
             gameTime = clock.NowText,
             tid = engine.View(RouteEngine.ViewTid),
-            panels = panels.TidView(),   // 信号制御盤: 盤で扱っている駅と、盤で取っている進路
+            panels = panels.TidView(engine.DestCircuit),   // 信号制御盤: 盤で扱っている駅と、盤で取っている進路
             orders = engine.View(RouteEngine.ViewOrders),
             sections = engine.View(RouteEngine.ViewSections)
         }));

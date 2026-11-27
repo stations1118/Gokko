@@ -735,7 +735,7 @@ public sealed class RelayStation
     /// open はゲームの進路の一覧に出ている（実線。自動の進路の緑・盤の白い灯と同じ条件）、それ以外は転換待ち・現示時素の間・
     /// ゲームに出るのを待っている間（破線）。approach は線をどちらの枝へ引くかの手がかり
     /// </summary>
-    public List<object> TidRoutes()
+    public List<object> TidRoutes(Func<string, string, string?> destOf)
     {
         lock (_lock)
         {
@@ -751,14 +751,16 @@ public sealed class RelayStation
                     // 進路の回路全部（行き先の番線も）。列車が入って circuits が鎖錠中の区分だけになっても、
                     // 在線位置の画面がどちらの枝を引くか決められるように（津崎の 6LC で、24T の渡り線側に線が出た）
                     all = r.Circuits,
-                    approach = r.Approach
+                    approach = r.Approach,
+                    // 行き先の番線の回路。回路の並びが同じで行き先だけ違う進路（新野崎の 10LC・10LD）を、行き先の枝へ引くため
+                    dest = destOf(Data.Interlock, r.Name)
                 };
             }).ToList();
             // 選んで待っている進路（転てつ器の転換中など、まだ進路ができていない）も、要求中（破線）として出す
             foreach (var name in _request.Values.Concat(_through.Keys).Distinct().Where(n => !_set.ContainsKey(n) && _routes.ContainsKey(n)).OrderBy(n => n))
             {
                 var r = _routes[name];
-                list.Add(new { route = r.Name, open = false, circuits = r.Circuits.Except(r.Overrun).ToList(), all = r.Circuits, approach = r.Approach });
+                list.Add(new { route = r.Name, open = false, circuits = r.Circuits.Except(r.Overrun).ToList(), all = r.Circuits, approach = r.Approach, dest = destOf(Data.Interlock, r.Name) });
             }
             return list;
         }
@@ -1132,11 +1134,11 @@ public sealed class RelayPanels : IDisposable
     /// <summary>
     /// 在線位置の画面（tid.html）用: 駅ごとに、盤で扱っているか（管理画面で駅扱い、かつ盤の解放の鍵が R）と、盤で取っている進路。
     /// </summary>
-    public object TidView() => _stations.Select(kv => new
+    public object TidView(Func<string, string, string?> destOf) => _stations.Select(kv => new
     {
         station = kv.Key,
         controlled = _central.IsPanelControlled(kv.Key),
-        routes = kv.Value.TidRoutes()
+        routes = kv.Value.TidRoutes(destOf)
     }).ToList();
 
     private readonly Dictionary<string, Dictionary<string, long>> _seen = new(); // 接続ID → 回路 → 最後に踏んでいた時刻（Tick の中だけで使う）

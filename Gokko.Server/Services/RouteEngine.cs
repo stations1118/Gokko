@@ -5093,6 +5093,10 @@ public sealed partial class RouteEngine
         }
     }
 
+    /// <summary>連動装置と進路名から、行き先の番線の軌道回路（信号制御盤で取った進路を、在線位置の画面で行き先の枝へ引くため）。</summary>
+    public string? DestCircuit(string interlock, string route) =>
+        _data.Routes.TryGetValue((interlock, route), out var def) ? DestCircuit(def) : null;
+
     /// <summary>進路の行き先が「N番線」なら、その番線の軌道回路（Stations の番線の回路）。それ以外は null。</summary>
     private string? DestCircuit(RouteDef def)
     {
