@@ -600,8 +600,11 @@
     const [W, H] = st.size || [1920, 1080];   // 盤の大きさ（駅ごと。大道寺は 3180 幅）
     panelSize = [W, H];
     applyView();
-    img('panel-bg', 0, 0, W, H, svg, { preserveAspectRatio: 'none' });
-    img(st.face.replace(/^.*\/(.*)\.svg$/, '$1'), 0, 0, W, H, svg);
+    // 駅ごとの地（bg。館浜の古びた盤など）があればそれを敷く。skin があれば、てこ・着点ボタン・鍵の部品は古びた版（名前の後ろに -skin）を使う
+    const fileOf = path => path.replace(/^.*\/(.*)\.svg$/, '$1');
+    const skin = name => st.skin ? `${name}-${st.skin}` : name;
+    img(st.bg ? fileOf(st.bg) : 'panel-bg', 0, 0, W, H, svg, { preserveAspectRatio: 'none' });
+    img(fileOf(st.face), 0, 0, W, H, svg);
     const L = {
       lamps: el('g'), heads: el('g'), bases: el('g'), knobs: el('g'), buttons: el('g'), top: el('g'),
     };
@@ -637,9 +640,9 @@
     // bk: 台だけの大きさ（方向てこは台だけ 60%）
     // cap: 誤操作防止のキャップの名前。キャップ（透明な筒）は握りと一緒には回さず、倒れた向きへずらして重みで下がった形に置く
     function lever(x, y, base, knob, label, onTurn, k = 1, bk = k, cap = null) {
-      img(`lever-base-${base}`, x - 52 * bk, y - 70 * bk, 104 * bk, 100 * bk, L.bases);
+      img(skin(`lever-base-${base}`), x - 52 * bk, y - 70 * bk, 104 * bk, 100 * bk, L.bases);
       const g = knobGroup(L.knobs, x, y);
-      img(`lever-knob-${knob}`, x - 52 * k, y - 70 * k, 104 * k, 100 * k, g);
+      img(skin(`lever-knob-${knob}`), x - 52 * k, y - 70 * k, 104 * k, 100 * k, g);
       if (label) glyphText(label, x, y, 19 * k, '#c9cdcf', L.knobs, 17 * k);
       const hit = el('circle', { cx: x, cy: y - 18 * k, r: 46 * k, fill: 'transparent', class: 'hit' }, L.top);
       onClicks(hit, onTurn, 'lever', cap);
@@ -680,10 +683,10 @@
     // 着点ボタン（光らない）。押している間の絵に替える
     for (const b of st.destButtons) {
       const [x, y] = b.at;
-      const e = img('dest-button', x - 33, y - 36, 66, 100, L.buttons);
+      const e = img(skin('dest-button'), x - 33, y - 36, 66, 100, L.buttons);
       glyphText(b.label || b.id, x, y + 42, 18, '#e9ecea', L.buttons);
       const hit = el('circle', { cx: x, cy: y, r: 30, fill: 'transparent', class: 'hit' }, L.top);
-      const press = () => { setImg(e, 'dest-button-pressed'); setTimeout(() => setImg(e, 'dest-button'), 160); };
+      const press = () => { setImg(e, skin('dest-button-pressed')); setTimeout(() => setImg(e, skin('dest-button')), 160); };
       onClicks(hit, () => { press(); send('dest', b.id); }, 'tap', 'd:' + b.id);
       view.dest[b.id] = press;
       // キャップ（透明な筒）。重みで下がった形の絵を、白い頭の中心に合わせて重ねる
@@ -716,10 +719,10 @@
     // 解放の鍵。上の灯は解放中（R）に赤、「正常」の灯は鍵が N のときに緑
     if (st.releaseKey) {
       const k = st.releaseKey, [x, y] = k.at;
-      img('key-lock-NR', x - 52, y - 62, 104, 104, L.bases);
+      img(skin('key-lock-NR'), x - 52, y - 62, 104, 104, L.bases);
       const keyG = el('g', { class: 'keyin', style: `transform-origin:${x}px ${y}px;opacity:0;transform:scale(1.25)` }, L.knobs);
       const turnG = el('g', { class: 'keyturn', style: `transform-origin:${x}px ${y}px` }, keyG);
-      img('key-switch-key', x - 44, y - 44, 88, 88, turnG);
+      img(skin('key-switch-key'), x - 44, y - 44, 88, 88, turnG);
       const hit = el('circle', { cx: x, cy: y, r: 46, fill: 'transparent', class: 'hit' }, L.top);
       onClicks(hit, dir => {
         if (dir === 'tap') {   // スマホ: タップで抜き差し
