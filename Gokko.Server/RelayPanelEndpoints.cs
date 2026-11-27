@@ -22,7 +22,8 @@ public static class RelayPanelEndpoints
             {
                 id,
                 name = panels.Get(id)?.Data.Name is { Length: > 0 } n ? n : data.Line.StationName(id),
-                ready = panels.Get(id) is { Data.Screen: "" },   // 電子連動装置の駅は信号制御盤では開かない（準備中と出す）
+                ready = panels.Get(id) is { Data.Screen: "" or "denshirendo" },
+                screen = panels.Get(id)?.Data.Screen ?? "",   // "denshirendo" = 電子連動装置の駅（選ぶ画面は denshirendo.html を開く）
             }));
         });
 
