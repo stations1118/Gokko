@@ -240,7 +240,9 @@ public sealed class RelayStation
         Data = data;
         DataJson = dataJson;
         foreach (var r in data.Routes)
-            r.Groups = r.LockGroups is { Count: > 0 } g ? g : r.Circuits.Select(c => new List<string> { c }).ToList();
+            // 鎖錠の区分は、書いていなければ回路ごと。過走余裕（overrun）の回路は列車が入らないので区分にしない
+            // （入れると、その区分がいつまでも解けず、進路が残る。新野崎の 25LC は着点 SC の先の 4LT が過走余裕）
+            r.Groups = r.LockGroups is { Count: > 0 } g ? g : r.Circuits.Except(r.Overrun).Select(c => new List<string> { c }).ToList();
         _routes = data.Routes.ToDictionary(r => r.Name);
         _pointCircuit = data.Points.ToDictionary(p => p.N, p => p.All.ToList());
         _known = data.Routes.SelectMany(r => r.Circuits.Concat(r.Approach).Concat(r.ApproachIf.SelectMany(a => a.Circuits))).Concat(data.Points.SelectMany(p => p.All))
@@ -265,9 +267,15 @@ public sealed class RelayStation
     private bool Back(RelayRoute r) => _sig.GetValueOrDefault(r.Lever, "N") != r.Side && !(_set.TryGetValue(r.Name, out var s) && s.Hold);
     private bool GroupLive(RelayRoute r, SetRoute s, int i) => !(s.Entered && Back(r) && (s.Passed[i] || TimedOut(r, s, i)));
 
+    // 着点の区分（最後の区分）は、時素の書いていない進路でも、列車が入って DestReleaseSec たてば解ける（てこを戻していれば）。
+    // 列車が着点に止まったままだと進路が残り、向かいの進路（引上線から戻す進路など）が取れなくなる
+    // （新野崎で 23R の引上線 23RT に列車を入れたら、23R が残り、戻す 25LC・25LD や 8R が取れなくなった）。
+    // 着点に列車がいる間は、そこへ入る進路はどれも在線で取れないので、解いても列車の上に進路はできない
+    private const int DestReleaseSec = 30;
+
     private bool TimedOut(RelayRoute r, SetRoute s, int i)
     {
-        var t = r.GroupTimes is { } g && i < g.Count ? g[i] : 0;
+        var t = r.GroupTimes is { } g && i < g.Count ? g[i] : i == r.Groups.Count - 1 ? DestReleaseSec : 0;
         return t > 0 && s.OccSince[i] > 0 && _now >= s.OccSince[i] + t * 1000L;
     }
 
