@@ -151,7 +151,8 @@ public static class DataCheck
 
                 if (!have.TryGetValue(name, out var ir)) { Err("進路の名前", id, name, $"盤（{file}）の進路が、進路のデータ（Interlockings.json）にありません"); continue; }
                 // 通る回路。盤の進路は、過走防護の回路（overrun）も circuits に入れている（鎖錠のため。ラインライトは点けない）ので、除いて比べる。
-                // 進路のデータ（自動進路構成・自動運転列車が使う）には、過走防護の回路を入れない決まり
+                // 進路のデータ（自動進路構成・自動運転列車が使う）は、行き先の回路までにして、その先の過走防護の回路を入れない決まり。
+                // ゲームの進路のデータどおりに残すと決めた進路は、data-known.txt に理由と一緒に書いてある
                 var over = Arr(r, "overrun").ToHashSet();
                 var (pc, ic) = (Arr(r, "circuits").Where(c => !over.Contains(c)).ToHashSet(), ir.Circuits.ToHashSet());
                 foreach (var c in over.Where(ic.Contains))
