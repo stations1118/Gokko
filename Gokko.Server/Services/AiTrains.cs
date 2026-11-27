@@ -1364,7 +1364,7 @@ public sealed class AiTrains : BackgroundService
                 if (seg != null) break;
             }
 
-            seg ??= OpenRouteFrom(t, last);
+            seg ??= OpenRouteFrom(t, last, candidates);
             if (seg == null)
             {
                 // 止める信号機: 自分の進路の信号機（並んで建つものから）を選ぶ
@@ -1379,7 +1379,10 @@ public sealed class AiTrains : BackgroundService
     }
 
     /// <summary>開いている自分の進路のうち、道筋の最後の軌道回路につながっていて、まだ道筋にないもの（入換など）。R の信号機のものは除く。</summary>
-    private Seg? OpenRouteFrom(Train t, Seg last)
+    // ahead: 道筋の先に建つ信号機（信号機のつながりから）。出発・場内信号機の進路は、この中の信号機のものだけ使う。
+    // 前の信号機が赤で進めないときに、隣から始まる別の信号機の進路を拾って赤を越えないように（新野崎の 4番線の列車が、
+    // 3L が赤なのに、盤で開けた 2L（3番線から出る。回路は同じ 31T・TST）に入って出ていった）
+    private Seg? OpenRouteFrom(Train t, Seg last, IReadOnlyCollection<string>? ahead = null)
     {
         var lastCircuit = last.Circuits[^1].Name;
         if (!_adj.TryGetValue(lastCircuit, out var near)) return null;
@@ -1387,6 +1390,7 @@ public sealed class AiTrains : BackgroundService
         foreach (var key in t.Info.GameRoutes)
         {
             if (!_rail.Routes.TryGetValue(key, out var d) || d.Circuits.Count == 0 || t.RedSignals.Contains(d.Signal)) continue;
+            if (ahead is { Count: > 0 } && d.Kind is "出発信号機" or "場内信号機" && !ahead.Contains(d.Signal)) continue;
             if (t.Path.Any(s => s.Route == d) || d.Circuits.Any(inPath.Contains)) continue;
             if (!near.Contains(d.Circuits[0]) && !near.Contains(d.Circuits[^1])) continue;
             if (RoutePath(d, lastCircuit) is not { Count: > 0 } path || !Continues(t, lastCircuit, d, path)) continue;
@@ -1399,11 +1403,26 @@ public sealed class AiTrains : BackgroundService
     /// <summary>道筋に足す進路の回路が、今の最後の回路の隣から始まっているか（足す回路がなければ続いているとみなす）。続かなければ一度だけ記録する。</summary>
     private bool Continues(Train t, string from, RouteDef route, List<string> path)
     {
-        if (path.Count == 0 || _adj.TryGetValue(from, out var near) && near.Contains(path[0])) return true;
+        if (path.Count == 0) return true;
+        if (_adj.TryGetValue(from, out var near) && near.Contains(path[0]))
+        {
+            // 隣につながっていても、別の番線から出る進路なら使わない。同じ回路から始まる進路がいくつかあり、今いる回路を接近の区間に持つ
+            // 別の進路があれば、それが自分の進路（新野崎の 2L は 3番線、3L は 4番線から出る。回路はどちらも 31T・TST。
+            // 盤で 2L を開けたら、4番線の列車が 2L を自分の出発進路と取って出た。軌道回路のつながりだけでは転てつ器の向きが分からない）
+            if (route.Approach.Count == 0 || route.Approach.Contains(from) || !_otherFromHere(route, from)) return true;
+            if (_jumpRefused.Add((t.Id, route.Interlock, route.Name)))
+                _log.Note($"にぎやかし: {t.Number} は {route.Name}（{route.Interlock}）に入りません（{from} から出る進路ではない）");
+            return false;
+        }
         if (_jumpRefused.Add((t.Id, route.Interlock, route.Name)))
             _log.Note($"にぎやかし: {t.Number} は {route.Name}（{route.Interlock}）に入りません（{from} から続いていない。{string.Join(" ", path)}）");
         return false;
     }
+
+    /// <summary>同じ連動装置で、route と同じ回路から始まり、from を接近の区間に持つ別の進路があるか（あれば route は from から出る進路ではない）。</summary>
+    private bool _otherFromHere(RouteDef route, string from) =>
+        _rail.Routes.Values.Any(d => d != route && d.Interlock == route.Interlock && d.Circuits.Count > 0 && route.Circuits.Count > 0
+            && d.Circuits[0] == route.Circuits[0] && d.Approach.Contains(from));
 
     /// <summary>続かない進路を使わなかったことを一度だけ記録するため（列車ID・連動装置・進路）。</summary>
     private readonly HashSet<(string Id, string Interlock, string Route)> _jumpRefused = new();
