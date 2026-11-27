@@ -33,10 +33,10 @@
     {"name": "1R", "lever": "1", "side": "R", "dest": "A", "points": {}, "circuits": ["TH70_1RAT"], "approach": ["TH71_23T", "TH71_SST", "上り86T", "上り92T"], "approachTime": 60, "stops": []},
     {"name": "3R", "lever": "3", "side": "R", "dest": "S", "points": {"21": "N"}, "circuits": ["TH70_21ロT", "TH70_SST"], "departure": true, "approach": ["TH71_23T", "TH71_SST", "上り86T", "上り92T", "TH70_1RAT"], "approachTime": 60, "stops": ["4R", "11R", "12L"]},
     {"name": "4R", "lever": "4", "side": "R", "dest": "S", "points": {"21": "R"}, "circuits": ["TH70_21イT", "TH70_21ロT", "TH70_SST"], "departure": true, "approach": ["TH70_5LBT"], "approachTime": 60, "stops": ["3R", "5L", "2L", "11R", "12L"]},
-    {"name": "5L", "lever": "5", "side": "L", "dest": "T", "points": {"21": "N"}, "circuits": ["TH70_5LT", "TH70_21イT", "TH70_5LBT"], "approach": ["下り117T", "下り111T", "下り105T", "下り103T"], "approachTime": 60, "stops": ["4R", "12L"]},
+    {"name": "5L", "lever": "5", "side": "L", "dest": "B", "points": {"21": "N"}, "circuits": ["TH70_5LT", "TH70_21イT", "TH70_5LBT"], "approach": ["下り117T", "下り111T", "下り105T", "下り103T"], "approachTime": 60, "stops": ["4R", "12L"]},
     {"name": "2L", "lever": "2", "side": "L", "dest": "T", "points": {}, "circuits": ["TH70_2LT"], "departure": true, "approach": ["下り111T", "下り105T", "下り103T", "TH70_5LT", "TH70_21イT", "TH70_5LBT"], "approachTime": 60, "stops": ["4R"]},
     {"name": "11R", "lever": "11", "side": "R", "dest": "S", "points": {"21": "N"}, "circuits": ["TH70_21ロT", "TH70_SST"], "approach": ["TH70_1RAT"], "approachTime": 30, "stops": ["3R", "4R", "12L"]},
-    {"name": "12L", "lever": "12", "side": "L", "dest": "T", "points": {"21": "R"}, "circuits": ["TH70_21ロT", "TH70_21イT", "TH70_5LBT"], "approach": ["TH70_SST"], "approachTime": 30, "stops": ["3R", "4R", "5L", "11R"]}
+    {"name": "12L", "lever": "12", "side": "L", "dest": "B", "points": {"21": "R"}, "circuits": ["TH70_21ロT", "TH70_21イT", "TH70_5LBT"], "approach": ["TH70_SST"], "approachTime": 30, "stops": ["3R", "4R", "5L", "11R"]}
   ],
   "signalHeads": [
     {"routes": ["1R"], "type": "4yg", "at": [330, 356], "dir": 1},
@@ -52,22 +52,25 @@
     {"id": "down", "label": "新大路方", "at": [1440, 1000], "circuits": ["下り103T", "下り105T"]}
   ],
   "trackLamps": [
-    {"c": "上り92T", "at": [193, 390]},
-    {"c": "TH70_1RAT", "at": [467, 390]},
-    {"c": "TH70_1RAT", "at": [741, 390]},
-    {"c": "TH70_1RAT", "at": [1046, 390]},
-    {"c": "TH70_21ロT", "at": [1340, 390]},
-    {"c": "TH70_21ロT", "at": [1378, 425], "rot": -57.26},
-    {"c": "TH70_SST", "at": [1600, 390]},
+    {"c": "上り92T", "at": [133, 390]},
+    {"c": "TH70_1RAT", "at": [437, 390]},
+    {"c": "TH70_1RAT", "at": [604, 390]},
+    {"c": "TH70_1RAT", "at": [813, 390]},
+    {"c": "TH70_1RAT", "at": [1124, 390]},
+    {"c": "TH70_21ロT", "at": [1291, 390], "when": {"21": "N"}},
+    {"c": "TH70_21ロT", "at": [1449, 390]},
+    {"c": "TH70_21ロT", "at": [1378, 424], "rot": -57.24, "when": {"21": "R"}},
+    {"c": "TH70_SST", "at": [1606, 390]},
     {"c": "上り102T", "at": [1782, 390]},
     {"c": "下り89T", "at": [128, 530]},
-    {"c": "TH70_2LT", "at": [340, 530]},
-    {"c": "TH70_5LBT", "at": [579, 530]},
-    {"c": "TH70_5LBT", "at": [778, 530]},
-    {"c": "TH70_5LBT", "at": [1046, 530]},
-    {"c": "TH70_21イT", "at": [1340, 530]},
-    {"c": "TH70_21イT", "at": [1332, 495], "rot": -57.26},
-    {"c": "TH70_5LT", "at": [1600, 530]},
+    {"c": "TH70_2LT", "at": [286, 530]},
+    {"c": "TH70_5LBT", "at": [531, 530]},
+    {"c": "TH70_5LBT", "at": [814, 530]},
+    {"c": "TH70_5LBT", "at": [992, 530]},
+    {"c": "TH70_21イT", "at": [1246, 530]},
+    {"c": "TH70_21イT", "at": [1404, 530], "when": {"21": "N"}},
+    {"c": "TH70_21イT", "at": [1332, 496], "rot": -57.24, "when": {"21": "R"}},
+    {"c": "TH70_5LT", "at": [1534, 530]},
     {"c": "下り103T", "at": [1782, 530]}
   ]
 }
