@@ -108,12 +108,14 @@
   .xp-desk .lcd .num { font-family: Consolas, "Courier New", monospace; font-size: 26px; font-weight: bold; letter-spacing: .14em; height: 30px; line-height: 30px; white-space: nowrap; overflow: hidden; }
   .xp-desk .lcd .tx { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; height: 15px; }
   .xp-desk .lcd .blink { animation: xp-blink 1s steps(2, start) infinite; }
-  .xp-desk .ctl { display: flex; align-items: center; gap: 5px; font-size: 9.5px; color: #5d5952; }
+  .xp-desk .ctl { display: flex; align-items: center; gap: 4px; white-space: nowrap; font-size: 9.5px; color: #5d5952; }
   .xp-desk .ctl .sp { flex: 1; }
-  .xp-desk .ctl label { display: flex; align-items: center; gap: 2px; }
+  .xp-desk .ctl label { display: flex; align-items: center; gap: 2px; white-space: nowrap; }
   .xp-desk .flat { background: linear-gradient(#fbfbf9, #d3d0c9); border: 1px solid #8a867e; border-radius: 4px; height: 15px; padding: 0; box-shadow: 0 2px 0 #8a867e; color: #333; font-size: 9px; line-height: 13px; }
   .xp-desk .flat:active, .xp-desk .pad button:active, .xp-desk .bot button:active { transform: translateY(2px); box-shadow: none; }
   .xp-desk .ctl .flat { width: 34px; }
+  .xp-desk .ctl .flat.crew { width: 38px; }
+  .xp-desk .ctl .flat.on { background: linear-gradient(#ffe7a8, #e9b949); }
   .xp-desk .memo { display: grid; grid-template-columns: 8px 1fr; gap: 5px; }
   .xp-desk .grille { border-radius: 4px; background: repeating-linear-gradient(#6f6b64 0 2px, transparent 2px 6px); opacity: .55; }
   .xp-desk .ots { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px 5px; background: #fdfdf9; border: 1px solid #b7b3ab; border-radius: 3px; padding: 3px 4px 5px; }
@@ -217,6 +219,10 @@
     const incoming = () => calls().find((c) => c.status === "incoming") || null;
     const held = () => calls().filter((c) => c.status === "held");
     const directory = () => (state && state.directory) || [];
+    const crew = () => (state && state.crew) || [];
+    // 一覧で選んでかける相手: 卓上は乗務員だけ（司令・駅はワンタッチで固定）、携帯は司令・駅・乗務員をみな
+    const book = () => (skin !== "keitai" ? crew() : directory().concat(crew()));
+    const isCrew = (d) => d.kind === "driver" || d.kind === "conductor";
     const usable = () => !!state && state.kind && state.kind !== "replaced" && state.canUse;
 
     function say(text, ms = 3500) { message = text || ""; messageUntil = performance.now() + ms; render(); }
@@ -261,10 +267,15 @@
         }
         return;
       }
-      if (showDir && dirIndex >= 0 && directory()[dirIndex]) { buffer = directory()[dirIndex].number; showDir = false; return call(); }
+      if (showDir && dirIndex >= 0 && book()[dirIndex]) {
+        buffer = book()[dirIndex].number; showDir = false;
+        if (transferArmed) return transfer();
+        if (desk) offHook = true;
+        return call();
+      }
       if (inc) { await invoke("ExtAnswer", inc.id); return; }
       if (!act && held().length) { await invoke("ExtHold", held()[0].id, false); return; }
-      say(skin === "keitai" ? "番号を押すか、電話帳から選んでください" : "番号を押すか、ワンタッチのボタンを押してください");
+      say(skin === "keitai" ? "番号を押すか、電話帳から選んでください" : "番号を押すか、ワンタッチ・［乗務員］の一覧から選んでください");
     }
     async function end() {
       const act = active();
@@ -330,8 +341,8 @@
       say(`受話音量 ${Math.round(volume * 100)}%`, 1500);
     }
     function moveDir(step) {
-      const list = directory();
-      if (!list.length) return;
+      const list = book();
+      if (!list.length) { say(desk ? "いま参加している乗務員はいません" : "電話帳は空です"); return; }
       showDir = true;
       dirIndex = dirIndex < 0 ? 0 : (dirIndex + step + list.length) % list.length;
       render();
@@ -509,10 +520,20 @@
     function renderDesk() {
       const s = statusLines(), act = active(), inc = incoming(), hs = held();
       const me = state && state.kind ? `${state.label}　内線 ${state.number}` : "内線電話";
+      // ［乗務員］の一覧を開いているとき: 液晶に選んでいる人を出す（▲▼で選び、［応答］でかける・［終話］で閉じる）
+      if (showDir && dirIndex >= book().length) dirIndex = book().length - 1;
+      const pick = showDir ? book()[dirIndex] : null;
+      if (showDir) {
+        const n = book().length;
+        s.big = pick ? `乗務員 ${dirIndex + 1}/${n}` : "乗務員 0人";
+        s.sub = pick ? pick.label : "いま参加している乗務員はいません";
+        s.blink = false;
+        s.note = transferArmed ? "▲▼で選び［応答］で転送" : "▲▼で選び［応答］でかける";
+      }
       const talking = act && act.status === "talking";
       const time = talking ? mmss(act.seconds) : new Date().toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
       const cur = act || inc || hs[0];
-      const num = buffer || (cur && cur.peerNumber) || "";
+      const num = pick ? pick.number : buffer || (cur && cur.peerNumber) || "";
       // 液晶の上の段の印: ◁ = 受話器を上げている（スピーカ）、♫ = 保留中、H = 転送の番号待ち、大 = 受話音量を上げている
       const icons = [offHook && !act ? "◁" : "", hs.length ? "♫保留" : "", transferArmed ? "H 転送" : "", volume > 1.01 ? "大" : "", muted ? "消音" : ""].filter(Boolean);
       const talkLed = act ? "led g" : hs.length ? "led g blink" : "led";
@@ -542,10 +563,11 @@
             <label title="ワンタッチの上の段">上<i class="${onePage === 0 ? "led a" : "led"}"></i></label>
             <label title="ワンタッチの下の段">下<i class="${onePage === 1 ? "led a" : "led"}"></i></label>
             <button class="flat" data-act="page2" title="ワンタッチの上・下を切り替える">上下</button>
+            <button class="flat crew ${showDir ? "on" : ""}" data-act="crewlist" title="乗務員（運転士・車掌）の一覧。列番と社員番号。▲▼で選び［応答］でかける">乗務員</button>
             <label title="通話ランプ（点滅 = 保留中）" style="margin-left:6px">通話<i class="${talkLed}"></i></label>
             <span class="sp"></span><span>音量</span>
-            <button class="flat" data-act="voldown" title="受話音量を下げる">▼</button>
-            <button class="flat" data-act="volup" title="受話音量を上げる">▲</button>
+            <button class="flat" data-act="voldown" title="受話音量を下げる（乗務員の一覧では次の人）">▼</button>
+            <button class="flat" data-act="volup" title="受話音量を上げる（乗務員の一覧では前の人）">▲</button>
           </div>
           <div class="memo"><div class="grille"></div><div class="ots" title="ワンタッチ（押すとかける）。緑: 出られる人がいる、赤の点滅: 着信中">${cells.join("")}</div></div>
           <div class="fnl"><span>${isDispatcher ? (act && act.isPage ? "一斉終了" : "一斉呼出") : ""}</span><span>応答</span><span>${buffer ? "消去" : "終話"}</span><span>${muted ? "マイク切" : "マイク"}</span></div>
@@ -573,10 +595,10 @@
       const ant = state && state.kind && state.kind !== "replaced" ? "▂▄▆█" : "圏外";
       let body;
       if (showDir) {
-        const list = directory();
+        const list = book();
         const start = Math.max(0, Math.min(dirIndex - 4, list.length - 9));
         body = `<div class="list">${list.slice(start, start + 9).map((d, i) =>
-          `<div class="${start + i === dirIndex ? "sel" : ""} ${d.present ? "" : "off"}">${esc(d.number)}　${esc(d.label)}</div>`).join("") || "<div>電話帳は空です</div>"}</div>`;
+          `<div class="${start + i === dirIndex ? "sel" : ""} ${d.present ? "" : "off"}">${isCrew(d) ? `${esc(d.label)}　${esc(d.number)}` : `${esc(d.number)}　${esc(d.label)}`}</div>`).join("") || "<div>電話帳は空です</div>"}</div>`;
       } else {
         body = `<div class="main">
           <div class="big ${s.blink ? "blink" : ""}">${esc(s.big)}</div>
@@ -615,7 +637,9 @@
       const acts = {
         call, end, hold, transfer, page, hook, redial,
         page2: () => { onePage = onePage ? 0 : 1; render(); },
-        volup: () => setVolume(volume + 0.25), voldown: () => setVolume(volume - 0.25),
+        volup: () => (desk && showDir ? moveDir(-1) : setVolume(volume + 0.25)),
+        voldown: () => (desk && showDir ? moveDir(1) : setVolume(volume - 0.25)),
+        crewlist: () => { if (showDir) { showDir = false; render(); } else { buffer = ""; dirIndex = -1; moveDir(0); } },
         mute: () => { muted = !muted; render(); },
         up: () => moveDir(-1), down: () => moveDir(1),
         center: () => (showDir ? call() : incoming() && !active() ? call() : moveDir(0)),

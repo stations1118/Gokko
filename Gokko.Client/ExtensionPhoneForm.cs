@@ -29,7 +29,7 @@ public sealed class ExtensionPhoneForm : Form
     private readonly TrackBar _volume = new() { Minimum = 0, Maximum = 200, TickStyle = TickStyle.None, Value = 100 };
 
     // 卓上の電話機だけ
-    private readonly PhoneKey _hookKey, _redialKey, _pageSwitch, _volUp, _volDown;
+    private readonly PhoneKey _hookKey, _redialKey, _pageSwitch, _volUp, _volDown, _crewKey;
     private readonly PhoneKey[] _ones = new PhoneKey[16];
     private readonly System.Windows.Forms.Timer _dialTimer = new() { Interval = 2500 }; // 番号を押し終えてからかかるまで
     private bool _offHook, _transferArmed;
@@ -83,6 +83,8 @@ public sealed class ExtensionPhoneForm : Form
         _pageSwitch = Key("上下", light, ink);
         _volDown = Key("▼", light, ink);
         _volUp = Key("▲", light, ink);
+        _crewKey = Key("乗務員", light, ink);
+        if (!keitai) _crewKey.Font = new Font("Yu Gothic UI", 7f);
         for (var i = 0; i < _ones.Length; i++)
         {
             var slot = i;
@@ -110,8 +112,16 @@ public sealed class ExtensionPhoneForm : Form
         _hookKey.Click += async (_, _) => await HookAsync();
         _redialKey.Click += async (_, _) => await RedialAsync();
         _pageSwitch.Click += (_, _) => { _onePage = 1 - _onePage; RefreshKeys(); Invalidate(); };
-        _volDown.Click += (_, _) => StepVolume(-25);
-        _volUp.Click += (_, _) => StepVolume(25);
+        // ［乗務員］の一覧を開いているあいだ、▲▼は一覧を選ぶ
+        _volDown.Click += (_, _) => { if (_showDirectory) MoveDirectory(1); else StepVolume(-25); };
+        _volUp.Click += (_, _) => { if (_showDirectory) MoveDirectory(-1); else StepVolume(25); };
+        _crewKey.Click += (_, _) =>
+        {
+            if (_showDirectory) { _showDirectory = false; Invalidate(); return; }
+            _buffer = "";
+            _dirIndex = -1;
+            MoveDirectory(0);
+        };
         _dialTimer.Tick += async (_, _) => await FireDialAsync();
         _up.Click += (_, _) => MoveDirectory(-1);
         _down.Click += (_, _) => MoveDirectory(1);
@@ -169,6 +179,7 @@ public sealed class ExtensionPhoneForm : Form
         // 左は受話器（OnPaint）。右の上から: 液晶・上下と音量・ワンタッチ（記名紙）・機能キー・ダイヤル・下の 4 つ
         var y = DeskLcd.Bottom + 9;
         _pageSwitch.SetBounds(PanelX + 54, y, 36, 17);
+        _crewKey.SetBounds(PanelX + 130, y, 34, 17);
         _volDown.SetBounds(PanelX + PanelW - 76, y, 36, 17);
         _volUp.SetBounds(PanelX + PanelW - 36, y, 36, 17);
         var cw = (DeskPaper.Width - 8 - 15) / 4;
@@ -192,8 +203,8 @@ public sealed class ExtensionPhoneForm : Form
             bottom[i].Radius = 11;
         }
 
-        foreach (var k in fn.Concat(_ones).Append(_pageSwitch).Append(_volUp).Append(_volDown)) k.Radius = 4;
-        Controls.AddRange([_pageSwitch, _volDown, _volUp, .. _ones, .. fn, .. bottom]);
+        foreach (var k in fn.Concat(_ones).Append(_pageSwitch).Append(_crewKey).Append(_volUp).Append(_volDown)) k.Radius = 4;
+        Controls.AddRange([_pageSwitch, _crewKey, _volDown, _volUp, .. _ones, .. fn, .. bottom]);
         Controls.AddRange(_pad.ToArray());
     }
 
@@ -204,6 +215,12 @@ public sealed class ExtensionPhoneForm : Form
     private ExtensionCall? Incoming => Calls.FirstOrDefault(c => c.Status == "incoming");
     private List<ExtensionCall> Held => Calls.Where(c => c.Status == "held").ToList();
     private List<ExtensionEntry> Directory => _state?.Directory ?? new();
+    private List<ExtensionEntry> Crew => _state?.Crew ?? new();
+
+    /// <summary>一覧で選んでかける相手。卓上は乗務員だけ（司令・駅はワンタッチで固定）、携帯は司令・駅・乗務員をみな。</summary>
+    private List<ExtensionEntry> Book => _keitai ? Directory.Concat(Crew).ToList() : Crew;
+
+    private static bool IsCrew(ExtensionEntry d) => d.Kind is ExtensionExchangeKinds.Driver or ExtensionExchangeKinds.Conductor;
 
     // ---- 開く・閉じる ----
 
@@ -266,6 +283,8 @@ public sealed class ExtensionPhoneForm : Form
             var amber = Color.FromArgb(240, 196, 92);
             _hookKey.Face = _offHook && act == null ? amber : DeskFace;
             _transferKey.Face = _transferArmed ? amber : DeskFace;
+            _crewKey.Face = _showDirectory ? amber : DeskFace;
+            _crewKey.Invalidate();
             _holdKey.Face = Held.Count > 0 && !talking ? amber : DeskFace;
             _hookKey.Invalidate();
             _transferKey.Invalidate();
@@ -348,17 +367,20 @@ public sealed class ExtensionPhoneForm : Form
             return;
         }
 
-        if (_showDirectory && _dirIndex >= 0 && _dirIndex < Directory.Count)
+        var book = Book;
+        if (_showDirectory && _dirIndex >= 0 && _dirIndex < book.Count)
         {
-            _buffer = Directory[_dirIndex].Number;
+            _buffer = book[_dirIndex].Number;
             _showDirectory = false;
+            if (_transferArmed) { await TransferAsync(); return; }
+            if (!_keitai) _offHook = true;
             await CallAsync();
             return;
         }
 
         if (Incoming is { } inc) { await CommandAsync(ExtensionProtocol.Answer, inc.Id); return; }
         if (Active == null && Held.Count > 0) { await CommandAsync(ExtensionProtocol.Hold, Held[0].Id, false); return; }
-        Say(_keitai ? "番号を押すか、電話帳から選んでください" : "受話器を上げて番号を押すか、ワンタッチを押してください");
+        Say(_keitai ? "番号を押すか、電話帳から選んでください" : "受話器を上げて番号を押すか、ワンタッチ・［乗務員］の一覧から選んでください");
     }
 
     private async Task EndAsync()
@@ -452,9 +474,10 @@ public sealed class ExtensionPhoneForm : Form
 
     private void MoveDirectory(int step)
     {
-        if (Directory.Count == 0) { Say("電話帳は空です"); return; }
+        var book = Book;
+        if (book.Count == 0) { Say(_keitai ? "電話帳は空です" : "いま参加している乗務員はいません"); return; }
         _showDirectory = true;
-        _dirIndex = _dirIndex < 0 || _dirIndex >= Directory.Count ? 0 : (_dirIndex + step + Directory.Count) % Directory.Count;
+        _dirIndex = _dirIndex < 0 || _dirIndex >= book.Count ? 0 : (_dirIndex + step + book.Count) % book.Count;
         Invalidate();
     }
 
@@ -473,8 +496,8 @@ public sealed class ExtensionPhoneForm : Form
         if (e.KeyCode == Keys.Back && _buffer.Length > 0) { _buffer = _buffer[..^1]; Invalidate(); e.Handled = true; }
         else if (e.KeyCode == Keys.Enter) { e.Handled = true; await CallAsync(); }
         else if (e.KeyCode == Keys.Escape) { e.Handled = true; await EndAsync(); }
-        else if (_keitai && e.KeyCode == Keys.Up) { MoveDirectory(-1); e.Handled = true; }
-        else if (_keitai && e.KeyCode == Keys.Down) { MoveDirectory(1); e.Handled = true; }
+        else if ((_keitai || _showDirectory) && e.KeyCode == Keys.Up) { MoveDirectory(-1); e.Handled = true; }
+        else if ((_keitai || _showDirectory) && e.KeyCode == Keys.Down) { MoveDirectory(1); e.Handled = true; }
     }
 
     // ---- 描き方 ----
@@ -642,7 +665,7 @@ public sealed class ExtensionPhoneForm : Form
 
         if (_showDirectory)
         {
-            var list = Directory;
+            var list = Book;
             var start = Math.Max(0, Math.Min(_dirIndex - 5, list.Count - 11));
             for (var i = 0; i < 11 && start + i < list.Count; i++)
             {
@@ -650,7 +673,7 @@ public sealed class ExtensionPhoneForm : Form
                 var r = new Rectangle(30, 62 + i * 19, 240, 19);
                 var sel = start + i == _dirIndex;
                 if (sel) using (var b = new SolidBrush(Color.FromArgb(47, 111, 208))) g.FillRectangle(b, r);
-                Text3(g, $"{d.Number}　{d.Label}", _small, sel ? Color.White : d.Present ? ink : Color.FromArgb(138, 155, 178), r, ContentAlignment.MiddleLeft);
+                Text3(g, IsCrew(d) ? $"{d.Label}　{d.Number}" : $"{d.Number}　{d.Label}", _small, sel ? Color.White : d.Present ? ink : Color.FromArgb(138, 155, 178), r, ContentAlignment.MiddleLeft);
             }
         }
         else
@@ -752,8 +775,21 @@ public sealed class ExtensionPhoneForm : Form
         Text3(g, time, _small, ink, new Rectangle(DeskLcd.Right - 70, DeskLcd.Y + 3, 64, 16), ContentAlignment.MiddleRight);
         var cur = act ?? Incoming ?? held.FirstOrDefault();
         var num = _buffer.Length > 0 ? _buffer : cur?.PeerNumber ?? "";
-        Text3(g, num, _num, ink, new Rectangle(DeskLcd.X + 4, DeskLcd.Y + 18, DeskLcd.Width - 8, 32), ContentAlignment.MiddleLeft);
         var (big, sub, note, blink) = Lines();
+        if (_showDirectory)
+        {
+            // ［乗務員］の一覧: 選んでいる人を出す（▲▼で選び、［応答］でかける・［終話］で閉じる）
+            var book = Book;
+            if (_dirIndex >= book.Count) _dirIndex = book.Count - 1;
+            var pick = _dirIndex >= 0 ? book[_dirIndex] : null;
+            num = pick?.Number ?? "";
+            big = pick != null ? $"乗務員 {_dirIndex + 1}/{book.Count}" : "乗務員 0人";
+            sub = pick?.Label ?? "いま参加している乗務員はいません";
+            note = _transferArmed ? "▲▼で選び［応答］で転送" : "▲▼で選び［応答］でかける";
+            blink = false;
+        }
+
+        Text3(g, num, _num, ink, new Rectangle(DeskLcd.X + 4, DeskLcd.Y + 18, DeskLcd.Width - 8, 32), ContentAlignment.MiddleLeft);
         var me = _state is { Label.Length: > 0 } ? $"{_state.Label}　内線 {_state.Number}" : "内線電話";
         if (!blink || blinkOn) Text3(g, big + (sub.Length > 0 ? "　" + sub : ""), _small, ink, new Rectangle(DeskLcd.X + 6, DeskLcd.Y + 50, DeskLcd.Width - 12, 15), ContentAlignment.MiddleLeft);
         Text3(g, note.Length > 0 ? note : me, _small, ink, new Rectangle(DeskLcd.X + 6, DeskLcd.Y + 64, DeskLcd.Width - 12, 15), ContentAlignment.MiddleLeft);
@@ -768,9 +804,9 @@ public sealed class ExtensionPhoneForm : Form
         Lamp(g, PanelX + 18, cy2, _onePage == 0 ? amber : off, 8);
         Text3(g, "下", _small, label, new Rectangle(PanelX + 26, cy2 - 8, 14, 16), ContentAlignment.MiddleLeft);
         Lamp(g, PanelX + 44, cy2, _onePage == 1 ? amber : off, 8);
-        Text3(g, "通話", _small, label, new Rectangle(PanelX + 96, cy2 - 8, 40, 16), ContentAlignment.MiddleLeft);
-        Lamp(g, PanelX + 134, cy2, act != null ? green : held.Count > 0 ? (blinkOn ? green : off) : off, 8);
-        Text3(g, "音量", _small, label, new Rectangle(PanelX + PanelW - 110, cy2 - 8, 32, 16), ContentAlignment.MiddleRight);
+        Text3(g, "通話", _small, label, new Rectangle(PanelX + 92, cy2 - 8, 30, 16), ContentAlignment.MiddleLeft);
+        Lamp(g, PanelX + 122, cy2, act != null ? green : held.Count > 0 ? (blinkOn ? green : off) : off, 8);
+        Text3(g, "音量", _small, label, new Rectangle(PanelX + PanelW - 104, cy2 - 8, 26, 16), ContentAlignment.MiddleRight);
 
         // スピーカの穴と記名紙（ワンタッチの名前とランプ）
         using (var b = new SolidBrush(Color.FromArgb(150, 111, 107, 100)))
@@ -885,6 +921,8 @@ public sealed class ExtensionPhoneForm : Form
 internal static class ExtensionExchangeKinds
 {
     public const string Dispatcher = "dispatcher";
+    public const string Driver = "driver";
+    public const string Conductor = "conductor";
 }
 
 internal enum PhoneLamp { Off, Green, Red, RedBlink }
