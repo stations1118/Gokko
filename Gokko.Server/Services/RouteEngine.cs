@@ -4348,6 +4348,12 @@ public sealed partial class RouteEngine
                 if (s.StationId == null || _data.Line.ZoneOfStation(s.StationId) is var z && z < 0) continue;
                 double? arrSec = i == from ? null : DaySec(s.Arr) + shift;
                 var depBase = i == from ? leave : DaySec(s.Dep) + shift;
+                // 遅れていれば、停車時間を最小（標準の停車時分）まで縮めて取り戻す（走っている列車の見込みと同じ。ダイヤより早くは出ない）
+                if (i != from && DaySec(s.Dep) is { } diaD && arrSec is { } ar && DaySec(s.Arr) is { } diaA)
+                {
+                    depBase = Math.Max(diaD, ar + Math.Min(Math.Max(0, diaD - diaA), _data.DefaultDwellSeconds));
+                    shift = depBase.Value - diaD;
+                }
                 var depSec = depBase;
                 if (depSec != null && SingleTrackWait(dia, i, z, info.Dir, depSec.Value, shift, plans, runs, UtcOf, speed) is { } wait && wait > 0)
                 {
@@ -4377,6 +4383,9 @@ public sealed partial class RouteEngine
                     passingStation = _data.PassingStations.ContainsKey(s.StationId),
                     y = (double)z,
                     t = (DateTime?)UtcOf(mTime.Value),
+                    arriveAt = (DateTime?)UtcOf(mTime.Value),
+                    leaveAt = depSec is { } ld ? (DateTime?)UtcOf(ld) : null,
+                    stops = s.Stop == "停" || terminal,
                     source = s.Stop == "停" || terminal ? "出現前・到着予想" : "出現前・通過予想",
                     openAt = (DateTime?)null,
                     openSource = "見込み",
@@ -4414,6 +4423,9 @@ public sealed partial class RouteEngine
                 passingStation = _data.PassingStations.ContainsKey(p.Station),
                 y = (double)_data.Line.ZoneOfStation(p.Station),
                 t = (DateTime?)UtcOf(leave),
+                arriveAt = (DateTime?)UtcOf(leave),
+                leaveAt = (DateTime?)UtcOf(leave),
+                stops = false, // 始発駅は発の◆だけ
                 source = "出現前・発車",
                 openAt = (DateTime?)null,
                 openSource = "見込み",
