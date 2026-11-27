@@ -289,7 +289,7 @@ public sealed class RelayStation
     // ---- ラインライトの白・在線位置の画面の緑（開通の表示） ----
     // 条件は TID の自動の進路の緑と同じ: ゲームの進路の一覧に出ている（開通を確かめた）進路の、列車がまだ通り終わっていない回路。
     // 盤で取った進路も、ゲームの一覧に出るまでは白くしない。盤で取っていない自動の進路（集中のときにサーバーが取った進路）も白くする
-    // （2026-11-19 ユーザーの決まり）。過走余裕の回路は白くしない
+    // （2026-11-19 ユーザーの決まり）。過走余裕の回路も、進路が残っている間は白くする（転てつ器の開通方向を見せる）
 
     private readonly Dictionary<string, int> _autoFrom = new(); // 自動の進路 → 列車が入った区分（入る前は -1、通り抜けたら int.MaxValue）
 
@@ -360,7 +360,11 @@ public sealed class RelayStation
                 var from = _autoFrom.GetValueOrDefault(r.Name, -1);
                 cs = r.Groups.Skip(Math.Max(0, from)).Take(from == int.MaxValue ? 0 : int.MaxValue).SelectMany(g => g);
             }
-            foreach (var c in cs.Except(r.Overrun)) yield return c;
+            // 過走余裕の回路も白くする。進路としては取らないが、ラインライトで転てつ器がどちらへ開いているかを見せる
+            // （2026-11-27 ユーザーの決まり: 水越の 12R だけなら 22イT は直進側、14R も取れば 12RT から 22イ・22ロへつながって点く）
+            var any = false;
+            foreach (var c in cs) { any = true; yield return c; }
+            if (any) foreach (var c in r.Overrun) yield return c;
         }
     }
 

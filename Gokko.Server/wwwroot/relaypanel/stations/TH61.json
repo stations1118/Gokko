@@ -39,7 +39,7 @@
     {"name": "5R", "lever": "5", "side": "R", "dest": "S", "points": {}, "circuits": ["TH61_5RT"], "departure": true, "approach": ["TH1T", "TH2T", "TH61_2RT", "TH61_21イT", "TH61_22T", "TH61_2RBT"], "approachTime": 60, "stops": []},
     {"name": "4L", "lever": "4", "side": "L", "dest": "T", "points": {"21": "R"}, "circuits": ["TH61_21ロT", "TH61_21イT", "TH61_2RT", "TH61_22T"], "departure": true, "approach": ["下り249T", "下り245T", "下り241T", "下り237T", "TH61_6LT"], "approachTime": 60, "stops": ["2RB", "2RA", "3L"]},
     {"name": "3L", "lever": "3", "side": "L", "dest": "T", "points": {"22": "R", "21": "N"}, "circuits": ["TH61_22T", "TH61_21イT", "TH61_2RT"], "departure": true, "approach": ["TH61_2RAT"], "approachTime": 60, "stops": ["2RB", "2RA", "4L"]},
-    {"name": "6L", "lever": "6", "side": "L", "dest": "C", "points": {}, "circuits": ["TH61_6LT"], "approach": ["下り249T", "下り245T", "下り241T", "下り237T"], "approachTime": 60, "stops": []}
+    {"name": "6L", "lever": "6", "side": "L", "dest": "C", "points": {}, "circuits": ["TH61_6LT"], "approach": ["下り249T", "下り245T", "下り241T", "下り237T"], "approachTime": 60, "stops": [], "overrun": ["TH61_21ロT"]}
   ],
   "signalHeads": [
     {"routes": ["2RA"], "type": "2", "at": [430, 462], "dir": 1},
