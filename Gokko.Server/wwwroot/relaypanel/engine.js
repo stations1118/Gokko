@@ -696,7 +696,7 @@
 
     // 集中／駅扱の切換てこ（白）。倒せるが、今は効果がない。緑の灯は、盤で進路を取れるとき（管理画面で駅扱い、かつ解放の鍵が R）に点く
     for (const a of st.areas || []) {
-      const turn = lever(a.lever[0], a.lever[1], 'NR', 'white', '', dir => send('area', a.id, dir));
+      const turn = lever(a.lever[0], a.lever[1], 'NR', 'white', '', dir => send('area', a.id, dir), 1, 1, 'a:' + a.id);
       view.area[a.id] = { turn, lamp: a.lamp ? lamp('green', a.lamp[0], a.lamp[1]) : () => {} };
     }
 
@@ -704,7 +704,7 @@
     // 両わきの「＜」「＞」の灯（盤に埋め込み）は、区間が開いている向きの2本が黄色に点く。lampsL・lampsR は [x, y, 回す角度]
     for (const d of st.directions || []) {
       const [x, y] = d.at;
-      const turn = lever(x, y, 'LR', 'yellow', '', dir => send('direction', d.n, dir), 1, 0.6);
+      const turn = lever(x, y, 'LR', 'yellow', '', dir => send('direction', d.n, dir), 1, 0.6, 'dir:' + d.n);
       const bar = ([bx, by, rot]) => img('dir-lamp-off', bx - 20, by - 9, 40, 18, L.lamps, { transform: `rotate(${rot} ${bx} ${by})` });
       const ls = (d.lampsL || []).map(bar), rs = (d.lampsR || []).map(bar);
       view.dirs[d.n] = { turn, set(dir) { for (const e of ls) setImg(e, `dir-lamp-${dir === 'L' ? 'yellow' : 'off'}`); for (const e of rs) setImg(e, `dir-lamp-${dir === 'R' ? 'yellow' : 'off'}`); } };
