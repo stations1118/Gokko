@@ -35,7 +35,7 @@
     {"id": "S", "at": [1720, 390]}
   ],
   "routes": [
-    {"name": "1R", "lever": "1", "side": "R", "dest": "S", "points": {"22": "R"}, "circuits": ["TH76_22T", "TH76_26ロT"], "departure": true, "approach": ["TH76_5LAT"], "approachTime": 60, "stops": ["2R", "3R", "4R", "5LA"]},
+    {"name": "1R", "lever": "1", "side": "R", "dest": "S", "points": {"22": "R", "26": "N"}, "circuits": ["TH76_22T", "TH76_26ロT"], "departure": true, "approach": ["TH76_5LAT"], "approachTime": 60, "stops": ["2R", "3R", "4R", "5LA"]},
     {"name": "2R", "lever": "2", "side": "R", "dest": "S", "points": {"23": "R", "24": "N", "25": "N", "26": "R"}, "circuits": ["TH76_23T", "TH76_25T", "TH76_26イT", "TH76_26ロT"], "departure": true, "approach": ["TH76_5LBT"], "approachTime": 60, "stops": ["1R", "3R", "4R", "5LA", "5LB"]},
     {"name": "3R", "lever": "3", "side": "R", "dest": "S", "points": {"21": "N", "23": "N", "24": "N", "25": "N", "26": "R"}, "circuits": ["TH76_21イT", "TH76_23T", "TH76_25T", "TH76_26イT", "TH76_26ロT"], "departure": true, "approach": ["TH76_5LCT"], "approachTime": 60, "stops": ["1R", "2R", "4R", "5LA", "5LB"]},
     {"name": "4R", "lever": "4", "side": "R", "dest": "S", "points": {"21": "N", "24": "R", "25": "N", "26": "R"}, "circuits": ["TH76_21ロT", "TH76_24T", "TH76_23T", "TH76_25T", "TH76_26イT", "TH76_26ロT"], "departure": true, "approach": ["TH76_5LDT"], "approachTime": 60, "stops": ["1R", "2R", "3R", "5LA", "5LB", "5LC", "5LD"]},

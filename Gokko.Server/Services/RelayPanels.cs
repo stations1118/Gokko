@@ -36,11 +36,13 @@ public sealed class RelayStationData
     public List<RelayRoute> Routes { get; set; } = new();
     public List<RelayBell> ApproachBells { get; set; } = new();
     public List<RelayTimer> Timers { get; set; } = new();
+    public List<RelayTrackLamp> TrackLamps { get; set; } = new();   // ラインライト。回路だけ読む（在線を受け取る回路に入れる）
     public JsonElement? ReleaseKey { get; set; }
     public JsonElement? AllStop { get; set; }
 }
 
 public sealed class RelayArea { public string Id { get; set; } = ""; }
+public sealed class RelayTrackLamp { public string C { get; set; } = ""; }
 /// <summary>単線の方向てこ。L = 隣の駅から当駅へ（受ける）、R = 当駅から隣の駅へ（出す）。
 /// area の駅扱いてこが R（駅扱）のときだけ効き、out の進路は R、in の進路は L でないと開通しない。集中（N）のときは CTC が決めるので、倒しても効き目がない。
 /// 駅間の回路（circuits）に列車がいるときと、out・in の進路があるときは、向きを変えられない。</summary>
@@ -242,7 +244,9 @@ public sealed class RelayStation
         _routes = data.Routes.ToDictionary(r => r.Name);
         _pointCircuit = data.Points.ToDictionary(p => p.N, p => p.All.ToList());
         _known = data.Routes.SelectMany(r => r.Circuits.Concat(r.Approach).Concat(r.ApproachIf.SelectMany(a => a.Circuits))).Concat(data.Points.SelectMany(p => p.All))
-            .Concat(data.ApproachBells.SelectMany(b => b.Circuits.Concat(b.When.SelectMany(w => w.Circuits)))).ToHashSet();
+            .Concat(data.ApproachBells.SelectMany(b => b.Circuits.Concat(b.When.SelectMany(w => w.Circuits))))
+            // ラインライトだけある回路（館浜の上り6T など、進路にも接近区間にも入らない駅の外の回路）も、在線を赤く点けるので受け取る
+            .Concat(data.TrackLamps.Select(l => l.C)).ToHashSet();
         foreach (var l in data.SignalLevers) _sig[l.N] = "N";
         foreach (var p in data.Points) { _ptLever[p.N] = "A"; _point[p.N] = "N"; }
         foreach (var a in data.Areas) _area[a.Id] = "N";
