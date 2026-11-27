@@ -2667,7 +2667,8 @@ public sealed partial class RouteEngine
         {
             var why = st.ForceDepart ? "駅扱い"
                 : string.Join("・", passed.Select(o =>
-                    $"{o.Train}: " + (MayOvertake(run, o, st) ? (DiaOvertakes(run, o, st.St.Id) ? "ダイヤの追い越し" : "司令員の順序")
+                    $"{o.Train}: " + (MayOvertake(run, o, st) ? (DiaOvertakes(run, o, st.St.Id) ? "ダイヤの追い越し"
+                        : _orderPlan?.PassBy.Contains((st.St.Id, run.Train, o.Train)) == true ? "待避中に抜く" : "司令員の順序")
                         : WaitingForRequest(o, o.Stations.First(s => s.St.Id == st.St.Id)) ? "出発要求前"
                         : (_central.Hold(o.Train, st.St.Id) & HoldKind.Depart) != 0 ? "出発抑止中"
                         : !DiaMode && _data.PassingStations.ContainsKey(st.St.Id) ? "自動の待避" : "そのほか")));
@@ -3836,6 +3837,8 @@ public sealed partial class RouteEngine
             var (ri, oi) = (list.IndexOf(run.Train), list.IndexOf(other.Train));
             if (ri >= 0 && oi >= 0 && ri < oi) return true;
         }
+        // 運転順序の計画で、other が別の番線（待避の番線）に止まっているあいだに run が着いて先に出る（ダイヤと違う列車・ダイヤのない列車でも）
+        if (DiaMode && _orderPlan?.PassBy.Contains((id, run.Train, other.Train)) == true) return true;
         return DiaOvertakes(run, other, id);
     }
 
@@ -4212,19 +4215,28 @@ public sealed partial class RouteEngine
             // 先の列車に詰まる分（駅間で追いつかない・同じ番線は先の列車が出てから）を足す。先の列車が詰まれば後ろの列車も詰まるので、変わらなくなるまで（4回まで）
             var basePlans = runs.ToDictionary(r => r, r => Plan(r, now, z => SlideDepart(r, z)));
             var plans = basePlans;
+            // 線を遅らせた理由（列車・ゾーン・発か → 待った相手）。最後の回のものを、記録に残す（NoteBends）
+            var why = new Dictionary<(TrainRun, int, bool), string>();
+            var bends = new Dictionary<TrainRun, List<(int Z, bool Dep, double Sec)>>();
             for (var pass = 0; pass < 4; pass++)
             {
                 var prev = plans;
                 basePlans = prev;
-                plans = runs.ToDictionary(r => r, r => Plan(r, now, z => MinDepart(r, z), DiaMode ? z => MinArrive(prev, r, z) : null));
+                why.Clear();
+                bends.Clear();
+                plans = runs.ToDictionary(r => r, r => Plan(r, now, z => MinDepart(r, z),
+                    DiaMode ? z => MinArrive(prev, r, z, w => why[(r, z, false)] = w) : null,
+                    (z, dep, sec) => (bends.TryGetValue(r, out var l) ? l : bends[r] = new()).Add((z, dep, sec))));
                 if (runs.All(r => SameTimes(prev[r], plans[r]))) break;
             }
+            NoteBends(now, bends, why);
             IReadOnlyList<string>? SectionOrderOf(string a, string b) =>
                 sectionOrders.TryGetValue((a, b), out var o) ? o : sectionOrders[(a, b)] = EffectiveSectionOrder(a, b);
             DateTime? MinDepart(TrainRun r, int z)
             {
                 DateTime? m = SlideDepart(r, z);
-                void Max(DateTime? t) { if (t != null && (m == null || t > m)) m = t; }
+                if (m != null) why[(r, z, true)] = "◆をずらした発車時刻";
+                void Max(DateTime? t, string w) { if (t != null && (m == null || t > m)) { m = t; why[(r, z, true)] = w; } }
                 if (_data.Line.StationAtZone(z) is not { } sid || r.Stations.FirstOrDefault(s => s.St.Id == sid && !s.Done) is not { } st) return m;
 
                 // 単線区間の走行順: 先の列車が区間を通り終えるまで（同じ向きなら先の列車がこの駅を出たあと、逆向きなら先の列車がこの駅に着いたあと）。
@@ -4233,7 +4245,8 @@ public sealed partial class RouteEngine
                     foreach (var name in so.TakeWhile(t => t != r.Train))
                         if (RunByTrain(name) is { } p && basePlans.TryGetValue(p, out var pp) && !SectionCleared(p, sid, nx) && !SameTrackBehind(r, st, p)
                             && !(p.Dir == r.Dir && IsAheadOf(r, p) && !MayOvertake(p, r, st)))
-                            Max(p.Dir == r.Dir ? pp.DepAt.TryGetValue(z, out var d1) ? d1 : null : pp.ArrAt.TryGetValue(z, out var a1) ? a1 : null);
+                            Max(p.Dir == r.Dir ? pp.DepAt.TryGetValue(z, out var d1) ? d1 : null : pp.ArrAt.TryGetValue(z, out var a1) ? a1 : null,
+                                $"単線区間の走行順（{name} が先）");
 
                 // 駅の出発順序: 同じ向きの先の列車がこの駅を出たあと
                 if (EffectiveOrder(sid, r.Dir) is { } order && order.Contains(r.Train))
@@ -4241,7 +4254,7 @@ public sealed partial class RouteEngine
                         if (RunByTrain(name) is { } p && p.Dir == r.Dir && (_central.Hold(name, sid) & HoldKind.Depart) == 0 && !SameTrackBehind(r, st, p)
                             && !(IsAheadOf(r, p) && !MayOvertake(p, r, st))
                             && basePlans.TryGetValue(p, out var pp) && pp.DepAt.TryGetValue(z, out var d2))
-                            Max(d2);
+                            Max(d2, $"出発順序（{name} が先）");
                 return m;
             }
 
@@ -4549,10 +4562,11 @@ public sealed partial class RouteEngine
     /// 待避線では最低の停車時分まで止め、minDepart（スジずらし・走行順・出発順序で決まる、その駅を出られる最も早い時刻）より前には出ない。
     /// 延びた分は、その先の駅にも足す。停車は水平の線で描く。
     /// </summary>
-    private PlanResult Plan(TrainRun r, DateTime now, Func<int, DateTime?> minDepart, Func<int, DateTime?>? minArrive = null)
+    private PlanResult Plan(TrainRun r, DateTime now, Func<int, DateTime?> minDepart, Func<int, DateTime?>? minArrive = null,
+        Action<int, bool, double>? bent = null)
     {
         // ダイヤ運転中のダイヤの列車: この先はダイヤどおりの線（遅れていればその分ずらす）。過去は実績（history）のまま
-        if (DiaMode && r.Dia != null && DiaPlan(r, now, minDepart, minArrive) is { } dp) return dp;
+        if (DiaMode && r.Dia != null && DiaPlan(r, now, minDepart, minArrive, bent) is { } dp) return dp;
 
         var step = r.Dir.Step();
         var type = RunType(r);
@@ -4617,7 +4631,8 @@ public sealed partial class RouteEngine
     /// 時刻はロープレ時刻なので、ダイヤグラムの横軸（実時間）に直す（時計を早回ししていれば、その速さで割る）。
     /// minDepart（スジずらし・走行順・出発順序）でダイヤより遅く出る駅は、その時刻に出し、延びた分をこの先の駅にも足す
     /// </summary>
-    private PlanResult? DiaPlan(TrainRun r, DateTime now, Func<int, DateTime?> minDepart, Func<int, DateTime?>? minArrive)
+    private PlanResult? DiaPlan(TrainRun r, DateTime now, Func<int, DateTime?> minDepart, Func<int, DateTime?>? minArrive,
+        Action<int, bool, double>? bent = null)
     {
         var step = r.Dir.Step();
         var nowSec = NowSec();
@@ -4664,6 +4679,7 @@ public sealed partial class RouteEngine
             // 先の列車に詰まる（駅間で追いつく・同じ番線がまだふさがっている）なら、その分だけ遅く着く（線の傾きが寝る）。延びた分は、この先の駅にも足す
             if ((z != r.Front || !atStation) && minArrive?.Invoke(z) is { } ma && ma > arr)
             {
+                bent?.Invoke(z, false, (ma - arr).TotalSeconds * speed);
                 shift += (ma - arr).TotalSeconds * speed;
                 arr = ma;
             }
@@ -4680,6 +4696,7 @@ public sealed partial class RouteEngine
             // スジずらし（◆を横にずらした発車時刻）・走行順・出発順序で、ダイヤより遅く出るなら、その時刻に出る。延びた分は、この先の駅にも足す
             if (minDepart(z) is { } md && md > dep)
             {
+                bent?.Invoke(z, true, (md - dep).TotalSeconds * speed);
                 shift += (md - dep).TotalSeconds * speed;
                 dep = md;
             }
