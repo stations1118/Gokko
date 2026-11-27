@@ -1018,16 +1018,30 @@
           const dep = m.departAt ? `・発車時刻 ${hhmm(new Date(m.departAt).getTime(), true)}` : "";
           const tipText = `${tr.train} ${m.name}: ${m.track == null ? "通過" : m.track + "番線"}（${m.trackSource}）・${m.source} ${hhmm(new Date(m.t).getTime(), true)}${dep}（${m.status}）`
             + "　押すと別ウィンドウで番線・停車／通過・駅扱い・抑止・順序" + (m.draggable ? "　横にずらすと発車時刻（ダブルクリックで解除）" : "") + (view.split && m.changeable ? "　縦にずらすと番線" : "");
-          obstacles.push({ x1: x, y1: y, x2: x, y2: y, r: 3.5 }); // 小さい◆の大きさ（線から少し離した列番なら、◆の横を通れる）
+          // 停車駅は、着の◆（左半分）と発の◆（右半分）に分けて描く（運転課のダイヤグラムと同じ）。通過駅・終点は1つの◆
+          const ta = m.arriveAt ? new Date(m.arriveAt).getTime() : null, td = m.leaveAt ? new Date(m.leaveAt).getTime() : null;
+          const split = m.stops && !m.terminal && ta != null && td != null && td - ta >= 1000;
+          const xa = split ? L.x(ta) : x, xd = split ? L.x(td) : x;
+          obstacles.push({ x1: xa, y1: y, x2: xd, y2: y, r: 3.5 }); // 小さい◆の大きさ（線から少し離した列番なら、◆の横を通れる）
           if (readOnly) return; // 読むだけの図は◆を出さない
           // ◆の窓（別ウィンドウ）で選んでいる◆は、丸で囲む
           if (popupOpen() && popup.train === tr.train && popup.stationId === m.stationId)
-            parts.push(`<circle cx="${x}" cy="${y}" r="8" fill="none" stroke="var(--accent, #2563eb)" stroke-width="2" pointer-events="none"/>`);
-          // ◆は小さく描き、押せる所（透明な◆）は前の大きさのまま。ずらすときは g ごと動かす
-          parts.push(`<g data-train="${esc(tr.train)}" data-station="${esc(m.stationId)}" data-ti="${ti}" data-mi="${mi}" data-drag="${m.draggable ? 1 : 0}"
-            data-x="${x}" data-y="${y}" data-tip="${esc(tipText)}" style="cursor:${view.split && m.changeable ? "move" : m.draggable ? "ew-resize" : "pointer"}">`
-            + `<path d="M${x},${y - 7} L${x + 6},${y} L${x},${y + 7} L${x - 6},${y} Z" fill="transparent"/>`
-            + `<path d="M${x},${y - 4.5} L${x + 3.8},${y} L${x},${y + 4.5} L${x - 3.8},${y} Z" fill="${fill}" stroke="var(--panel, #fff)" stroke-width="0.8" pointer-events="none"/></g>`);
+            parts.push(`<circle cx="${xd}" cy="${y}" r="8" fill="none" stroke="var(--accent, #2563eb)" stroke-width="2" pointer-events="none"/>`);
+          // ◆は小さく描き、押せる所（透明な◆）は前の大きさのまま。ずらすときは g ごと動かす。横にずらして発車時刻を決めるのは発の◆
+          const g = (gx, shape, drag, tip) => {
+            const hit = shape === "left" ? `M${gx},${y - 7} L${gx},${y + 7} L${gx - 7},${y} Z` : shape === "right" ? `M${gx},${y - 7} L${gx + 7},${y} L${gx},${y + 7} Z`
+              : `M${gx},${y - 7} L${gx + 6},${y} L${gx},${y + 7} L${gx - 6},${y} Z`;
+            const vis = shape === "left" ? `M${gx},${y - 4.5} L${gx},${y + 4.5} L${gx - 3.8},${y} Z` : shape === "right" ? `M${gx},${y - 4.5} L${gx + 3.8},${y} L${gx},${y + 4.5} Z`
+              : `M${gx},${y - 4.5} L${gx + 3.8},${y} L${gx},${y + 4.5} L${gx - 3.8},${y} Z`;
+            return `<g data-train="${esc(tr.train)}" data-station="${esc(m.stationId)}" data-ti="${ti}" data-mi="${mi}" data-drag="${drag ? 1 : 0}"
+              data-x="${gx}" data-y="${y}" data-tip="${esc(tip)}" style="cursor:${view.split && m.changeable ? "move" : drag ? "ew-resize" : "pointer"}">`
+              + `<path d="${hit}" fill="transparent"/>`
+              + `<path d="${vis}" fill="${fill}" stroke="var(--panel, #fff)" stroke-width="0.8" pointer-events="none"/></g>`;
+          };
+          if (split) {
+            parts.push(g(xa, "left", false, `${tr.train} ${m.name}: 着 ${hhmm(ta, true)}　${tipText}`));
+            parts.push(g(xd, "right", m.draggable, `${tr.train} ${m.name}: 発 ${hhmm(td, true)}　${tipText}`));
+          } else parts.push(g(x, "full", m.draggable, tipText));
         });
       });
       for (const q of labelQueue) parts.push(placeLabel(q, L, obstacles));

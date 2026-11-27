@@ -164,7 +164,8 @@ public sealed partial class RouteEngine
                                 trackLeader = lt.Train;
                             }
                         }
-                        var dep = x.Ends ? arr : Math.Max(x.D + shift[x.R], arr + (x.D - x.A));
+                        // 遅れた分は、停車時間を最小（標準の停車時分）まで縮めて取り戻す（ダイヤの見込みの線と同じ）
+                        var dep = x.Ends ? arr : Math.Max(x.D, arr + Math.Min(x.D - x.A, _data.DefaultDwellSeconds));
                         if (!x.Ends && _central.OpenAt(x.R.Train, station.Id) is { } open) dep = Math.Max(dep, ToSec(open));
                         if (floor.TryGetValue(x.R, out var f)) dep = Math.Max(dep, f);
                         // 前を走る列車（先に番線に入る・着いている列車。始発・終わる列車を除く）より先には出ない。
