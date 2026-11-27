@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 104 108" width="104" height="108">
+  <!-- てこのキャップ（誤操作防止）。てこ全体にかぶせる透明な筒を、真上から見た形。握りも頭の番号も透けて見える。
+       盤は斜めに立っているので、筒は重みで下がり、内側の上のふちが握りの先に掛かって止まる。握りと一緒には回さない。
+       大きさは 104×108 で、てこの軸を (52,70) に合わせて重ねる（握りと同じ軸）。この絵は定位（N）の位置で、筒の中心は (52,53.4)。
+       てこを倒しているときは、握りの先と頭の両方に掛かるので、右（R）なら (+27.7, +10.3)、左（L）なら (-27.7, +10.3) ずらして重ねる -->
+  <defs>
+    <radialGradient id="in" cx="52" cy="49" r="46" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#dfe8ee" stop-opacity="0.03"/><stop offset="0.8" stop-color="#dfe8ee" stop-opacity="0.08"/><stop offset="1" stop-color="#dfe8ee" stop-opacity="0.2"/>
+    </radialGradient>
+    <linearGradient id="sh" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.55"/><stop offset="0.45" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+    <clipPath id="c"><circle cx="52" cy="49" r="44"/></clipPath>
+  </defs>
+  <g transform="translate(0 4.4)">
+  <!-- 盤に落ちる影 -->
+  <circle cx="54.5" cy="52" r="45" fill="none" stroke="#05070a" stroke-width="5" opacity="0.28"/>
+  <!-- 筒の中（うすく曇った透明） -->
+  <circle cx="52" cy="49" r="44" fill="url(#in)"/>
+  <!-- 筒の壁（すそのふちと、上のふち） -->
+  <circle cx="52" cy="49" r="45" fill="none" stroke="#e9eef2" stroke-width="2.6" opacity="0.55"/>
+  <circle cx="52" cy="49" r="46.3" fill="none" stroke="#5c6670" stroke-width="0.7" opacity="0.7"/>
+  <circle cx="50.8" cy="47.6" r="39.5" fill="none" stroke="#f2f6f8" stroke-width="1.3" opacity="0.38"/>
+  <circle cx="50.8" cy="47.6" r="38.3" fill="none" stroke="#39424b" stroke-width="0.6" opacity="0.4"/>
+  <!-- 照り -->
+  <g clip-path="url(#c)">
+    <path d="M14,44 A38.5,38.5 0 0 1 44,10" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" opacity="0.6"/>
+    <path d="M20,60 A33,33 0 0 1 21,40" fill="none" stroke="#fff" stroke-width="1.4" stroke-linecap="round" opacity="0.35"/>
+    <path d="M88,58 A38.5,38.5 0 0 1 66,85" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" opacity="0.28"/>
+    <circle cx="52" cy="49" r="44" fill="url(#sh)" opacity="0.22"/>
+  </g>
+  </g>
+</svg>

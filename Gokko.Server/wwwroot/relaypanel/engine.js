@@ -492,9 +492,19 @@
   // 鍵（'key'）はタップで抜き差し、長押しで選んでから右へなぞると R、左へなぞると N に戻す。ボタン（'tap'）はタップで押す
   let lastTouch = 0, touchHint = false;
   const PRESS_MS = 350, SWIPE_PX = 28;
-  function onClicks(target, fn, mode = 'lever') {
-    target.addEventListener('click', e => { e.preventDefault(); if (Date.now() - lastTouch > 700) fn('L'); });
-    target.addEventListener('contextmenu', e => { e.preventDefault(); if (Date.now() - lastTouch > 700) fn('R'); });
+  // cap: 誤操作防止のキャップの名前（"s:12" など）。Shift＋クリックで、キャップをかぶせる・外す（てこは倒さない）
+  // スマホは、トリプルタップでキャップをかぶせる・外す。キャップのあるものは、タップのあと少し待って、続けてタップされないか見る
+  const TAP_GAP_MS = 380;
+  function onClicks(target, fn, mode = 'lever', cap = null) {
+    let taps = 0, tapTimer = null;
+    const tapped = single => {
+      if (!cap) { single(); return; }
+      taps++; clearTimeout(tapTimer);
+      if (taps >= 3) { taps = 0; send('cap', cap); navigator.vibrate?.(30); return; }
+      tapTimer = setTimeout(() => { const n = taps; taps = 0; if (n >= 1) single(); }, TAP_GAP_MS);
+    };
+    target.addEventListener('click', e => { e.preventDefault(); if (Date.now() - lastTouch <= 700) return; if (cap && e.shiftKey) { send('cap', cap); return; } fn('L'); });
+    target.addEventListener('contextmenu', e => { e.preventDefault(); if (Date.now() - lastTouch <= 700) return; if (cap && e.shiftKey) { send('cap', cap); return; } fn('R'); });
     target.addEventListener('pointerdown', e => {
       if (e.pointerType === 'mouse') return;
       e.preventDefault(); e.stopPropagation();
@@ -515,9 +525,9 @@
         if (ev.pointerId !== id) return;
         lastTouch = Date.now();
         if (!done && !armed && !moved && !pinching) {
-          if (mode === 'tap') fn('L');
+          if (mode === 'tap') tapped(() => fn('L'));
           else if (mode === 'key') fn('tap');
-          else if (!touchHint) { touchHint = true; toast('てこは長押ししてから、左右へなぞって倒します'); }
+          else tapped(() => { if (!touchHint) { touchHint = true; toast('てこは長押ししてから、左右へなぞって倒します'); } });
         }
         end();
       };
@@ -595,7 +605,7 @@
     const L = {
       lamps: el('g'), heads: el('g'), bases: el('g'), knobs: el('g'), buttons: el('g'), top: el('g'),
     };
-    view = { track: [], heads: [], sig: {}, pt: {}, dest: {}, bells: {}, timers: [], area: {}, dirs: {}, key: null, allStop: null };
+    view = { track: [], heads: [], sig: {}, pt: {}, dest: {}, bells: {}, timers: [], area: {}, dirs: {}, key: null, allStop: null, caps: {} };
 
     // 線路の表示灯
     // 同じ場所に2行ある灯（両渡りの根もとなど）は1つの灯で、どちらかの行の条件が合えば点く
@@ -625,14 +635,26 @@
     const knobColor = { main: 'red', shuntSign: 'green', shunt: 'white', route: 'yellow', callOn: 'pink' };
     // k: 大きさ（1 = 104×100）。転てつ器の単独てこは 0.6
     // bk: 台だけの大きさ（方向てこは台だけ 60%）
-    function lever(x, y, base, knob, label, onTurn, k = 1, bk = k) {
+    // cap: 誤操作防止のキャップの名前。キャップ（透明な筒）は握りと一緒には回さず、倒れた向きへずらして重みで下がった形に置く
+    function lever(x, y, base, knob, label, onTurn, k = 1, bk = k, cap = null) {
       img(`lever-base-${base}`, x - 52 * bk, y - 70 * bk, 104 * bk, 100 * bk, L.bases);
       const g = knobGroup(L.knobs, x, y);
       img(`lever-knob-${knob}`, x - 52 * k, y - 70 * k, 104 * k, 100 * k, g);
       if (label) glyphText(label, x, y, 19 * k, '#c9cdcf', L.knobs, 17 * k);
       const hit = el('circle', { cx: x, cy: y - 18 * k, r: 46 * k, fill: 'transparent', class: 'hit' }, L.top);
-      onClicks(hit, onTurn);
-      return pos => { g.style.transform = `rotate(${pos === 'L' ? -KNOB_DEG : pos === 'R' ? KNOB_DEG : 0}deg)`; };
+      onClicks(hit, onTurn, 'lever', cap);
+      let pos = 'N', capped = false, capE = null;
+      if (cap) {
+        capE = img('lever-cap', x - 52 * k, y - 70 * k, 104 * k, 108 * k, L.knobs, { style: 'display:none' });
+        view.caps[cap] = on => { capped = on; place(); };
+      }
+      const place = () => {
+        if (!capE) return;
+        capE.style.display = capped ? '' : 'none';
+        const dx = pos === 'R' ? 27.7 : pos === 'L' ? -27.7 : 0, dy = pos === 'N' ? 0 : 10.3;
+        capE.setAttribute('transform', `translate(${dx * k} ${dy * k})`);
+      };
+      return p => { pos = p === 'L' || p === 'R' ? p : 'N'; g.style.transform = `rotate(${pos === 'L' ? -KNOB_DEG : pos === 'R' ? KNOB_DEG : 0}deg)`; place(); };
     }
     function lamp(color, x, y, parent = L.buttons, size = 40) {
       const e = img(`lamp-${color}-off`, x - size / 2, y - size / 2, size, size, parent);
@@ -643,7 +665,7 @@
     for (const l of st.signalLevers) {
       const [x, y] = l.at;
       const base = l.side === 'LR' ? 'LNR' : l.side === 'L' ? 'LN' : 'NR';
-      const turn = lever(x, y, base, knobColor[l.kind] || 'red', l.label || l.n, dir => send('signal', l.n, dir));
+      const turn = lever(x, y, base, knobColor[l.kind] || 'red', l.label || l.n, dir => send('signal', l.n, dir), 1, 1, 's:' + l.n);
       view.sig[l.n] = { turn };
     }
 
@@ -651,7 +673,7 @@
     const PK = 0.6;
     for (const p of st.points) {
       const [x, y] = p.at;
-      const turn = lever(x, y, 'NCR', 'black', p.n, dir => send('point', p.n, dir), PK);
+      const turn = lever(x, y, 'NCR', 'black', p.n, dir => send('point', p.n, dir), PK, PK, 'p:' + p.n);
       view.pt[p.n] = { turn, n: lamp('green', x - 34 * PK, y - 102 * PK, L.buttons, 40 * PK), r: lamp('orange', x + 34 * PK, y - 102 * PK, L.buttons, 40 * PK), lock: lamp('red', x, y + 42 * PK, L.buttons, 22 * PK) };
     }
 
@@ -662,8 +684,11 @@
       glyphText(b.label || b.id, x, y + 42, 18, '#e9ecea', L.buttons);
       const hit = el('circle', { cx: x, cy: y, r: 30, fill: 'transparent', class: 'hit' }, L.top);
       const press = () => { setImg(e, 'dest-button-pressed'); setTimeout(() => setImg(e, 'dest-button'), 160); };
-      onClicks(hit, () => { press(); send('dest', b.id); }, 'tap');
+      onClicks(hit, () => { press(); send('dest', b.id); }, 'tap', 'd:' + b.id);
       view.dest[b.id] = press;
+      // キャップ（透明な筒）。重みで下がった形の絵を、白い頭の中心に合わせて重ねる
+      const capE = img('dest-button-cap', x - 52, y - 52, 104, 122, L.buttons, { style: 'display:none' });
+      view.caps['d:' + b.id] = on => { capE.style.display = on ? '' : 'none'; };
     }
 
     // 集中／駅扱の切換てこ（白）。倒せるが、今は効果がない。緑の灯は、盤で進路を取れるとき（管理画面で駅扱い、かつ解放の鍵が R）に点く
@@ -685,7 +710,7 @@
     // 一斉停止のてこ（赤、面の字は「停」）
     if (st.allStop) {
       const [x, y] = st.allStop.at;
-      view.allStop = lever(x, y, 'NR', 'red', '停', dir => send('allStop', '', dir));
+      view.allStop = lever(x, y, 'NR', 'red', '停', dir => send('allStop', '', dir), 1, 1, 'allStop');
     }
 
     // 解放の鍵。上の灯は解放中（R）に赤、「正常」の灯は鍵が N のときに緑
@@ -774,6 +799,8 @@
       v.lamp(flashing ? blinkFast() : S.local);
     }
     if (view.allStop) view.allStop(S.allStop === 'R' ? 'R' : 'N');
+    const caps = new Set(S.caps || []);
+    for (const c in view.caps) view.caps[c](caps.has(c));
     for (const n in view.dirs) {
       // てこはこの駅の向き。灯はいま取れている区間方向（N = 決まっていないので点けない）
       const v = view.dirs[n], dir = (S.dir || {})[n] || 'L', actual = (S.dirActual || {})[n] ?? dir;
