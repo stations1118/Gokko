@@ -748,7 +748,17 @@ public sealed class RelayStation
             }).ToList();
             foreach (var name in _request.Values.Concat(_through.Keys).Distinct().Where(n => !_set.ContainsKey(n) && _routes.ContainsKey(n)).OrderBy(n => n))
                 items.Add((_routes[name], false, _routes[name].Circuits.Except(_routes[name].Overrun).ToList()));
-            var info = items.ToDictionary(x => x.r.Name, x => infoOf(Data.Interlock, x.r.Name));
+            var info = _routes.Keys.ToDictionary(n => n, n => infoOf(Data.Interlock, n));
+            bool Leads(string from, string to) => info[from].To.Length > 0 && !info[from].To.EndsWith('方') && info[to].From == info[from].To;
+            // 続けて取っている進路の回路。まだ取っていなければ、この進路の行き先から出る進路すべてに入っている回路
+            // （大道寺の 13LD は 44T まで。44T から出るのは 12L・28L で、どちらも 4番線の 12LT を通る。13LD で 5番・6番へは入らない）
+            List<string> Next(RelayRoute r)
+            {
+                var taken = items.Where(y => y.r != r && Leads(r.Name, y.r.Name)).SelectMany(y => y.r.Circuits).Distinct().ToList();
+                if (taken.Count > 0) return taken;
+                var all = _routes.Values.Where(y => y != r && Leads(r.Name, y.Name)).Select(y => y.Circuits).ToList();
+                return all.Count == 0 ? [] : all.Skip(1).Aggregate(all[0].AsEnumerable(), (a, b) => a.Intersect(b)).ToList();
+            }
             return items.Select(x => (object)new
             {
                 route = x.r.Name,
@@ -760,10 +770,9 @@ public sealed class RelayStation
                 approach = x.r.Approach,
                 // 行き先の番線の回路。回路の並びが同じで行き先だけ違う進路（新野崎の 10LC・10LD）を、行き先の枝へ引くため
                 dest = info[x.r.Name].Dest,
-                // 続けて取っている進路（この進路の行き先から出る進路）の回路。行き先が分かれる回路で終わる進路を、続く進路の側へ引くため
-                // （大道寺の 13LD は 44T まで。続く 12L の 12LT がないと、44T を 6番側の枝で引いてしまう）
-                next = items.Where(y => y.r != x.r && info[x.r.Name].To.Length > 0 && !info[x.r.Name].To.EndsWith('方') && info[y.r.Name].From == info[x.r.Name].To)
-                    .SelectMany(y => y.r.Circuits).Distinct().ToList()
+                // 続く進路（この進路の行き先から出る進路）の回路。行き先が分かれる回路で終わる進路を、続く進路の側へ引くため
+                // （大道寺の 13LD は 44T まで。これがないと、44T を 6番側の枝で引いてしまう）
+                next = Next(x.r)
             }).ToList();
         }
     }
