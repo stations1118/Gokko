@@ -735,34 +735,36 @@ public sealed class RelayStation
     /// open はゲームの進路の一覧に出ている（実線。自動の進路の緑・盤の白い灯と同じ条件）、それ以外は転換待ち・現示時素の間・
     /// ゲームに出るのを待っている間（破線）。approach は線をどちらの枝へ引くかの手がかり
     /// </summary>
-    public List<object> TidRoutes(Func<string, string, string?> destOf)
+    public List<object> TidRoutes(Func<string, string, (string? Dest, string From, string To)> infoOf)
     {
         lock (_lock)
         {
-            var list = _set.OrderBy(kv => kv.Key).Select(kv =>
+            // 取っている進路と、選んで待っている進路（転てつ器の転換中など、まだ進路ができていない。要求中＝破線）
+            var items = _set.OrderBy(kv => kv.Key).Select(kv =>
             {
                 var r = _routes[kv.Key];
                 var s = kv.Value;
-                return (object)new
-                {
-                    route = r.Name,
-                    open = InGame(r),
-                    circuits = (s.Entered ? LiveCircuits(r, s) : r.Circuits.Except(r.Overrun)).ToList(),
-                    // 進路の回路全部（行き先の番線も）。列車が入って circuits が鎖錠中の区分だけになっても、
-                    // 在線位置の画面がどちらの枝を引くか決められるように（津崎の 6LC で、24T の渡り線側に線が出た）
-                    all = r.Circuits,
-                    approach = r.Approach,
-                    // 行き先の番線の回路。回路の並びが同じで行き先だけ違う進路（新野崎の 10LC・10LD）を、行き先の枝へ引くため
-                    dest = destOf(Data.Interlock, r.Name)
-                };
+                return (r, open: InGame(r), circuits: (s.Entered ? LiveCircuits(r, s) : r.Circuits.Except(r.Overrun)).ToList());
             }).ToList();
-            // 選んで待っている進路（転てつ器の転換中など、まだ進路ができていない）も、要求中（破線）として出す
             foreach (var name in _request.Values.Concat(_through.Keys).Distinct().Where(n => !_set.ContainsKey(n) && _routes.ContainsKey(n)).OrderBy(n => n))
+                items.Add((_routes[name], false, _routes[name].Circuits.Except(_routes[name].Overrun).ToList()));
+            var info = items.ToDictionary(x => x.r.Name, x => infoOf(Data.Interlock, x.r.Name));
+            return items.Select(x => (object)new
             {
-                var r = _routes[name];
-                list.Add(new { route = r.Name, open = false, circuits = r.Circuits.Except(r.Overrun).ToList(), all = r.Circuits, approach = r.Approach, dest = destOf(Data.Interlock, r.Name) });
-            }
-            return list;
+                route = x.r.Name,
+                open = x.open,
+                circuits = x.circuits,
+                // 進路の回路全部（行き先の番線も）。列車が入って circuits が鎖錠中の区分だけになっても、
+                // 在線位置の画面がどちらの枝を引くか決められるように（津崎の 6LC で、24T の渡り線側に線が出た）
+                all = x.r.Circuits,
+                approach = x.r.Approach,
+                // 行き先の番線の回路。回路の並びが同じで行き先だけ違う進路（新野崎の 10LC・10LD）を、行き先の枝へ引くため
+                dest = info[x.r.Name].Dest,
+                // 続けて取っている進路（この進路の行き先から出る進路）の回路。行き先が分かれる回路で終わる進路を、続く進路の側へ引くため
+                // （大道寺の 13LD は 44T まで。続く 12L の 12LT がないと、44T を 6番側の枝で引いてしまう）
+                next = items.Where(y => y.r != x.r && info[x.r.Name].To.Length > 0 && !info[x.r.Name].To.EndsWith('方') && info[y.r.Name].From == info[x.r.Name].To)
+                    .SelectMany(y => y.r.Circuits).Distinct().ToList()
+            }).ToList();
         }
     }
 
@@ -1134,11 +1136,11 @@ public sealed class RelayPanels : IDisposable
     /// <summary>
     /// 在線位置の画面（tid.html）用: 駅ごとに、盤で扱っているか（管理画面で駅扱い、かつ盤の解放の鍵が R）と、盤で取っている進路。
     /// </summary>
-    public object TidView(Func<string, string, string?> destOf) => _stations.Select(kv => new
+    public object TidView(Func<string, string, (string? Dest, string From, string To)> infoOf) => _stations.Select(kv => new
     {
         station = kv.Key,
         controlled = _central.IsPanelControlled(kv.Key),
-        routes = kv.Value.TidRoutes(destOf)
+        routes = kv.Value.TidRoutes(infoOf)
     }).ToList();
 
     private readonly Dictionary<string, Dictionary<string, long>> _seen = new(); // 接続ID → 回路 → 最後に踏んでいた時刻（Tick の中だけで使う）
