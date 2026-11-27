@@ -493,7 +493,16 @@
   let lastTouch = 0, touchHint = false;
   const PRESS_MS = 350, SWIPE_PX = 28;
   // cap: 誤操作防止のキャップの名前（"s:12" など）。Shift＋クリックで、キャップをかぶせる・外す（てこは倒さない）
+  // スマホは、トリプルタップでキャップをかぶせる・外す。キャップのあるものは、タップのあと少し待って、続けてタップされないか見る
+  const TAP_GAP_MS = 380;
   function onClicks(target, fn, mode = 'lever', cap = null) {
+    let taps = 0, tapTimer = null;
+    const tapped = single => {
+      if (!cap) { single(); return; }
+      taps++; clearTimeout(tapTimer);
+      if (taps >= 3) { taps = 0; send('cap', cap); navigator.vibrate?.(30); return; }
+      tapTimer = setTimeout(() => { const n = taps; taps = 0; if (n >= 1) single(); }, TAP_GAP_MS);
+    };
     target.addEventListener('click', e => { e.preventDefault(); if (Date.now() - lastTouch <= 700) return; if (cap && e.shiftKey) { send('cap', cap); return; } fn('L'); });
     target.addEventListener('contextmenu', e => { e.preventDefault(); if (Date.now() - lastTouch <= 700) return; if (cap && e.shiftKey) { send('cap', cap); return; } fn('R'); });
     target.addEventListener('pointerdown', e => {
@@ -516,9 +525,9 @@
         if (ev.pointerId !== id) return;
         lastTouch = Date.now();
         if (!done && !armed && !moved && !pinching) {
-          if (mode === 'tap') fn('L');
+          if (mode === 'tap') tapped(() => fn('L'));
           else if (mode === 'key') fn('tap');
-          else if (!touchHint) { touchHint = true; toast('てこは長押ししてから、左右へなぞって倒します'); }
+          else tapped(() => { if (!touchHint) { touchHint = true; toast('てこは長押ししてから、左右へなぞって倒します'); } });
         }
         end();
       };
