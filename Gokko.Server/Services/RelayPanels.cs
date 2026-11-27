@@ -337,8 +337,10 @@ public sealed class RelayStation
     {
         foreach (var r in Data.Routes)
         {
-            if (Data.Interlock.Length > 0 && !InGame(r)) continue;
+            // 盤で取った進路は、サーバーが持つ進路。ゲームの一覧に載るのを待たずに、盤の判断で進行にする
+            // （対象の列車がいないとゲームは一覧に載せないので。2026-11-27 ユーザーの決まり。載らないまま列車が近づいたら NotInGame）
             if (_set.ContainsKey(r.Name)) { if (Go(r)) yield return r.Name; continue; }
+            if (Data.Interlock.Length > 0 && !InGame(r)) continue;
             if (_autoHeld.Contains(r.Name) || _allStop != "N" || r.Points.Keys.Any(_moving.ContainsKey) || r.Circuits.Any(_occ.Contains)) continue;
             if (_autoFrom.GetValueOrDefault(r.Name, -1) >= 0) continue;   // 列車が入ったあと
             // 転てつ器が進路の向きにないものは点けない。ゲームの一覧には、まだ開通していない進路も載る
@@ -352,7 +354,8 @@ public sealed class RelayStation
     {
         foreach (var r in Data.Routes)
         {
-            if (!InGame(r) || r.Points.Keys.Any(_moving.ContainsKey)) continue;   // 転てつ器の転換中は、まだ点けない
+            // 盤で取った進路はゲームの一覧を待たない。自動の進路は、ゲームの一覧に出てから。転てつ器の転換中は、まだ点けない
+            if ((!_set.ContainsKey(r.Name) && !InGame(r)) || r.Points.Keys.Any(_moving.ContainsKey)) continue;
             IEnumerable<string> cs;
             if (_set.TryGetValue(r.Name, out var s)) cs = s.Entered ? LiveCircuits(r, s) : r.Circuits;
             else
@@ -496,6 +499,23 @@ public sealed class RelayStation
     private bool Go(RelayRoute r) => Ready(r) && _now >= _set[r.Name].GoAfter;
 
     private List<string> _held = new();
+
+    // 盤で取った進路が、ゲームの一覧に載らないまま列車が近づいた（接近区間に入って NotInGameMs たった）。
+    // 盤は転てつ不良の灯を点け、その進路の信号表示灯を点滅させる。ゲームに載れば消える
+    private const long NotInGameMs = 5000;
+    private readonly Dictionary<string, long> _missSince = new();
+    private List<string> _notInGame = new();
+
+    private void TrackNotInGame(long now)
+    {
+        foreach (var r in Data.Routes)
+        {
+            var miss = Data.Interlock.Length > 0 && Ready(r) && !InGame(r) && r.Approach.Any(_occ.Contains);
+            if (!miss) _missSince.Remove(r.Name);
+            else _missSince.TryAdd(r.Name, now);
+        }
+        _notInGame = _missSince.Where(kv => now - kv.Value >= NotInGameMs).Select(kv => kv.Key).OrderBy(n => n).ToList();
+    }
 
     /// <summary>ゲームに送っているが、現示時素の間なので信号を停止に押さえる進路の名前（連動装置は <see cref="RelayStationData.Interlock"/>）。</summary>
     public IReadOnlyList<string> HeldRoutes { get { lock (_lock) return _held; } }
@@ -701,6 +721,7 @@ public sealed class RelayStation
 
         TrackAutoRoutes();
         UpdateGameRoutes();
+        TrackNotInGame(now);
         _held = Data.Interlock.Length == 0 ? new() : Data.Routes.Where(Held).Select(r => r.Name).ToList();
         Publish();
     }
@@ -759,6 +780,7 @@ public sealed class RelayStation
         route = LitCircuits().Distinct().OrderBy(c => c).ToList(),
         set = _set.Keys.OrderBy(n => n).ToList(),
         go = GoRoutes().ToList(),   // 信号表示灯（信号が開いている進路）
+        notInGame = _notInGame,   // 盤で取ったのに、列車が近づいてもゲームの一覧に載らない進路（転てつ不良の灯・信号表示灯の点滅）
         game = _gameRoutes.Select(r => r.RouteName).ToList(),   // 全員のゲームに送っている進路
         timers = _set.Where(kv => kv.Value.ReleaseUntil != null).ToDictionary(kv => kv.Key, kv => new { until = kv.Value.ReleaseUntil, sec = kv.Value.ReleaseSec }),
         area = _area,
