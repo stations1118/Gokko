@@ -718,7 +718,8 @@
       };
     }
 
-    for (const [x, y] of st.statusLamps || []) lamp('red', x, y);   // 転てつ不良・停電・CTC故障（まだ点かない）
+    // 転てつ不良・停電・CTC故障。転てつ不良は、盤で取った進路がゲームに載らないまま列車が近づいたときに点く（停電・CTC故障はまだ点かない）
+    view.status = (st.statusLamps || []).map(([x, y]) => lamp('red', x, y));
 
     // 接近ボタン（緑）。列車が接近区間に入ると点滅して鳴る。押すと音が止まり、列車がいる間は点いたまま
     for (const b of st.approachBells || []) {
@@ -749,11 +750,13 @@
       setImg(e, `track-lamp-${s}`);
       e.style.filter = s === 'white' ? 'sepia(0.4) saturate(1.5)' : '';   // 白は少し黄色を混ぜる（古い盤のくすんだ白）
     }
-    const go = new Set(S.go);
+    const go = new Set(S.go), notInGame = new Set(S.notInGame || []);
     for (const { h, e, on, routes } of view.heads) {
-      // 信号表示灯は、進行のときだけ点く（停止の赤は点かない）
-      setImg(e, `signal-head-${h.type}-${routes.some(r => go.has(r)) ? on : 'off'}`);
+      // 信号表示灯は、進行のときだけ点く（停止の赤は点かない）。ゲームに載っていない進路は点滅
+      const lit = routes.some(r => go.has(r) && (!notInGame.has(r) || blink));
+      setImg(e, `signal-head-${h.type}-${lit ? on : 'off'}`);
     }
+    if (view.status[0]) view.status[0](notInGame.size > 0);
     for (const n in view.sig) {
       const v = view.sig[n];
       v.turn(S.sig[n]);
