@@ -265,9 +265,15 @@ public sealed class RelayStation
     private bool Back(RelayRoute r) => _sig.GetValueOrDefault(r.Lever, "N") != r.Side && !(_set.TryGetValue(r.Name, out var s) && s.Hold);
     private bool GroupLive(RelayRoute r, SetRoute s, int i) => !(s.Entered && Back(r) && (s.Passed[i] || TimedOut(r, s, i)));
 
+    // 着点の区分（最後の区分）は、時素の書いていない進路でも、列車が入って DestReleaseSec たてば解ける（てこを戻していれば）。
+    // 列車が着点に止まったままだと進路が残り、向かいの進路（引上線から戻す進路など）が取れなくなる
+    // （新野崎で 23R の引上線 23RT に列車を入れたら、23R が残り、戻す 25LC・25LD や 8R が取れなくなった）。
+    // 着点に列車がいる間は、そこへ入る進路はどれも在線で取れないので、解いても列車の上に進路はできない
+    private const int DestReleaseSec = 30;
+
     private bool TimedOut(RelayRoute r, SetRoute s, int i)
     {
-        var t = r.GroupTimes is { } g && i < g.Count ? g[i] : 0;
+        var t = r.GroupTimes is { } g && i < g.Count ? g[i] : i == r.Groups.Count - 1 ? DestReleaseSec : 0;
         return t > 0 && s.OccSince[i] > 0 && _now >= s.OccSince[i] + t * 1000L;
     }
 
