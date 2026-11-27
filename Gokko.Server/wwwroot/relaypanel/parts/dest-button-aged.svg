@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 66 100" width="66" height="100">
+  <!-- 古びた版（作られて 20 年ぐらい）。もとの絵 dest-button.svg に、小さな塗りのはげ・くすみ・うすい黄ばみをかけたもの。大きさ・軸はもとと同じ。もとの絵を直したら作り直す -->
+  <defs><filter id="worn" x="-5%" y="-5%" width="110%" height="110%" color-interpolation-filters="sRGB">
+    <feTurbulence type="fractalNoise" baseFrequency="0.09 0.13" numOctaves="3" seed="122" result="n1"/>
+    <feColorMatrix in="n1" values="0 0 0 0 0.62  0 0 0 0 0.61  0 0 0 0 0.56  9 0 0 0 -6.2" result="chip0"/><feComponentTransfer in="chip0" result="chip"><feFuncA type="linear" slope="0.35"/></feComponentTransfer>
+    <feTurbulence type="fractalNoise" baseFrequency="0.02 0.03" numOctaves="2" seed="110" result="n2"/>
+    <feColorMatrix in="n2" values="0 0 0 0 0.3  0 0 0 0 0.26  0 0 0 0 0.18  0 1.8 0 0 -1.05" result="dirt"/>
+    <feColorMatrix in="SourceGraphic" values="0.96 0.02 0.01 0 0  0.015 0.955 0.01 0 0  0.015 0.03 0.9 0 0  0 0 0 1 0" result="y"/>
+    <feComposite in="dirt" in2="y" operator="atop" result="d"/><feComposite in="chip" in2="d" operator="atop"/>
+  </filter></defs>
+  <g filter="url(#worn)">
+  <!-- 着点ボタン（押していない）。黒い丸い座に白い丸い頭、下に字を彫る小さな札。頭の中心は (33,36)、札の字の中心は (33,78) -->
+  <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a2f3b"/><stop offset="1" stop-color="#14161d"/></linearGradient>
+  <filter id="glow" x="-1" y="-1" width="3" height="3"><feGaussianBlur stdDeviation="5"/></filter><clipPath id="b"><circle cx="33" cy="36" r="19"/></clipPath></defs>
+  <path d="M15,63 H51 V86 Q33,97 15,86 Z" fill="#14202a" opacity="0.4" transform="translate(2 3)"/><circle cx="35" cy="39" r="26" fill="#14202a" opacity="0.4"/>
+  <path d="M15,63 H51 V86 Q33,97 15,86 Z" fill="url(#g)" stroke="#c9cfd8" stroke-width="1" stroke-linejoin="round"/>
+  <circle cx="33" cy="36" r="26" fill="url(#g)" stroke="#c9cfd8" stroke-width="1"/>
+  <circle cx="33" cy="36" r="22" fill="#3b404d" stroke="#0d0e14" stroke-width="1"/>
+  <circle cx="33" cy="36" r="27" fill="#f3e1a0" opacity="0" filter="url(#glow)"/>
+  <circle cx="34.5" cy="38.5" r="19" fill="#07080c" opacity="0.5"/>
+  <circle cx="33" cy="36" r="19" fill="#f4f2ec"/>
+  <g clip-path="url(#b)"><path d="M33,58 A22,22 0 0 0 55,36 A22,22 0 0 0 50,22 A27,27 0 0 1 19,53 A22,22 0 0 0 33,58 Z" fill="#bfc0cf"/></g>
+  <circle cx="33" cy="36" r="19" fill="none" stroke="#6a6b7a" stroke-width="1"/>
+  </g>
+  <!-- 白い頭は盤から出ているので、汚れは丸みに沿わせる: ふちと座のすき間にたまり、指の当たるてっぺんは擦れてきれい -->
+  <defs><radialGradient id="dd"><stop offset="0.5" stop-color="#6b5a34" stop-opacity="0"/><stop offset="0.82" stop-color="#6b5a34" stop-opacity="0.18"/><stop offset="1" stop-color="#4a3d22" stop-opacity="0.5"/></radialGradient>
+  <radialGradient id="ds"><stop offset="0" stop-color="#fff" stop-opacity="0.75"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient></defs>
+  <circle cx="33" cy="36" r="19" fill="#f1eee2"/>
+  <g clip-path="url(#b)"><path d="M33,58 A22,22 0 0 0 55,36 A22,22 0 0 0 50,22 A27,27 0 0 1 19,53 A22,22 0 0 0 33,58 Z" fill="#b9b6ae"/></g>
+  <circle cx="33" cy="36" r="19" fill="url(#dd)"/>
+  <ellipse cx="28" cy="30" rx="9" ry="7" fill="url(#ds)" transform="rotate(-35 28 30)"/>
+  <circle cx="33" cy="36" r="20.6" fill="none" stroke="#2a2416" stroke-width="2.2" opacity="0.55"/>
+  <circle cx="33" cy="36" r="19" fill="none" stroke="#6a6b7a" stroke-width="1"/>
+</svg>

@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 88 88" width="88" height="88">
+  <!-- 古びた版（作られて 20 年ぐらい）。もとの絵 key-switch-base.svg に、小さな塗りのはげ・くすみ・うすい黄ばみをかけたもの。大きさ・軸はもとと同じ。もとの絵を直したら作り直す -->
+  <defs><filter id="worn" x="-5%" y="-5%" width="110%" height="110%" color-interpolation-filters="sRGB">
+    <feTurbulence type="fractalNoise" baseFrequency="0.09 0.13" numOctaves="3" seed="108" result="n1"/>
+    <feColorMatrix in="n1" values="0 0 0 0 0.62  0 0 0 0 0.61  0 0 0 0 0.56  9 0 0 0 -6.2" result="chip0"/><feComponentTransfer in="chip0" result="chip"><feFuncA type="linear" slope="0.35"/></feComponentTransfer>
+    <feTurbulence type="fractalNoise" baseFrequency="0.02 0.03" numOctaves="2" seed="100" result="n2"/>
+    <feColorMatrix in="n2" values="0 0 0 0 0.3  0 0 0 0 0.26  0 0 0 0 0.18  0 1.8 0 0 -1.05" result="dirt"/>
+    <feColorMatrix in="SourceGraphic" values="0.96 0.02 0.01 0 0  0.015 0.955 0.01 0 0  0.015 0.03 0.9 0 0  0 0 0 1 0" result="y"/>
+    <feComposite in="dirt" in2="y" operator="atop" result="d"/><feComposite in="chip" in2="d" operator="atop"/>
+  </filter></defs>
+  <g filter="url(#worn)">
+  <!-- 駅扱切換の鍵の座（銀色の丸い板と鍵穴）。中心は (44,44) -->
+  <defs>
+    <clipPath id="c"><circle cx="44" cy="44" r="40"/></clipPath>
+    <linearGradient id="m" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f5f7fa"/><stop offset="0.5" stop-color="#c8ccd6"/><stop offset="1" stop-color="#9196a6"/></linearGradient>
+  </defs>
+  <circle cx="46.5" cy="47.5" r="40" fill="#181f25" opacity="0.4"/>
+  <circle cx="44" cy="44" r="40" fill="url(#m)"/>
+  <g clip-path="url(#c)">
+    <path d="M30,98 L98,34 V98 Z" fill="#717689" opacity="0.45"/>
+  </g>
+  <circle cx="44" cy="44" r="40" fill="none" stroke="#4d505f" stroke-width="1.1"/>
+  <circle cx="44" cy="44" r="15" fill="#e7eaf0" stroke="#4d505f" stroke-width="1.1"/>
+  <path d="M33,50 A13,13 0 0 0 55,52" fill="none" stroke="#9da2b2" stroke-width="2" stroke-linecap="round"/>
+  <rect x="41.6" y="34" width="4.8" height="20" rx="2" fill="#1b1c26"/>
+  </g>
+</svg>
