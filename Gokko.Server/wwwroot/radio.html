@@ -66,6 +66,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js"></script>
 <script src="menulink.js"></script>
 <script src="crewsession.js"></script>
+<script src="voicefx.js"></script>
 </head>
 <body>
 <main>
@@ -117,6 +118,9 @@
       <div class="row" style="margin-top:12px">
         <span class="muted">音量</span><input type="range" id="volume" min="0" max="2" step="0.05" value="1">
         <button class="sub" id="muteBtn">マイク 入</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <span class="muted">無線風</span><input type="range" id="effect" min="0" max="1" step="0.05" value="0.6"><span class="muted" id="effectVal"></span>
       </div>
     </div>
     <div class="error" id="radioError"></div>
@@ -178,7 +182,7 @@
   };
 
   // ---- 音 ----
-  let ctx = null, opus = null, encoder = null, stream = null, micNode = null, outGain = null;
+  let ctx = null, opus = null, encoder = null, stream = null, micNode = null, outGain = null, voiceFx = null;
   let conn = null, status = null, closed = false;
   let muted = false, gateUntil = 0, micLevel = 0, rxLevel = 0;
   const voices = new Map(); // 話した人の接続ID → { decoder, next, last }
@@ -190,6 +194,20 @@
     volume = Number($("volume").value);
     if (outGain) outGain.gain.value = volume;
     try { localStorage.setItem("gokkoRadioVolume", String(volume)); } catch (e) {}
+  };
+
+  // 無線風（受けた声だけにかける。PC のクライアントと同じ味付け。0 で素の声）
+  let effect = 0.6;
+  try { const e = localStorage.getItem("gokkoRadioEffect"); if (e != null) effect = Number(e); } catch (e) {}
+  if (!(effect >= 0 && effect <= 1)) effect = 0.6;
+  $("effect").value = effect;
+  const effectText = () => { $("effectVal").textContent = effect > 0 ? Math.round(effect * 100) + "%" : "切"; };
+  effectText();
+  $("effect").oninput = () => {
+    effect = Number($("effect").value);
+    if (voiceFx) voiceFx.setStrength(effect);
+    effectText();
+    try { localStorage.setItem("gokkoRadioEffect", String(effect)); } catch (e) {}
   };
 
   // マイクの音を 16kHz・640 サンプル（40ms）ずつにまとめる（AudioWorklet。入力の速さは端末による）
@@ -230,6 +248,7 @@
     ctx = new (window.AudioContext || window.webkitAudioContext)();
     await ctx.resume();
     outGain = ctx.createGain(); outGain.gain.value = volume; outGain.connect(ctx.destination);
+    voiceFx = GokkoVoiceFx.radio(ctx, effect); voiceFx.output.connect(outGain); // 受けた声は無線風にしてから音量へ
     // 先に無音を鳴らして、iPhone で音が出る状態にする
     const silent = ctx.createBufferSource(); silent.buffer = ctx.createBuffer(1, 1, ctx.sampleRate); silent.connect(ctx.destination); silent.start();
 
@@ -307,7 +326,7 @@
     rxLevel = Math.max(rxLevel, Math.min(peak * volume, 1));
     const buffer = ctx.createBuffer(1, pcm.length, RATE);
     buffer.getChannelData(0).set(pcm);
-    const src = ctx.createBufferSource(); src.buffer = buffer; src.connect(outGain);
+    const src = ctx.createBufferSource(); src.buffer = buffer; src.connect(voiceFx.input);
     // 少し貯めてから流す（届く間隔のゆれを吸収する）。遅れすぎたら詰め直す
     const t = ctx.currentTime;
     if (v.next < t + 0.02 || v.next > t + 0.6) v.next = t + 0.12;
@@ -458,7 +477,7 @@
     for (const v of voices.values()) { try { v.decoder && v.decoder.free(); } catch (e) {} }
     voices.clear();
     try { wakeLock && wakeLock.release(); } catch (e) {}
-    ctx = null; stream = null; micNode = null; encoder = null; wakeLock = null;
+    ctx = null; voiceFx = null; stream = null; micNode = null; encoder = null; wakeLock = null;
     updateResume();
   }
 

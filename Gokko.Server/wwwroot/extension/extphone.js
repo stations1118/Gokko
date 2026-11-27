@@ -2,6 +2,7 @@
 // ・接続は /extension（SignalR）。station: その駅の電話機（ログインした人なら誰でも）、handset: PC で参加している本人の受話器
 // ・音声は列車無線と同じ形式（Opus 16kHz・モノラル・40ms・24kbps）。libopus-wasm で圧縮・展開する
 // ・呼出音・呼出中の音（リングバック）・保留音・キャッチホンの音・ボタンの音（DTMF）は、ここで作る（音のファイルは使わない）
+// ・受けた声と、回線の向こうから聞こえる音（呼出中の音・保留音など）は、電話の帯域に絞って鳴らす（voicefx.js）。電話機のベルはそのまま
 // 使い方: const phone = GokkoExtPhone.create({ el, skin: "desk" | "keitai", kind: "station" | "handset", station, token: () => "…",
 //          host: 列車無線の音を共有するとき { ctx, out, opus, tap(fn) }（省くと自分でマイクを開く）, onNeedLogin })
 //        await phone.start()（ボタンを押したときに呼ぶ。音とマイクを開く）、phone.stop()
@@ -195,7 +196,7 @@
   function create(opts) {
     addCss();
     const el = opts.el, skin = opts.skin || "desk";
-    let audio = null, ownAudio = false, encoder = null, untap = null;
+    let audio = null, ownAudio = false, encoder = null, untap = null, line = null, lineOut = null; // line: 電話の帯域にする（受けた声・回線の音）
     let conn = null, closed = true, state = null, joinedName = "";
     let buffer = "", message = "", messageUntil = 0, dirIndex = -1, showDir = false;
     let muted = false, gateUntil = 0, offHook = false;
@@ -324,6 +325,7 @@
     }
     function setVolume(v) {
       volume = Math.round(Math.min(2, Math.max(0, v)) * 100) / 100;
+      if (lineOut) lineOut.gain.value = volume;
       try { localStorage.setItem("gokkoExtVolume", String(volume)); } catch (e) {}
       say(`受話音量 ${Math.round(volume * 100)}%`, 1500);
     }
@@ -337,13 +339,14 @@
 
     // ---- 音 ----
     function ctxOk() { return audio && audio.ctx && audio.ctx.state !== "closed"; }
-    function tone(freqs, seconds, gain, at, list) {
+    // viaLine: 回線の向こうから聞こえる音（受話器から出る音）。電話の帯域に絞る
+    function tone(freqs, seconds, gain, at, list, viaLine) {
       if (!ctxOk() || !freqs) return;
       const ctx = audio.ctx, t = at ?? ctx.currentTime + 0.01;
       const g = ctx.createGain();
       g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(gain, t + 0.008);
       g.gain.setValueAtTime(gain, t + seconds - 0.012); g.gain.linearRampToValueAtTime(0, t + seconds);
-      g.connect(audio.out);
+      g.connect(viaLine && line ? line.input : audio.out);
       for (const f of freqs) {
         const o = ctx.createOscillator(); o.frequency.value = f; o.type = "sine"; o.connect(g); o.start(t); o.stop(t + seconds + 0.02);
         if (list) list.push(o);
@@ -371,13 +374,13 @@
       const notes = [1318.5, 1568, 2093, 1568, 1318.5, 1568, 2093, 2637];
       notes.forEach((f, i) => tone([f], 0.11, 0.15, at + i * 0.13, list));
     }
-    function ringBack(at, list) { tone([392, 408], 1.0, 0.07, at, list); } // 400Hz を 16Hz でゆらした呼出音（1秒鳴って2秒休む）
+    function ringBack(at, list) { tone([392, 408], 1.0, 0.07, at, list, true); } // 400Hz を 16Hz でゆらした呼出音（1秒鳴って2秒休む）
     function holdMusic(at, list) {
       // 保留音（短い旋律のくり返し。オリジナル）
       const m = [[523.3, .3], [659.3, .3], [784, .3], [659.3, .3], [698.5, .3], [880, .3], [784, .6], [587.3, .3], [698.5, .3], [880, .3], [784, .3], [659.3, .6]];
-      let t = at; for (const [f, d] of m) { tone([f, f * 2], d * 0.9, 0.045, t, list); t += d; }
+      let t = at; for (const [f, d] of m) { tone([f, f * 2], d * 0.9, 0.045, t, list, true); t += d; }
     }
-    function waitBeep(at, list) { tone([440], 0.12, 0.08, at, list); tone([440], 0.12, 0.08, at + 0.25, list); }
+    function waitBeep(at, list) { tone([440], 0.12, 0.08, at, list, true); tone([440], 0.12, 0.08, at + 0.25, list, true); }
 
     function updateSounds() {
       const act = active(), inc = incoming();
@@ -386,7 +389,8 @@
       loop("back", !!act && act.status === "outgoing", 3, ringBack);
       loop("hold", !!act && act.status === "talking" && act.peerHeld, 4.2, holdMusic);
       // 内線発信音（ツーツーツー）: 卓上で受話器を上げて、まだ番号を押していないとき
-      loop("dial", dialing() && !buffer && usable(), 0.5, (at, list) => tone([400], 0.25, 0.04, at, list));
+      loop("dial", dialing() && !buffer && usable(), 0.5, (at, list) => tone([400], 0.25, 0.04, at, list, true));
+      if (line) line.setLine(!!act && act.status === "talking" && !act.peerHeld); // 話している間だけ回線の「サー」
     }
 
     // ---- 音声 ----
@@ -421,14 +425,13 @@
     }
 
     function play(v, bytes) {
-      if (!ctxOk()) return;
+      if (!ctxOk() || !line) return;
       let pcm;
       try { pcm = v.decoder.decodeFloat(bytes); } catch (e) { return; }
       if (!pcm || !pcm.length) return;
       const ctx = audio.ctx, buf = ctx.createBuffer(1, pcm.length, RATE);
       buf.getChannelData(0).set(pcm);
-      const src = ctx.createBufferSource(); src.buffer = buf;
-      const g = ctx.createGain(); g.gain.value = volume; src.connect(g); g.connect(audio.out);
+      const src = ctx.createBufferSource(); src.buffer = buf; src.connect(line.input);
       const t = ctx.currentTime;
       if (v.next < t + 0.02 || v.next > t + 0.6) v.next = t + 0.12;
       src.start(v.next); v.next += buf.duration; v.last = performance.now();
@@ -462,7 +465,7 @@
     let lastIncoming = null, lastActive = null;
     function onState() {
       const inc = incoming(), act = active();
-      if (lastActive && !act && !held().some((c) => c.id === lastActive)) { tone([480, 620], 0.25, 0.08); offHook = false; } // 切れた
+      if (lastActive && !act && !held().some((c) => c.id === lastActive)) { tone([480, 620], 0.25, 0.08, undefined, null, true); offHook = false; } // 切れた
       lastIncoming = inc ? inc.id : null;
       lastActive = act ? act.id : null;
       if (act) offHook = true;
@@ -641,6 +644,10 @@
         if (!window.isSecureContext) throw new Error("https:// で開いてください（マイクは https でないと使えません）");
         if (opts.host) audio = await opts.host();
         else { audio = await openOwnAudio(); ownAudio = true; }
+        if (!window.GokkoVoiceFx) await loadScript("/voicefx.js");
+        line = GokkoVoiceFx.phone(audio.ctx);
+        lineOut = audio.ctx.createGain(); lineOut.gain.value = volume;
+        line.output.connect(lineOut); lineOut.connect(audio.out);
         encoder = await audio.opus.createEncoder({ sampleRate: RATE, channels: 1, frameSize: FRAME, application: audio.opus.Application.Voip,
           signal: audio.opus.Signal.Voice, bitrate: BITRATE, vbr: true, complexity: 5 });
         untap = audio.tap(onFrame);
@@ -668,6 +675,8 @@
       encoder = null;
       for (const v of voices.values()) { try { v.decoder && v.decoder.free(); } catch (e) {} }
       voices.clear();
+      if (line) { line.close(); line = null; }
+      if (lineOut) { try { lineOut.disconnect(); } catch (e) {} lineOut = null; }
       if (ownAudio && audio) audio.close();
       audio = null; ownAudio = false;
       clearInterval(timer); timer = null;
