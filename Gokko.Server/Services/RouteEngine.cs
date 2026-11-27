@@ -398,6 +398,13 @@ public sealed partial class RouteEngine
     {
         if (_central.SectionOrder(a, b) is { } manual) return manual;
         if (!DiaMode) return null;
+        var list = SectionEntryTimes(a, b);
+        return list.Count > 0 ? list.OrderBy(x => x.T).Select(x => x.Train).ToList() : null;
+    }
+
+    /// <summary>走っているダイヤの列車が、単線区間 a〜b に入る時刻（ダイヤグラムで調整したダイヤの発。もう区間の中なら最小値）。</summary>
+    private List<(string Train, double T)> SectionEntryTimes(string a, string b)
+    {
         var list = new List<(string Train, double T)>();
         foreach (var r in _runs.Values.Where(r => r.Dia != null))
         {
@@ -407,8 +414,29 @@ public sealed partial class RouteEngine
             var t = _orderPlan?.Times.GetValueOrDefault((r.Train, entry.St.Id))?.Dep ?? DiaDaySec(r, entry.St.Id, depart: true);
             if (t != null) list.Add((r.Train, t.Value));
         }
+        return list;
+    }
 
-        return list.Count > 0 ? list.OrderBy(x => x.T).Select(x => x.Train).ToList() : null;
+    /// <summary>
+    /// 出現前の自動運転列車のうち、区間の端の駅（a か b）に出て、そのまま単線区間 a〜b に入るもの（ダイヤ運転中だけ）。
+    /// Due は出すときの発車時刻（ロープレ時刻の運転日の秒）。在線位置の画面の走行順の表に、走っている列車と同じ並びで出すため
+    /// </summary>
+    private List<(AiTrains.PendingTrain P, DiaTrain Dia, (string Type, Dir Dir) Info, double Due)> PendingIntoSection(string a, string b)
+    {
+        var list = new List<(AiTrains.PendingTrain, DiaTrain, (string, Dir), double)>();
+        if (!DiaMode) return list;
+        foreach (var p in PendingTrains())
+        {
+            if (p.Station != a && p.Station != b) continue;
+            if (_runs.Values.Any(r => r.Train == p.Number) || _data.DiaOf(p.Number) is not { } dia || TrainInfo(p.Number) is not { } info) continue;
+            var from = dia.Stops.FindIndex(x => x.StationId == p.Station);
+            var next = from < 0 ? null : dia.Stops.Skip(from + 1).Select(x => x.StationId)
+                .FirstOrDefault(id => id != null && _data.Stations.TryGetValue(id, out var nd) && nd.RouteControl);
+            if (next != (p.Station == a ? b : a)) continue;
+            var due = p.Due.TotalSeconds < 4 * 3600 ? p.Due.TotalSeconds + 86400 : p.Due.TotalSeconds;
+            list.Add((p, dia, info, due));
+        }
+        return list;
     }
 
     /// <summary>
@@ -4800,8 +4828,14 @@ public sealed partial class RouteEngine
             foreach (var (a, b) in _data.SingleTrackSections)
             {
                 var order = _central.SectionOrder(a, b)?.ToList() ?? new List<string>();
-                // 自動のときの並び（ダイヤ運転中は、ダイヤグラムで調整したダイヤの、区間に入る発の順。在線位置の画面の走行順の表もこの順）
-                var auto = order.Count == 0 ? EffectiveSectionOrder(a, b)?.ToList() ?? new List<string>() : new List<string>();
+                // 自動のときの並び（ダイヤ運転中は、ダイヤグラムで調整したダイヤの、区間に入る発の順。在線位置の画面の走行順の表もこの順）。
+                // 出現前の自動運転列車（三郷に出す下りなど）も、出す駅の発車時刻で同じ並びに入れる（出てからでないと表に出なかった）
+                var pending = PendingIntoSection(a, b);
+                var auto = order.Count > 0 ? new List<string>()
+                    : DiaMode ? SectionEntryTimes(a, b).Concat(pending.Select(x => (Train: x.P.Number, T: x.Due))).OrderBy(x => x.T).Select(x => x.Train).ToList()
+                    : EffectiveSectionOrder(a, b)?.ToList() ?? new List<string>();
+                var nowSec = NowSec();
+                var speed = ClockSpeed;
                 var trains = _runs.Values.Where(r => r.HasPosition && !SectionCleared(r, a, b))
                     .Select(r =>
                     {
@@ -4823,6 +4857,17 @@ public sealed partial class RouteEngine
                             status = es is { Done: false } ? Status(r, es) : "区間内"
                         };
                     })
+                    .Concat(pending.Select(x => new
+                    {
+                        train = x.P.Number,
+                        type = x.Info.Type,
+                        direction = x.Info.Dir.Label(),
+                        from = _data.Line.StationName(x.P.Station),
+                        eta = (DateTime?)now.AddSeconds((x.Due - nowSec) / speed),
+                        index = order.IndexOf(x.P.Number),
+                        autoIndex = auto.IndexOf(x.P.Number),
+                        status = x.P.Held ? "出現前（抑止中）" : "出現前"
+                    }))
                     .OrderBy(x => x.index < 0 ? int.MaxValue : x.index)
                     .ThenBy(x => x.autoIndex < 0 ? int.MaxValue : x.autoIndex)
                     .ThenBy(x => x.eta ?? DateTime.MaxValue)
