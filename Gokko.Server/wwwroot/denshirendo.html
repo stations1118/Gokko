@@ -239,7 +239,7 @@
   }
 
   // ---- 絵 ----
-  const segEls = [], sigEls = [], destEls = [], dirEls = [];
+  const segEls = [], sigEls = [], destEls = [], dirEls = [], cutEls = [];
   let trainLayer;
 
   function build() {
@@ -276,6 +276,32 @@
     const ends = new Map();
     for (const s of L.segments) for (const p of [s.p[0], s.p[s.p.length - 1]]) { const k = p.join(); ends.set(k, (ends.get(k) || new Set()).add(s.c)); }
     for (const [k, cs] of ends) if (cs.size > 1) { const [x, y] = k.split(',').map(Number); const e = el('rect', { x: X(x) - 2, y: Y(y) - 7, width: 4, height: 14, fill: '#000' }, g0); e.style.pointerEvents = 'none'; }
+
+    // 転てつ器の分かれ目: 開いていない側は、分かれ目のすぐ先で線を切る（直進なら斜めの線を、渡るなら直線を。転換中は両方）。
+    // 分かれ目は、反位（R）の線の端のうち、同じ転てつ器の定位（N）の線の上にある所。直線は横向きとして、斜めの線が向かう側を切る
+    const onSeg = (q, o) => o.p.some((b, i) => {
+      if (!i) return false;
+      const a = o.p[i - 1], cr = (b[0] - a[0]) * (q[1] - a[1]) - (b[1] - a[1]) * (q[0] - a[0]);
+      return Math.abs(cr) < 1e-6 && q[0] >= Math.min(a[0], b[0]) - 1e-6 && q[0] <= Math.max(a[0], b[0]) + 1e-6 && q[1] >= Math.min(a[1], b[1]) - 1e-6 && q[1] <= Math.max(a[1], b[1]) + 1e-6;
+    });
+    const gCut = el('g', {}, root);
+    gCut.style.pointerEvents = 'none';
+    const addCut = (l, keep, px, py, ux, uy) => cutEls.push({ l, keep, e: el('line', { x1: Math.round(px + ux * 4), y1: Math.round(py + uy * 4), x2: Math.round(px + ux * 12), y2: Math.round(py + uy * 12), stroke: '#000', 'stroke-width': 8, 'stroke-linecap': 'butt' }, gCut) });
+    for (const s of L.segments) {
+      const lg = legsOf(s);
+      if (lg.length !== 1 || lg[0][2] !== 'R') continue;
+      const l = lg[0];
+      for (const [P, Q] of [[s.p[0], s.p[1]], [s.p[s.p.length - 1], s.p[s.p.length - 2]]]) {
+        if (!L.segments.some(o => o !== s && legsOf(o).some(m => m[0] === l[0] && m[1] === l[1] && m[2] === 'N') && onSeg(P, o))) continue;
+        const px = X(P[0]), py = Y(P[1]), dx = X(Q[0]) - px, dy = Y(Q[1]) - py, len = Math.hypot(dx, dy);
+        addCut(l, 'R', px, py, dx / len, dy / len);   // 斜めの線（反位でないとき切る）
+        addCut(l, 'N', px, py, Math.sign(dx), 0);     // 直線（定位でないとき切る）
+      }
+    }
+    // 開いている側の線は、切れ目の上にもう一度描く（切れ目が渡っている線にかからないように）
+    const gTop = el('g', { 'shape-rendering': 'crispEdges' }, root);
+    gTop.style.pointerEvents = 'none';
+    for (const se of segEls) if (se.s.leg) se.top = el('polyline', { points: se.line.getAttribute('points'), fill: 'none', stroke: C.free, 'stroke-width': 4, 'stroke-linecap': 'butt', 'stroke-linejoin': 'miter' }, gTop);
 
     for (const d of L.dests) {
       const x = X(d.at[0]), y = Y(d.at[1]);
@@ -354,15 +380,18 @@
     const occ = occSet();
     const { green, flash } = routeSets(occ);
 
-    for (const { s, line } of segEls) {
+    const pointMoving = l => !S(l[0]) || S(l[0]).moving.includes(l[1]);
+    for (const { s, line, top } of segEls) {
       let col = C.free;
       const lg = legsOf(s);
-      const moving = lg.some(l => !S(l[0]) || S(l[0]).moving.includes(l[1]));
-      if (lg.length && (moving ? blink : !legOpen(s))) col = C.dark;   // 開いていない側（転換中は点滅）
+      const shut = lg.length && (lg.some(pointMoving) || !legOpen(s));   // 開いていない側（転換中は両方）は灰色のまま。分かれ目の切れ目で示す
+      if (shut) col = C.free;
       else if (occ.has(s.c)) col = C.occ;
       else if (green.has(s.c)) col = flash.has(s.c) && blink ? C.free : C.route;
       line.setAttribute('stroke', col);
+      if (top) { top.setAttribute('stroke', col); top.style.display = shut ? 'none' : ''; }
     }
+    for (const { l, keep, e } of cutEls) e.style.display = pointMoving(l) || S(l[0])?.point[l[1]] !== keep ? '' : 'none';
 
     for (const { sg, lamp, tri } of sigEls) {
       lamp.setAttribute('fill', signalGo(sg, occ) ? C.route : C.occ);
