@@ -925,19 +925,21 @@ public sealed class RelayStation
         }
     }
 
-    // 誤操作防止のキャップ（"s:12" 発点てこ・"p:31" 転てつ器てこ・"d:A" 着点ボタン・"allStop" 一斉停止）。
+    // 誤操作防止のキャップ（"s:12" 発点てこ・"p:31" 転てつ器てこ・"d:A" 着点ボタン・"allStop" 一斉停止・"dir:11" 方向てこ・"a:98" 駅扱の切換てこ）。
     // かぶせている間、そのてこ・ボタンは動かない。盤の状態として全員の画面に出す（サーバーを再起動するまで残る）
     private readonly HashSet<string> _caps = new();
 
     private bool CapOk(string cap) => cap == "allStop" && Data.AllStop != null
         || cap.StartsWith("s:") && Data.SignalLevers.Any(l => "s:" + l.N == cap)
         || cap.StartsWith("p:") && _ptLever.ContainsKey(cap[2..])
-        || cap.StartsWith("d:") && Data.DestButtons.Any(b => "d:" + b.Id == cap);
+        || cap.StartsWith("d:") && Data.DestButtons.Any(b => "d:" + b.Id == cap)
+        || cap.StartsWith("dir:") && Data.Directions.Any(d => "dir:" + d.N == cap)
+        || cap.StartsWith("a:") && Data.Areas.Any(a => "a:" + a.Id == cap);
 
     private string? OperateCore(string op, string id, string dir, bool keyAllowed, string? crewId)
     {
         // キャップをかぶせたてこ・ボタンは、扱っても何も起きない
-        var capOf = op switch { "signal" => "s:" + id, "point" => "p:" + id, "dest" => "d:" + id, "allStop" => "allStop", _ => null };
+        var capOf = op switch { "signal" => "s:" + id, "point" => "p:" + id, "dest" => "d:" + id, "allStop" => "allStop", "direction" => "dir:" + id, "area" => "a:" + id, _ => null };
         if (capOf != null && _caps.Contains(capOf)) return "";   // 文は出さない（記録にも残さない）
         switch (op)
         {
