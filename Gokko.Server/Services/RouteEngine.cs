@@ -1989,6 +1989,8 @@ public sealed partial class RouteEngine
         // 集中扱いで、確定後に番線が変えられた駅（ダイヤグラム・管理画面から）
         foreach (var st in run.Stations.Where(s => !s.Done && s.Locked))
             ApplyTrackChange(run, st, now);
+        foreach (var st in run.Stations.Where(s => !s.Done))
+            UndoStuckTrackChange(run, st, now);
 
         // ゲームの進路一覧と突き合わせる（開通の確認・ゲームの自動解除・取り消した進路）
         foreach (var req in run.Requests.Where(r => !r.Released))
@@ -2182,6 +2184,52 @@ public sealed partial class RouteEngine
         && !(DiaMode && st.TrackSource == "ダイヤ")
         && _central.TrackOverride(run.Train, st.St.Id) == null
         && !run.Requests.Any(r => r.Station == st && !r.Released && r.CancelledUtc == null);
+
+    /// <summary>
+    /// 集中扱いで変えた番線に対向列車がいて（向かっていて）、その対向列車も、この列車を待っている（どちらも動けない）とき、
+    /// 司令員が出勤していなければ、番線の指示を取り消して、番線を選び直す（指示がなかったときの番線に戻る）。
+    /// 司令員が出勤していれば、何もしない（司令員が見て決める）。
+    /// ・場内の手前で待つ形: 高見沢で、下りの 1145 を、上りの 1250 が止まっている 2番線に変えたら、1145 は場内の手前で、1250 は出発の手前で止まり続けた
+    /// ・手前の駅で待つ形: 上りの 1206A の水越を、下りの 1145 が止まっている 1番線に変えたら、1206A は藤江の出発の手前で、1145 は水越の出発の手前で止まり続けた
+    /// </summary>
+    private void UndoStuckTrackChange(TrainRun run, StationRun st, DateTime now)
+    {
+        if (st.TrackSource != "集中" || st.Track is not { } track || _central.TrackOverride(run.Train, st.St.Id) == null) return;
+        // この列車を止めている対向列車: 場内が「在線」で待っているか、手前の駅の出発が「この駅のこの番線に対向列車」で待っている
+        var m = st.Arrive == GroupState.Waiting ? Regex.Match(st.ArriveWait, "在線（(.+?)）") : Match.Empty;
+        if (!m.Success)
+        {
+            var ahead = Regex.Escape($"{st.St.Name}{track}番線に対向列車（") + "(.+?)）";
+            m = run.Stations.Where(s => !s.Done && s != st && s.Depart == GroupState.Waiting).Select(s => Regex.Match(s.DepartWait, ahead)).FirstOrDefault(x => x.Success) ?? Match.Empty;
+        }
+        if (!m.Success) return;
+        var other = _runs.Values.FirstOrDefault(o => o != run && o.Train == m.Groups[1].Value);
+        if (other == null || other.Dir == run.Dir) return;
+        // その対向列車も、この列車を待っている（「単線区間に対向列車（この列車）」「○○△番線に対向列車（この列車）」）
+        var stuck = $"対向列車（{run.Train}）";
+        if (!other.Stations.Any(s => !s.Done && s.Depart == GroupState.Waiting && s.DepartWait.Contains(stuck))) return;
+        var active = run.Requests.Where(r => r.Station == st && !r.Released && r.CancelledUtc == null).ToList();
+        if (active.Any(r => r.Def.Circuits.Any(run.Player.TrackCircuits.Contains))) return; // もう進路に入っている
+        if (_crew.DispatcherOnDuty()) return;
+
+        var old = st.Track;
+        _central.SetTrack(run.Train, st.St.Id, null);
+        ChooseTrack(run, st);
+        if (st.Track == old)
+        {
+            _log.Note($"番線変更: {run.Train} {st.St.Name} {old}番線の指示を自動で取り消しました（司令員不在。{other.Train} がいて、どちらも動けないため）。ほかに選べる番線はありません");
+            return;
+        }
+        foreach (var r in active) r.CancelledUtc = now;
+        st.LoopArrivedUtc = null;
+        st.InTrackUtc = null;
+        st.StoppedUtc = null;
+        st.Partners.Clear();
+        (st.Arrive, st.ArriveWait) = (GroupState.None, "");
+        (st.Depart, st.DepartWait) = (GroupState.None, "");
+        ResolvePaths(run, st);
+        _log.Note($"番線変更: {run.Train} {st.St.Name} {old}番線の指示を自動で取り消し、{st.Track?.ToString() ?? "-"}番線に戻しました（司令員不在。{old}番線に {other.Train} がいて、どちらも動けないため）");
+    }
 
     /// <summary>
     /// 確定後の番線の変更（集中扱い）。進路をまだ要求していなければそのまま変える。
