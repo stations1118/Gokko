@@ -197,7 +197,7 @@ public sealed class Run(Scenario scenario, Options opt, string serverDir, string
             var realSeconds = scenario.Minutes * 60 / opt.Speed;
             var started = Stopwatch.StartNew();
             var injected = !opt.SelfTest;
-            var driver = new Driver(_http, url, text => { lock (ops) ops.Add(text); }, DoubleTrackStations(work));
+            await using var driver = new Driver(_http, url, text => { lock (ops) ops.Add(text); }, DoubleTrackStations(work));
             var steps = new Queue<Step>(scenario.Steps.OrderBy(x => x.At));
             while (started.Elapsed.TotalSeconds < realSeconds)
             {
@@ -209,7 +209,13 @@ public sealed class Run(Scenario scenario, Options opt, string serverDir, string
                 {
                     var step = steps.Dequeue();
                     lock (ops) ops.Add($"[{step.At}分] {step.Text}");
-                    await step.Do(driver);
+                    // 場面の確かめ（操作の中で投げた例外）に失敗しても、最後まで走らせて決まりを見続ける（詰まりなども捕まえるため）
+                    try { await step.Do(driver); }
+                    catch (Exception stepError)
+                    {
+                        error ??= $"[{step.At}分] {step.Text}: {stepError.Message}";
+                        lock (ops) ops.Add($"  ✗ {stepError.Message}");
+                    }
                 }
                 var tid = await _http.GetFromJsonAsync<JsonElement>($"{url}/api/tid/state");
                 var ai = await _http.GetFromJsonAsync<JsonElement>($"{url}/api/admin/ai-trains");

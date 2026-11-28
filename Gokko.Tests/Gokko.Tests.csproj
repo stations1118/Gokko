@@ -9,4 +9,10 @@
     <AssemblyName>Gokko.Tests</AssemblyName>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- ゲームをつないだ列車の代わり（FakePlayer）が、クライアントと同じハブに報告を送るため -->
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="8.0.11" />
+    <ProjectReference Include="..\Gokko.Common\Gokko.Common.csproj" />
+  </ItemGroup>
+
 </Project>
