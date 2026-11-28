@@ -133,6 +133,29 @@ public sealed record Scenario(string Name, string Slice, int Minutes, string Abo
             })
         ]),
 
+        // 三郷から出す下り（出現前の自動運転列車）は、出す前から、その先で通る単線区間（赤山町〜西赤山）の走行順にも入る。
+        // 入らないと、西赤山の上りが先に単線区間を取り、ダイヤの行き違いが崩れていた（11/28）。
+        // 1206A（上り・西赤山 12:19 発）→ 1103A（下り・三郷 12:24 発）→ 1242（上り）の順が、ダイヤの区間に入る順
+        new("三郷から来る下りの走行順", "12:15", 25, "三郷に出す前の 1103A が、赤山町〜三郷だけでなく赤山町〜西赤山の走行順にも、ダイヤの順で入り、そのとおりに走る",
+        [
+            new(1, "出現前の 1103A が、赤山町〜西赤山の走行順で 1206A のあと・1242 の前にいる", async d =>
+            {
+                var order = await d.SectionOrderAsync("TH59", "TH58");
+                int At(string t) => order.IndexOf(t);
+                if (At("1103A") < 0 || At("1206A") < 0 || At("1242") < 0 || !(At("1206A") < At("1103A") && At("1103A") < At("1242")))
+                    throw new InvalidOperationException($"赤山町〜西赤山の走行順が違います: {string.Join(" ", order)}");
+                if (!(await d.SectionOrderAsync("TH58", "TH57")).Contains("1103A"))
+                    throw new InvalidOperationException("赤山町〜三郷の走行順に 1103A がいません");
+                d.Log($"赤山町〜西赤山の走行順: {string.Join(" ", order)}");
+            }),
+            new(17, "1103A が赤山町〜西赤山を通り終えている（1242 より先に通った）", async d =>
+            {
+                var order = await d.SectionOrderAsync("TH59", "TH58");
+                if (order.Contains("1103A")) throw new InvalidOperationException($"1103A がまだ赤山町〜西赤山を通っていません: {string.Join(" ", order)}");
+                d.Log($"12:32 の赤山町〜西赤山の走行順: {string.Join(" ", order)}");
+            })
+        ]),
+
         // 赤山町で待っている間にロープレ時刻を飛ばすと、三郷から走ってくる自動運転の列車も消える。飛ばした先の時刻で 1325A がもう赤山町を
         // 過ぎているはずでも、待っているユーザーのために、もう一度三郷から走らせて引き継ぐ（待ちっぱなしにしない）
         // 引き継いだあとは見ない（ユーザーの代わりは運転しないので、長く走らせると赤山町に止まったままになり、後ろが詰まる）
@@ -241,6 +264,17 @@ public sealed class Driver(HttpClient http, string url, Action<string> log, IRea
         var dia = await http.GetFromJsonAsync<JsonElement>($"{url}/api/admin/diagram");
         return dia.GetProperty("appear").EnumerateArray().Where(a => a.GetProperty("train").GetString() == train)
             .Select(a => a.GetProperty("reason").GetString()).FirstOrDefault();
+    }
+
+    /// <summary>在線位置の画面の、単線区間 a〜b の走行順（列番の並び）。</summary>
+    public async Task<List<string>> SectionOrderAsync(string a, string b)
+    {
+        var state = await http.GetFromJsonAsync<JsonElement>($"{url}/api/tid/state");
+        var sec = state.GetProperty("sections").EnumerateArray()
+            .FirstOrDefault(s => s.GetProperty("a").GetString() == a && s.GetProperty("b").GetString() == b
+                                 || s.GetProperty("a").GetString() == b && s.GetProperty("b").GetString() == a);
+        return sec.ValueKind == JsonValueKind.Undefined ? new()
+            : sec.GetProperty("trains").EnumerateArray().Select(t => t.GetProperty("train").GetString() ?? "").ToList();
     }
 
     /// <summary>走っている自動運転の列車の列番。</summary>

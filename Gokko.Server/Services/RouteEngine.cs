@@ -398,7 +398,10 @@ public sealed partial class RouteEngine
     {
         if (_central.SectionOrder(a, b) is { } manual) return manual;
         if (!DiaMode) return null;
+        // 出現前の自動運転列車（三郷に出す下りなど）も、区間に入る時刻で入れる（抑止中・時刻を過ぎても出せていない列車は除く）。
+        // 入れないと、出す前の列車を待たずに対向列車が単線区間を先に取り、ダイヤの行き違いが崩れる（赤山町〜西赤山など、出す駅の先の区間でも）
         var list = SectionEntryTimes(a, b);
+        list.AddRange(PendingSectionEntries(a, b).Where(x => !x.P.Held && !x.P.Late).Select(x => (x.P.Number, x.T)));
         return list.Count > 0 ? list.OrderBy(x => x.T).Select(x => x.Train).ToList() : null;
     }
 
@@ -418,25 +421,58 @@ public sealed partial class RouteEngine
     }
 
     /// <summary>
-    /// 出現前の自動運転列車のうち、区間の端の駅（a か b）に出て、そのまま単線区間 a〜b に入るもの（ダイヤ運転中だけ）。
-    /// Due は出すときの発車時刻（ロープレ時刻の運転日の秒）。在線位置の画面の走行順の表に、走っている列車と同じ並びで出すため
+    /// 出現前の自動運転列車が単線区間 a〜b に入る駅（Entry）と時刻（T。ダイヤの時刻を、出す時刻のずれの分だけずらしたもの。ロープレ時刻の運転日の秒）。
+    /// 出す駅から入る区間だけでなく、その先で通る区間も（三郷に出す下りの、赤山町〜西赤山など）。ダイヤ運転中だけ
     /// </summary>
-    private List<(AiTrains.PendingTrain P, DiaTrain Dia, (string Type, Dir Dir) Info, double Due)> PendingIntoSection(string a, string b)
+    private List<(AiTrains.PendingTrain P, (string Type, Dir Dir) Info, string Entry, double T)> PendingSectionEntries(string a, string b)
     {
-        var list = new List<(AiTrains.PendingTrain, DiaTrain, (string, Dir), double)>();
+        var list = new List<(AiTrains.PendingTrain, (string, Dir), string, double)>();
         if (!DiaMode) return list;
         foreach (var p in PendingTrains())
         {
-            if (p.Station != a && p.Station != b) continue;
-            if (_runs.Values.Any(r => r.Train == p.Number) || _data.DiaOf(p.Number) is not { } dia || TrainInfo(p.Number) is not { } info) continue;
-            var from = dia.Stops.FindIndex(x => x.StationId == p.Station);
-            var next = from < 0 ? null : dia.Stops.Skip(from + 1).Select(x => x.StationId)
-                .FirstOrDefault(id => id != null && _data.Stations.TryGetValue(id, out var nd) && nd.RouteControl);
-            if (next != (p.Station == a ? b : a)) continue;
-            var due = p.Due.TotalSeconds < 4 * 3600 ? p.Due.TotalSeconds + 86400 : p.Due.TotalSeconds;
-            list.Add((p, dia, info, due));
+            if (PendingShift(p) is not { } ps || TrainInfo(p.Number) is not { } info) continue;
+            var (dia, from, shift, leave) = ps;
+            var ctrl = Enumerable.Range(from, dia.Stops.Count - from)
+                .Where(i => dia.Stops[i].StationId is { } id && _data.Stations.TryGetValue(id, out var sd) && sd.RouteControl).ToList();
+            for (var k = 0; k + 1 < ctrl.Count; k++)
+            {
+                var sid = dia.Stops[ctrl[k]].StationId!;
+                var nx = dia.Stops[ctrl[k + 1]].StationId!;
+                if (!(sid == a && nx == b || sid == b && nx == a)) continue;
+                var t = k == 0 ? leave : DaySec(dia.Stops[ctrl[k]].Dep ?? dia.Stops[ctrl[k]].Arr) + shift;
+                if (t != null) list.Add((p, info, sid, t.Value));
+                break;
+            }
         }
         return list;
+    }
+
+    /// <summary>
+    /// 出現前の列車のダイヤと、出す駅の位置・ダイヤからのずれ（秒）・出す駅を出る時刻（ロープレ時刻の運転日の秒。時刻を過ぎても出せていなければ今）。
+    /// もう走っている・ダイヤにない列車は null
+    /// </summary>
+    private (DiaTrain Dia, int From, double Shift, double Leave)? PendingShift(AiTrains.PendingTrain p)
+    {
+        if (_runs.Values.Any(r => r.Train == p.Number) || _data.DiaOf(p.Number) is not { } dia) return null;
+        var from = dia.Stops.FindIndex(x => x.StationId == p.Station);
+        if (from < 0 || DaySec(dia.Stops[from].Dep ?? dia.Stops[from].Arr) is not { } diaDep) return null;
+        var due = p.Due.TotalSeconds < 4 * 3600 ? p.Due.TotalSeconds + 86400 : p.Due.TotalSeconds;
+        var leave = Math.Max(due, NowSec());
+        return (dia, from, leave - diaDep, leave);
+    }
+
+    /// <summary>出現前の列車が、その駅（ゾーン）に着く（depart なら出る）見込み（ダイヤ＋ずれ。待ちは入れない）。出現前でなければ null。</summary>
+    private DateTime? PendingTimeAt(string number, int zone, bool depart, DateTime now)
+    {
+        if (PendingTrains().FirstOrDefault(x => x.Number == number) is not { } p || PendingShift(p) is not { } ps) return null;
+        var (dia, from, shift, leave) = ps;
+        var sid = _data.Line.StationAtZone(zone);
+        var i = dia.Stops.FindIndex(from, x => x.StationId == sid);
+        if (i < 0) return null;
+        double? sec = i == from ? leave
+            : depart ? DaySec(dia.Stops[i].Dep ?? dia.Stops[i].Arr) + shift
+            : DaySec(dia.Stops[i].Arr ?? dia.Stops[i].Dep) + shift;
+        return sec is { } v ? now.AddSeconds((v - NowSec()) / ClockSpeed) : null;
     }
 
     /// <summary>
@@ -3697,18 +3733,6 @@ public sealed partial class RouteEngine
         // 対向列車は、この区間を通らないとその番線から出られない。入っていくと、お互いに動けなくなる
         if (NextTrackBlocker(run, next) is { } blocker) return blocker.Why;
 
-        // ---- 出現前の自動運転列車: 相手の駅にこれから出す対向列車が、ダイヤでこの列車より先に区間に入るなら待つ ----
-        // 出す前は走っていないので走行順に入らない。先に区間へ出ると、出てきた列車が相手の駅で対向列車を待つことになる
-        // （三郷始発の下りが、赤山町で早めに出発を開けた上りを三郷で5分待った）。走行順を手で決めていれば、そちらに従う。
-        // 抑止中・時刻を過ぎても出せていない列車は待たない（出てこないかもしれない）
-        if (DiaMode && _central.SectionOrder(st.St.Id, next) == null && DiaDaySec(run, st.St.Id, depart: true) is { } myDep)
-            foreach (var p in PendingTrains())
-            {
-                if (p.Station != next || p.Held || p.Late || TrainInfo(p.Number) is not { } pi || pi.Dir == run.Dir) continue;
-                var due = p.Due.TotalSeconds < 4 * 3600 ? p.Due.TotalSeconds + 86400 : p.Due.TotalSeconds;
-                if (due < myDep) return $"出現前の対向列車（{p.Number}）が{nextName}から先";
-            }
-
         // ---- 走行順（集中扱い）: 区間ごとに決めた順で流す ----
         // ダイヤ運転中（手で決めていなければ）は、いまサーバー上で走っているダイヤの列車だけで、区間に入るダイヤの時刻の順に並べる。
         // 交換の相手が走っていれば（参加していれば）その列車を待つ。走っていなければ待たない（上の「必ず待つ」で、区間と相手の駅の出発に
@@ -3727,6 +3751,12 @@ public sealed partial class RouteEngine
                             // 先の対向列車が、この駅で自分のいる番線に入れずに待っているなら、自分が先（待つとお互いに動けない）
                             && !(p.Dir != run.Dir && NextTrackBlocker(p, st.St.Id)?.Run == run))
                 .ToList();
+            // 出現前の自動運転列車（まだ走っていない対向列車）で、走行順が先のもの。出す前から待つ
+            // （先に区間へ出ると、出てきた列車が対向列車を待つことになる。抑止中・時刻を過ぎても出せていない列車は走行順に入らない）
+            var pendingNames = PendingTrains().Where(p => !p.Held && !p.Late).Select(p => p.Number).ToHashSet();
+            before.AddRange(order.TakeWhile(t => t != run.Train)
+                .Where(t => RunByTrain(t) == null && pendingNames.Contains(t) && TrainInfo(t) is { } ti && ti.Dir != run.Dir)
+                .Select(t => $"{t}（出現前）"));
             return before.Count > 0 ? $"走行順待ち（{st.St.Name}〜{nextName}: {string.Join("・", before)} が先）" : null;
         }
 
@@ -4303,6 +4333,9 @@ public sealed partial class RouteEngine
                             && !(p.Dir == r.Dir && IsAheadOf(r, p) && !MayOvertake(p, r, st)))
                             Max(p.Dir == r.Dir ? pp.DepAt.TryGetValue(z, out var d1) ? d1 : null : pp.ArrAt.TryGetValue(z, out var a1) ? a1 : null,
                                 $"単線区間の走行順（{name} が先）");
+                        // 出現前の自動運転列車が先なら、その列車のダイヤ（出す時刻のずれの分ずらす）の着・発のあと
+                        else if (RunByTrain(name) == null && TrainInfo(name) is { } ni)
+                            Max(PendingTimeAt(name, z, depart: ni.Dir == r.Dir, now), $"単線区間の走行順（{name}（出現前）が先）");
 
                 // 駅の出発順序: 同じ向きの先の列車がこの駅を出たあと
                 if (EffectiveOrder(sid, r.Dir) is { } order && order.Contains(r.Train))
@@ -4452,7 +4485,7 @@ public sealed partial class RouteEngine
                     shift = depBase.Value - diaD;
                 }
                 var depSec = depBase;
-                if (depSec != null && SingleTrackWait(dia, i, z, info.Dir, depSec.Value, shift, plans, runs, UtcOf, speed) is { } wait && wait > 0)
+                if (depSec != null && SingleTrackWait(p.Number, dia, i, z, info.Dir, depSec.Value, shift, plans, runs, UtcOf, speed, now) is { } wait && wait > 0)
                 {
                     shift += wait;
                     depSec += wait;
@@ -4564,16 +4597,36 @@ public sealed partial class RouteEngine
     /// 反対向きの列車が区間にいる・この列車がその先の駅に着くより前に区間へ入る見込みで、この駅に着くのがこの列車の発車より後なら、着くまで待つ。
     /// depSec はこの駅の発車（ロープレ時刻の秒）、shift はダイヤからのずれ（その先の駅の着に足す）
     /// </summary>
-    private double? SingleTrackWait(DiaTrain dia, int i, int z, Dir dir, double depSec, double shift, Dictionary<TrainRun, PlanResult> plans,
-        List<TrainRun> runs, Func<double, DateTime> utcOf, double speed)
+    private double? SingleTrackWait(string number, DiaTrain dia, int i, int z, Dir dir, double depSec, double shift, Dictionary<TrainRun, PlanResult> plans,
+        List<TrainRun> runs, Func<double, DateTime> utcOf, double speed, DateTime now)
     {
         var sid = dia.Stops[i].StationId!;
         if (!_data.Stations.TryGetValue(sid, out var a) || !a.RouteControl) return null;
         var j = dia.Stops.FindIndex(i + 1, x => x.StationId != null && _data.Stations.TryGetValue(x.StationId, out var b) && b.RouteControl);
         if (j < 0 || !_data.IsSingleTrack(sid, dia.Stops[j].StationId!)) return null;
-        var zb = _data.Line.ZoneOfStation(dia.Stops[j].StationId!);
+        var nextId = dia.Stops[j].StationId!;
+        var zb = _data.Line.ZoneOfStation(nextId);
         if (DaySec(dia.Stops[j].Arr ?? dia.Stops[j].Dep) is not { } arrB) return null;
         var (lo, hi) = (Math.Min(z, zb), Math.Max(z, zb));
+
+        // 走行順に入っていれば（ダイヤ運転中）、運転と同じく、走行順で先の対向列車だけを待つ（その列車がこの駅に着くまで）
+        if (EffectiveSectionOrder(sid, nextId) is { } order && order.Contains(number))
+        {
+            var dep0 = utcOf(depSec);
+            DateTime? until = null;
+            foreach (var name in order.TakeWhile(t => t != number))
+            {
+                DateTime? arr = null;
+                if (RunByTrain(name) is { } r)
+                {
+                    if (r.Dir == dir || SectionCleared(r, sid, nextId) || !plans.TryGetValue(r, out var pl) || !pl.ArrAt.TryGetValue(z, out var ra)) continue;
+                    arr = ra;
+                }
+                else if (TrainInfo(name) is { } ni && ni.Dir != dir) arr = PendingTimeAt(name, z, depart: false, now);
+                if (arr is { } t && t > dep0 && (until == null || t > until)) until = t;
+            }
+            return until is { } u ? (u - dep0).TotalSeconds * speed : null;
+        }
 
         double wait = 0;
         for (var guard = 0; guard < 10; guard++)
@@ -4915,10 +4968,9 @@ public sealed partial class RouteEngine
                 var order = _central.SectionOrder(a, b)?.ToList() ?? new List<string>();
                 // 自動のときの並び（ダイヤ運転中は、ダイヤグラムで調整したダイヤの、区間に入る発の順。在線位置の画面の走行順の表もこの順）。
                 // 出現前の自動運転列車（三郷に出す下りなど）も、出す駅の発車時刻で同じ並びに入れる（出てからでないと表に出なかった）
-                var pending = PendingIntoSection(a, b);
-                var auto = order.Count > 0 ? new List<string>()
-                    : DiaMode ? SectionEntryTimes(a, b).Concat(pending.Select(x => (Train: x.P.Number, T: x.Due))).OrderBy(x => x.T).Select(x => x.Train).ToList()
-                    : EffectiveSectionOrder(a, b)?.ToList() ?? new List<string>();
+                // 出す駅から入る区間だけでなく、その先で通る区間（赤山町〜西赤山など）にも出す。並びは運転と同じ（EffectiveSectionOrder）
+                var pending = PendingSectionEntries(a, b);
+                var auto = order.Count > 0 ? new List<string>() : EffectiveSectionOrder(a, b)?.ToList() ?? new List<string>();
                 var nowSec = NowSec();
                 var speed = ClockSpeed;
                 var trains = _runs.Values.Where(r => r.HasPosition && !SectionCleared(r, a, b))
@@ -4947,8 +4999,8 @@ public sealed partial class RouteEngine
                         train = x.P.Number,
                         type = x.Info.Type,
                         direction = x.Info.Dir.Label(),
-                        from = _data.Line.StationName(x.P.Station),
-                        eta = (DateTime?)now.AddSeconds((x.Due - nowSec) / speed),
+                        from = _data.Line.StationName(x.Entry),
+                        eta = (DateTime?)now.AddSeconds((x.T - nowSec) / speed),
                         index = order.IndexOf(x.P.Number),
                         autoIndex = auto.IndexOf(x.P.Number),
                         status = x.P.Held ? "出現前（抑止中）" : "出現前"
