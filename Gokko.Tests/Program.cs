@@ -20,6 +20,16 @@ public static class Program
     public static async Task<int> Main(string[] args)
     {
         Console.OutputEncoding = Encoding.UTF8;
+        // データの突き合わせだけ（サーバーは起動しない。数秒）
+        if (args.Contains("--data")) return DataCheck.Run(FindRoot());
+        // 今ある食い違いを、data-known.txt に書く形（タブ区切り）で出す（わざとと決めたものを写すため）
+        if (args.Contains("--data-list"))
+        {
+            foreach (var f in DataCheck.Check(FindRoot()).Where(f => f.Kind == "食い違い"))
+                Console.WriteLine($"{f.Rule}	{f.Station}	{f.Name}");
+            return 0;
+        }
+
         var opt = Options.Parse(args);
         if (opt == null) return 2;
 
