@@ -63,6 +63,13 @@ public sealed record Scenario(string Name, string Slice, int Minutes, string Abo
             new(8, "2本の番線を変える", d => ChangeTracksAsync(d, 2)),
             new(14, "2本の番線を変える", d => ChangeTracksAsync(d, 2))
         ]),
+        // 司令員がいないので、対向列車のいる番線に変えて両方が動けなくなったら、サーバーが番線の指示を取り消す
+        new("対向列車の番線に変える", "12:00", 40, "単線の駅で、これから着く駅の番線を、そこで行き違う対向列車と同じ番線に変える（3回、1本ずつ）",
+        [
+            new(2, "対向列車と同じ番線に変える", ChangeToOpposingTrackAsync),
+            new(8, "対向列車と同じ番線に変える", ChangeToOpposingTrackAsync),
+            new(14, "対向列車と同じ番線に変える", ChangeToOpposingTrackAsync)
+        ]),
 
         new("臨時停車と打ち切り", "07:30", 40, "通過する駅に臨時停車を入れ、1本を途中の駅で打ち切る",
         [
@@ -158,6 +165,34 @@ public sealed record Scenario(string Name, string Slice, int Minutes, string Abo
     ];
 
     /// <summary>これから着く駅（まだ進路を取っていない・番線を2つ以上選べる）の番線を、ほかの番線に変える。</summary>
+    // 単線の駅で、対向列車（同じ2駅を逆の順に通る列車）が使う番線に変える
+    private static async Task ChangeToOpposingTrackAsync(Driver d)
+    {
+        var all = await d.UpcomingAsync(minStations: 2);
+        foreach (var (train, st) in all)
+        {
+            if (d.Recall("tracked").Any(x => x.Train == train)) continue;
+            for (var i = 1; i < st.Count; i++)
+            {
+                var s = st[i];
+                if (d.DoubleTrack.Contains(s.Id) || s.Locked || s.Track == null) continue;
+                foreach (var (other, ost) in all)
+                {
+                    var oi = ost.FindIndex(x => x.Id == s.Id);
+                    var prev = ost.FindIndex(x => x.Id == st[i - 1].Id);
+                    // 対向列車: この駅のあとに、こちらの1つ手前の駅を通る。この駅までに着く駅が少ない（先に着きそうな）列車
+                    if (other == train || oi < 0 || prev <= oi || oi > i) continue;
+                    if (ost[oi].Track is not { } to || to == s.Track || !s.Options.Contains(to)) continue;
+                    await d.PostAsync("route/track", new { train, station = s.Id, track = to });
+                    d.Remember("tracked", train, s.Id);
+                    d.Log($"{train} の {s.Name} を {s.Track}番線 → {to}番線（対向の {other} と同じ番線）");
+                    return;
+                }
+            }
+        }
+        d.Log("対向列車と同じ番線に変えられる列車がありません");
+    }
+
     private static async Task ChangeTracksAsync(Driver d, int count)
     {
         var n = 0;
