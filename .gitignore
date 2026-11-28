@@ -4,6 +4,8 @@
 !/Gokko.Client/
 !/Gokko.Common/
 !/Gokko.Server/
+!/Gokko.Tests/
+!/.github/
 
 # ビルドの出力
 bin/
@@ -14,3 +16,6 @@ publish/
 
 
 Gokko.Client/ServerAddress.Local.cs
+
+# 走らせて確かめる試験の記録
+Gokko.Tests/out/
