@@ -6,7 +6,13 @@ using Gokko.Common;
 namespace Gokko.Client;
 
 /// <summary>ゲームの停車駅1つ（TrainCrewInput の stationList から）。TotalLength はその駅の停止位置を走った距離で（シナリオの番線・両数に合った停目）。</summary>
-public sealed record GameStop(string Name, string StopPosName, bool Stops, double TotalLength);
+public sealed record GameStop(string Name, string StopPosName, bool Stops, double TotalLength)
+{
+    /// <summary>停車駅の見分け（駅名と停止位置名）。ダイヤの駅名が同じでも、引上線の停目と番線の停目は別の駅として見分ける。</summary>
+    public string Key => KeyOf(Name, StopPosName);
+
+    public static string KeyOf(string? name, string? stopPosName) => $"{name}|{stopPosName}";
+}
 
 /// <summary>ゲームの信号機1つ（名前・現示・そこまでの距離 m）。</summary>
 public sealed record GameSignal(string Name, string Phase, double Distance);
@@ -33,9 +39,16 @@ public enum StopDistanceKind { None, Rough, Confirmed }
 /// そこまでの距離（200m より遠くても、見えていれば入る。見えなければ null）。
 /// </summary>
 public sealed record StopDistanceResult(double Remaining, StopDistanceKind Kind, string Station, string Track, string ScenarioTrack,
-    double Rough = 0, string? Signal = null, double? SignalDistance = null, string Dir = "")
+    double Rough = 0, string? Signal = null, double? SignalDistance = null, string Dir = "", string Key = "")
 {
     public static readonly StopDistanceResult Nothing = new(0, StopDistanceKind.None, "", "", "");
+
+    /// <summary>
+    /// この残りが、その停車駅（<see cref="GameStop.Key"/>）のものか。自動運転は、目指す駅のものでなければ使わない。
+    /// ダイヤの駅名（Station）で比べると、引上線から出る始発で、引上線の停目の残り（停止位置名から読むと駅名は「新野崎」。止まっていればほぼ 0m）を
+    /// 新野崎のものと取り違え、引上線で新野崎に着いたことにして、新井川を目指して4番線の停目を通過した（1667）。
+    /// </summary>
+    public bool IsFor(string key) => Kind != StopDistanceKind.None && Key == key;
 }
 
 /// <summary>
@@ -166,13 +179,13 @@ public sealed partial class StopDistance
             var sixCar = actual.After is { } after ? signal.Distance + after : signal.Distance - (actual.Before ?? 0);
             var confirmed = sixCar - actual.OffsetFor(x.Cars);
             _confirmed = (index, track, confirmed + x.Traveled);
-            return new StopDistanceResult(confirmed, StopDistanceKind.Confirmed, station, track, scenarioTrack, rough, signal.Name, signal.Distance, dir);
+            return new StopDistanceResult(confirmed, StopDistanceKind.Confirmed, station, track, scenarioTrack, rough, signal.Name, signal.Distance, dir, stop.Key);
         }
         // 一度信号機から出せた駅・番線は、信号機が見えなくなっても（場内を過ぎた、ゲームの信号機の知らせが途切れた）走った距離で数え続ける
         if (_confirmed is { } c && c.Index == index && c.Track == track)
-            return new StopDistanceResult(c.At - x.Traveled, StopDistanceKind.Confirmed, station, track, scenarioTrack, rough, signal?.Name, signal?.Distance, dir);
+            return new StopDistanceResult(c.At - x.Traveled, StopDistanceKind.Confirmed, station, track, scenarioTrack, rough, signal?.Name, signal?.Distance, dir, stop.Key);
 
-        return new StopDistanceResult(rough, StopDistanceKind.Rough, station, track, scenarioTrack, rough, signal?.Name, signal?.Distance, dir);
+        return new StopDistanceResult(rough, StopDistanceKind.Rough, station, track, scenarioTrack, rough, signal?.Name, signal?.Distance, dir, stop.Key);
     }
 
     /// <summary>実際に入る（入った）番線。自列車の軌道回路 → 開いている場内信号機 → シナリオの番線 の順に見る。</summary>
