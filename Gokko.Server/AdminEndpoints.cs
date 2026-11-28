@@ -485,6 +485,10 @@ public static class AdminEndpoints
             sections = engine.View(RouteEngine.ViewSections)
         }));
 
+        // 進路ごとの転てつ器の向き（信号制御盤の駅データ）。駅 → 進路 → {転てつ器: N/R}。在線位置の画面が、開いたときに1回だけ読み、
+        // 共通の表（point-links.json）と合わせて、進路の線をどの枝に引くか決める（盤のラインライトと同じ向きで描くため）
+        view.MapGet("/route-points", (RelayPanels panels) => panels.RoutePoints());
+
         // ---- 勤怠管理（kintai.html）: 乗務員（社員番号）と、行路への割り当て ----
         // /api/kintai はヘッダー X-Kintai-Key に、管理キーか勤怠管理の鍵（KintaiKey。公開する用）を付けて呼ぶ。
         // 勤怠管理の鍵で入ったときは、乗務員の登録・編集・パスワード・役職（/api/admin/crew/...）は使えず、名簿も社員番号・所属だけを返す

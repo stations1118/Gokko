@@ -1142,6 +1142,10 @@ public sealed class RelayPanels : IDisposable
                     var data = JsonSerializer.Deserialize<RelayStationData>(text, options);
                     if (data == null || string.IsNullOrEmpty(data.Id)) continue;
                     var id = data.Id;
+                    // 在線位置の画面に渡す進路の転てつ器の向きは、信号制御盤の駅データから（共通の表 point-links.json と同じ番号。
+                    // 電子連動装置の駅データは、渡り線の両端を 52イ・52ロ のように分けて数えるので、表と合わない）
+                    if (dir.EndsWith("stations") && dir.Contains("relaypanel"))
+                        _routePoints[id] = data.Routes.GroupBy(r => r.Name).ToDictionary(g => g.Key, g => g.First().Points);
                     _stations[id] = new RelayStation(data, text, () => central.IsLocal(id), turned => central.SetPanelKey(id, turned), central.SectionDir, incidents.Note, _sectionClaims);
                 }
                 catch (Exception e)
@@ -1168,6 +1172,10 @@ public sealed class RelayPanels : IDisposable
         controlled = _central.IsPanelControlled(kv.Key),
         routes = kv.Value.TidRoutes(infoOf)
     }).ToList();
+
+    /// <summary>在線位置の画面（tid.html）用: 駅 → 進路 → 転てつ器の向き（盤の駅データの points）。</summary>
+    public Dictionary<string, Dictionary<string, Dictionary<string, string>>> RoutePoints() => _routePoints;
+    private readonly Dictionary<string, Dictionary<string, Dictionary<string, string>>> _routePoints = new();
 
     private readonly Dictionary<string, Dictionary<string, long>> _seen = new(); // 接続ID → 回路 → 最後に踏んでいた時刻（Tick の中だけで使う）
     private int _ticking;
