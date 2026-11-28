@@ -9,4 +9,14 @@
     <AssemblyName>Gokko.Tests</AssemblyName>
   </PropertyGroup>
 
+  <!-- クライアントの StopDistance.cs を、そのまま取り込んで確かめる（ClientCheck.cs）。
+       クライアントは Windows 用なので参照せず、ファイルだけ取り込む -->
+  <ItemGroup>
+    <Compile Include="..\Gokko.Client\StopDistance.cs" Link="Client\StopDistance.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Gokko.Common\Gokko.Common.csproj" />
+  </ItemGroup>
+
 </Project>

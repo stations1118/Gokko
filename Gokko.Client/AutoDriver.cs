@@ -53,6 +53,7 @@ public sealed class AutoDriver
 
     private int _lastStopIndex = -2;           // 最後に止まった（発車を待っている）停車駅の番号。-2 はまだ決めていない
     private bool _departOk;                    // 発車してよい（ブザーが鳴った・運転停車の発車時刻）
+    private bool _waitStart;                   // 始めたとき、どの停車駅にもいない（引上線など）で、次が最初の停車駅: 発車の合図（ブザー）を待つ
     private bool _shunting;                    // 終着から入換で動いている
     private long _shuntMs;                     // 入換で動き始めた時刻
     private string _dia = "";                  // 今のダイヤ名（変わったら停車駅を数え直す）
@@ -119,11 +120,18 @@ public sealed class AutoDriver
 
         if (_lastStopIndex == -2)
         {
-            // 始めたとき: 止まっていて、近くに停車駅があれば、その駅で発車を待っているものとする
+            // 始めたとき: 止まっていて、近くに停車駅があれば、その駅で発車を待っているものとする。
+            // 近いかは、ゲームの「次の駅」ならその残りで見る（停車駅の一覧の位置だけで見ると、引上線から出る始発で、
+            // 引上線にいるのに新野崎に止まっていることにして新井川を目指し、入換で新野崎を通過しようとした。1667）
             _lastStopIndex = -1;
+            _waitStart = false;
             if (s.Speed < 0.5f)
+            {
                 for (var i = 0; i < stations.Count; i++)
-                    if (stations[i].stopType != StopType.Passing && Math.Abs(stations[i].TotalLength - pos) < 30) _lastStopIndex = i;
+                    if (stations[i].stopType != StopType.Passing
+                        && StopDistance.StoppedAt(stations[i].Name ?? "", stations[i].TotalLength, pos, s.NextStation, s.NextStationDistance)) _lastStopIndex = i;
+                _waitStart = _lastStopIndex < 0;
+            }
         }
 
         if (emergency)
@@ -138,10 +146,13 @@ public sealed class AutoDriver
         for (var i = Math.Max(0, _lastStopIndex + 1); i < stations.Count; i++)
         {
             if (stations[i].stopType == StopType.Passing) continue;
-            if (_lastStopIndex < 0 && stations[i].TotalLength < pos - 15) continue;
+            // まだどの駅にも止まっていなければ、もう過ぎた駅は飛ばす（ゲームの「次の駅」は、位置がずれていても飛ばさない）
+            if (_lastStopIndex < 0 && stations[i].Name != s.NextStation && stations[i].TotalLength < pos - 15) continue;
             target = i;
             break;
         }
+        // 発車の合図を待つのは、次が最初の停車駅のとき（引上線から出る始発）だけ。途中の信号待ちで入れたときは待たない
+        if (_waitStart && target != stations.FindIndex(x => x.stopType != StopType.Passing)) _waitStart = false;
 
         var dStop = double.PositiveInfinity;
         var targetName = "";
@@ -170,6 +181,7 @@ public sealed class AutoDriver
             {
                 _lastStopIndex = target;
                 _departOk = false;
+                _waitStart = false;
                 _stopping = false;
                 return Hold(confirmed ? $"{targetName} に停車（残り {dStop - StopBias:0.0}m）" : $"{targetName} に停車（停目の位置はおおまか）", HoldBrake);
             }
@@ -188,7 +200,12 @@ public sealed class AutoDriver
                 if (!_shunting) return Hold(open ? "終着（入換の進路が開いています。ブザーで動きます）" : "終着", HoldBrake);
             }
 
-            // 発車を待つ
+            // 発車を待つ（引上線などから出る始発は、どの駅にも止まっていないが、ブザーで動く）
+            if (_waitStart && !_departOk)
+            {
+                if (departSignal && s.AllClose) _departOk = true;
+                else return Hold(!s.AllClose ? "ドアが開いています" : "発車の合図（ブザー）を待っています", HoldBrake);
+            }
             if (_lastStopIndex >= 0 && !_departOk)
             {
                 var here = stations[_lastStopIndex];
