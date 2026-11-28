@@ -126,6 +126,30 @@ public sealed record Scenario(string Name, string Slice, int Minutes, string Abo
             })
         ]),
 
+        // 赤山町で待っている間にロープレ時刻を飛ばすと、三郷から走ってくる自動運転の列車も消える。飛ばした先の時刻で 1325A がもう赤山町を
+        // 過ぎているはずでも、待っているユーザーのために、もう一度三郷から走らせて引き継ぐ（待ちっぱなしにしない）
+        // 引き継いだあとは見ない（ユーザーの代わりは運転しないので、長く走らせると赤山町に止まったままになり、後ろが詰まる）
+        new("赤山町で待つ間に時刻を飛ばす", "13:30", 13, "ユーザーが赤山町3番線で 1325A を待っている間に、ロープレ時刻を 14:20 に飛ばす。自動運転の 1325A をもう一度三郷から走らせて引き継ぐ",
+        [
+            new(0.5, "ユーザーの 1325A を赤山町3番線で始める", async d =>
+            {
+                await d.JoinPlayerAsync("1325A", ["TH58_9LCT"]);
+                d.Log("1325A（ユーザーの代わり）が赤山町3番線で運転画面に入った");
+            }),
+            new(5, "ロープレ時刻を 14:20 にする", async d =>
+            {
+                await d.PostAsync("clock", new { time = "14:20:00", running = true });
+                d.Log("ロープレ時刻を 14:20 に設定");
+            }),
+            new(9, "1325A を引き継いだ（自動運転の 1325A がもう一度三郷から着いた）", async d =>
+            {
+                if (await d.AppearReasonAsync("1325A") is { } reason) throw new InvalidOperationException($"1325A がまだ出現待ちです: {reason}");
+                if (await d.AiTrainsAsync() is var ai && ai.Contains("1325A")) throw new InvalidOperationException("自動運転の 1325A が残っています");
+                d.Log("1325A を引き継いだ。ユーザーの代わりは運転画面を出る");
+                d.LeavePlayer();
+            })
+        ]),
+
         new("自動運転の切り入れ", "12:00", 30, "自動運転列車をナシにして全部消し、1分後にアリに戻す",
         [
             new(5, "自動運転列車をナシにする", async d => { await d.PostAsync("ai-trains/mode", new { on = false }); d.Log("ナシにした"); }),

@@ -2161,7 +2161,9 @@ public sealed class AiTrains : BackgroundService
                 // ほかの列車との順番が崩れて詰まる。
                 // アリにした・ロープレ時刻を飛ばした時刻（_catchUpAt）に、もう始発駅を出ているはずの列車だけは、そのとき走っているはずの所の次の駅を始発駅とみなす
                 // （始発駅の候補と最初の発車時刻は、ダイヤが変わるまで変わらないので SpawnPlans で作り置く）
-                var start = _catchUpAt is { } cu && firstDep < cu - TimeSpan.FromSeconds(30)
+                // 赤山町でユーザーが待っている列車は、いつも線区に入る最初の駅（三郷）から出す。途中の駅から出すと、赤山町を通らず、
+                // ユーザーが待ちっぱなしになる（待っている間にロープレ時刻を飛ばして、走ってきていた列車が消えたとき）
+                var start = !standing && _catchUpAt is { } cu && firstDep < cu - TimeSpan.FromSeconds(30)
                     ? cands.FirstOrDefault(s => Time(s.Dep ?? s.Arr) is { } t && t >= cu - TimeSpan.FromSeconds(30))
                     : cands[0];
                 if (start?.StationId is not { } startId || Time(start.Dep ?? start.Arr) is not { } dep) continue;
