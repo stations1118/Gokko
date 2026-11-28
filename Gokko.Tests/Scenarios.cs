@@ -126,6 +126,54 @@ public sealed record Scenario(string Name, string Slice, int Minutes, string Abo
             })
         ]),
 
+        new("赤山町で確定してから遅れて入る", "13:30", 35, "1325A の列番を確定しただけで、運転画面にはまだ入らない。自動運転の 1325A は三郷から時刻どおり出て、赤山町で待つ。着いたあとでユーザーが赤山町で入ったら、すぐ引き継ぐ",
+        [
+            new(0.5, "1325A の列番を確定する（運転画面にはまだ入らない）", async d =>
+            {
+                await d.JoinPlayerAsync("1325A", [], inGame: false);
+                d.Log("1325A を確定した（運転画面の外）");
+            }),
+            new(20.5, "自動運転の 1325A が三郷から時刻どおり出ている", async d =>
+            {
+                if (!(await d.AiTrainsAsync()).Contains("1325A")) throw new InvalidOperationException("自動運転の 1325A が出ていません（確定した列番なので出さないまま）");
+                d.Log($"自動運転の 1325A: {await d.AiStatusAsync("1325A")}");
+            }),
+            new(23, "ユーザーが赤山町3番線で運転画面に入る", async d =>
+            {
+                d.Log($"自動運転の 1325A: {await d.AiStatusAsync("1325A")}");
+                d.EnterPlayer(["TH58_9LCT"]);
+                d.Log("1325A（ユーザーの代わり）が赤山町3番線で運転画面に入った");
+            }),
+            new(26, "1325A を引き継いだ", async d =>
+            {
+                if (await d.AppearReasonAsync("1325A") is { } reason) throw new InvalidOperationException($"1325A がまだ出現待ちです: {reason}");
+                if ((await d.AiTrainsAsync()).Contains("1325A")) throw new InvalidOperationException($"自動運転の 1325A が残っています: {await d.AiStatusAsync("1325A")}");
+                d.Log("1325A を引き継いだ。ユーザーの代わりは運転画面を出る");
+                d.LeavePlayer();
+            })
+        ]),
+
+        new("赤山町で確定したまま来ない", "13:30", 35, "1325A の列番を確定したまま、運転画面に入らない。自動運転の 1325A は赤山町で発車時刻から3分待ち、そのあと自動運転のまま先へ行く（3番線をふさぎ続けない）",
+        [
+            new(0.5, "1325A の列番を確定する（運転画面には入らない）", async d =>
+            {
+                await d.JoinPlayerAsync("1325A", [], inGame: false);
+                d.Log("1325A を確定した（運転画面の外）");
+            }),
+            new(23, "自動運転の 1325A が赤山町でユーザーを待っている", async d =>
+            {
+                var status = await d.AiStatusAsync("1325A");
+                if (status?.Contains("ユーザーの列車（1325A）を待っています") != true) throw new InvalidOperationException($"自動運転の 1325A が赤山町で待っていません: {status ?? "走っていない"}");
+                d.Log($"自動運転の 1325A: {status}");
+            }),
+            new(30, "自動運転の 1325A が待つのをやめて先へ行った", async d =>
+            {
+                var status = await d.AiStatusAsync("1325A");
+                if (status?.Contains("待っています") == true) throw new InvalidOperationException($"自動運転の 1325A がまだ赤山町で待っています: {status}");
+                d.Log($"自動運転の 1325A: {status ?? "もういない"}");
+            })
+        ]),
+
         new("自動運転の切り入れ", "12:00", 30, "自動運転列車をナシにして全部消し、1分後にアリに戻す",
         [
             new(5, "自動運転列車をナシにする", async d => { await d.PostAsync("ai-trains/mode", new { on = false }); d.Log("ナシにした"); }),
@@ -163,14 +211,25 @@ public sealed class Driver(HttpClient http, string url, Action<string> log, IRea
     private FakePlayer? _player;
 
     /// <summary>ゲームをつないだ列車の代わりを1本出す（乗務員を作ってログインし、クライアントと同じハブに、その回路に止まっていると報告し続ける）。</summary>
-    public async Task JoinPlayerAsync(string train, List<string> circuits)
+    public async Task JoinPlayerAsync(string train, List<string> circuits, bool inGame = true)
     {
         var created = await (await http.PostAsJsonAsync($"{url}/api/admin/crew/users", new { name = "試験の運転士", joinYear = 2020, depot = "道列" }))
             .EnsureSuccessStatusCode().Content.ReadFromJsonAsync<JsonElement>();
         var login = await (await http.PostAsJsonAsync($"{url}/api/tid/login",
                 new { id = created.GetProperty("id").GetString(), password = created.GetProperty("password").GetString(), client = true }))
             .EnsureSuccessStatusCode().Content.ReadFromJsonAsync<JsonElement>();
-        _player = await FakePlayer.StartAsync(url, login.GetProperty("token").GetString() ?? "", train, circuits);
+        _player = await FakePlayer.StartAsync(url, login.GetProperty("token").GetString() ?? "", train, circuits, inGame);
+    }
+
+    /// <summary>列番を確定しただけのユーザーの代わりが、その回路で運転画面に入る。</summary>
+    public void EnterPlayer(List<string> circuits) => _player?.Enter(circuits);
+
+    /// <summary>その列番の自動運転の列車の状態（走っていなければ null）。</summary>
+    public async Task<string?> AiStatusAsync(string train)
+    {
+        var ai = await http.GetFromJsonAsync<JsonElement>($"{url}/api/admin/ai-trains");
+        return ai.GetProperty("trains").EnumerateArray().Where(t => t.GetProperty("train").GetString() == train)
+            .Select(t => t.GetProperty("status").GetString()).FirstOrDefault();
     }
 
     /// <summary>ゲームをつないだ列車の代わりが、運転画面を出る（つながったまま）。</summary>
@@ -245,7 +304,7 @@ public sealed class FakePlayer : IAsyncDisposable
 
     private FakePlayer(HubConnection hub, ClientReport report) => (_hub, _report) = (hub, report);
 
-    public static async Task<FakePlayer> StartAsync(string url, string crewToken, string train, List<string> circuits)
+    public static async Task<FakePlayer> StartAsync(string url, string crewToken, string train, List<string> circuits, bool inGame = true)
     {
         var hub = new HubConnectionBuilder().WithUrl(url + Protocol.HubPath).Build();
         await hub.StartAsync();
@@ -256,10 +315,15 @@ public sealed class FakePlayer : IAsyncDisposable
         if (!join.Ok) throw new InvalidOperationException($"参加できませんでした: {join.Message}");
         var p = new FakePlayer(hub, new ClientReport
         {
-            TrainNumber = train, TrainNumberTyped = true, TrainCrewConnected = true, InGame = true, TrackCircuits = circuits, Speed = 0
+            TrainNumber = train, TrainNumberTyped = true, TrainCrewConnected = true, InGame = inGame, TrackCircuits = circuits, Speed = 0
         });
         p._loop = p.LoopAsync();
         return p;
+    }
+
+    public void Enter(List<string> circuits)
+    {
+        lock (_report) (_report.InGame, _report.TrackCircuits) = (true, circuits);
     }
 
     public void Leave()
