@@ -90,6 +90,15 @@ public sealed partial class StopDistance
         }
     }
 
+    /// <summary>
+    /// 止まっている所が、その停車駅（停目）か（自動運転を入れたときに、どの駅で発車を待っているかを決める）。
+    /// ゲームの「次の駅」がその駅なら、ゲームの残り（NextStationDistance）で見る。ほかの駅は、停車駅の一覧の位置（TotalLength）と走った距離で見る。
+    /// 一覧の位置だけで見ると、引上線から出る始発で、新野崎の位置が引上線と 30m 以内になっていて（ゲームの残りは 359m）、
+    /// 新野崎に止まっていることにしてしまった（1667。次の新井川を目指し、入換で新野崎を通過しようとした）。
+    /// </summary>
+    public static bool StoppedAt(string name, double totalLength, double traveled, string? nextStation, double nextStationDistance, double within = 30) =>
+        name.Length > 0 && name == nextStation ? Math.Abs(nextStationDistance) < within : Math.Abs(totalLength - traveled) < within;
+
     /// <summary>起点を捨てる（シナリオが変わった、運転をやり直したなど）。</summary>
     public void Reset()
     {

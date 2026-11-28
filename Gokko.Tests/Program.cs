@@ -21,7 +21,8 @@ public static class Program
     {
         Console.OutputEncoding = Encoding.UTF8;
         // データの突き合わせだけ（サーバーは起動しない。数秒）
-        if (args.Contains("--data")) return DataCheck.Run(FindRoot());
+        // クライアントの自動運転の決まり（ClientCheck.cs）も一緒に見る（数ミリ秒）
+        if (args.Contains("--data")) return Math.Max(ClientCheck.Run(), DataCheck.Run(FindRoot()));
         // 今ある食い違いを、data-known.txt に書く形（タブ区切り）で出す（わざとと決めたものを写すため）
         if (args.Contains("--data-list"))
         {
@@ -32,6 +33,7 @@ public static class Program
 
         var opt = Options.Parse(args);
         if (opt == null) return 2;
+        if (ClientCheck.Run() != 0) return 1;
 
         var root = FindRoot();
         var serverDir = opt.ServerDir ?? BuildServer(root);
