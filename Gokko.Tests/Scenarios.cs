@@ -157,6 +157,19 @@ public sealed record Scenario(string Name, string Slice, int Minutes, string Abo
             })
         ]),
 
+        // 11/28 本番: 1797D（6両）が江ノ原信号場10番線で 2096 に変わり、20:15 に入換 11R で13番線へ入った。6両は13番線に入りきらず、
+        // 最後尾が入換の進路の回路（TH66S_51イT）に残ったまま止まるので、「入換が終わった（番線に入った）」にならず、出発 2R を出さずに
+        // 30分止まった（そのあいだ単線区間の対向列車も待たされた）。番線に入って止まったら、入換は終わりとする
+        new("江ノ原信号場で6両が入換", "19:50", 40, "6両の 2096 が江ノ原信号場10番線から入換 11R で13番線へ入り、入りきらずに止まっても、出発 2R を出して走る",
+        [
+            new(33, "2096 が江ノ原信号場を出た", async d =>
+            {
+                if (await d.StationsOfAsync("2096") is { } st && st.FirstOrDefault(s => s.Name.StartsWith("江ノ原")) is { } en)
+                    throw new InvalidOperationException($"2096 がまだ江ノ原信号場を出ていません（番線 {en.Track}）");
+                d.Log("2096 は江ノ原信号場を出た");
+            })
+        ]),
+
         new("自動運転の切り入れ", "12:00", 30, "自動運転列車をナシにして全部消し、1分後にアリに戻す",
         [
             new(5, "自動運転列車をナシにする", async d => { await d.PostAsync("ai-trains/mode", new { on = false }); d.Log("ナシにした"); }),
@@ -242,6 +255,10 @@ public sealed class Driver(HttpClient http, string url, Action<string> log, IRea
         return dia.GetProperty("appear").EnumerateArray().Where(a => a.GetProperty("train").GetString() == train)
             .Select(a => a.GetProperty("reason").GetString()).FirstOrDefault();
     }
+
+    /// <summary>その列車のまだ扱いを終えていない駅（列車別設定と同じもの）。その列車がいなければ null。</summary>
+    public async Task<List<StationInfo>?> StationsOfAsync(string train) =>
+        (await UpcomingAsync(minStations: 0)).Where(t => t.Train == train).Select(t => t.Stations).FirstOrDefault();
 
     /// <summary>走っている自動運転の列車の列番。</summary>
     public async Task<HashSet<string>> AiTrainsAsync()

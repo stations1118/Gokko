@@ -600,6 +600,12 @@ public sealed partial class RouteEngine
         /// <summary>番線に入りきって、ゲームの速度が 0km/h になった（止まった）時刻。出発・入換の開通の合図に使う。</summary>
         public DateTime? StoppedUtc { get; set; }
 
+        /// <summary>始発の入換で、先頭が入換先の番線の回路に入って止まった時刻（番線に入りきらない長い列車の入換の終わりを決める）。</summary>
+        public DateTime? ShuntStoppedUtc { get; set; }
+
+        /// <summary>始発の入換を、番線に入りきらないまま終えた（最後尾が入換の進路に残っている）。この番線の回路にいる間は、入換の進路が残っていても出発を開ける。</summary>
+        public string? ShuntOverhangCircuit { get; set; }
+
         /// <summary>先頭がこの駅に着いた時刻（始発は認識した時刻）。単線区間で、同時に待ち合ったときの順番に使う。</summary>
         public DateTime? HereUtc { get; set; }
 
@@ -1942,16 +1948,29 @@ public sealed partial class RouteEngine
 
             // 始発の入換（駅扱い・手動進路を含む）でホームに入りきったら、入換は終わり。番線の確定と駅扱いの印を外し、
             // そこから先はふつうの始発として自動で扱う（駅扱いで確定したままだと、入換元にいる扱いが続き、出発の進路を自動で扱わない）
+            // 番線に入りきらない長い列車（江ノ原信号場13番線の6両など）は、最後尾が入換の進路の回路に残ったまま止まる。
+            // 入りきるのを待つと、出発の進路をいつまでも出さずに止まり続ける（11/28 本番の 2096）。
+            // 先頭が番線の回路に入って止まったら（2つ目の進路が残っていなければ）、入換は終わりとする
             if (st.IsStart && st.ShuntFrom != null && st.Track is { } shTo && st.St.TrackCircuit.TryGetValue(shTo, out var shTc)
-                && run.Player.TrackCircuits.Contains(shTc)
-                && run.Requests.Where(r => r.Station == st && !r.Departure && r.CancelledUtc == null).SelectMany(r => r.Def.Circuits)
-                    .Where(c => c != shTc).All(c => !run.Player.TrackCircuits.Contains(c)))
+                && run.Player.TrackCircuits.Contains(shTc))
             {
-                (st.ShuntFrom, st.ShuntRequested, st.Shunt, st.ShuntWait, st.ForceShunt, st.ShuntVia) = (null, false, GroupState.None, "", false, null);
-                (st.ShuntThenPath, st.ShuntThenAt, st.ShuntThen, st.ShuntThenWait) = (null, null, GroupState.None, "");
-                (st.Locked, st.ManualUsed) = (false, false);
-                _log.Note($"入換終わり: {run.Train} {st.St.Name} {shTo}番線に入りました（ここから先は自動で進路を扱います）");
+                var inFully = run.Requests.Where(r => r.Station == st && !r.Departure && r.CancelledUtc == null).SelectMany(r => r.Def.Circuits)
+                    .Where(c => c != shTc).All(c => !run.Player.TrackCircuits.Contains(c));
+                var thenLeft = st.ShuntThenPath is { Count: > 0 } && st.ShuntThen != GroupState.Requested;
+                if (run.Player.Speed < StopSpeedKmh && !thenLeft) st.ShuntStoppedUtc ??= now;
+                else st.ShuntStoppedUtc = null;
+                var stoppedLong = st.ShuntStoppedUtc is { } ss && now - ss >= ShuntDoneStop;
+                if (inFully || stoppedLong)
+                {
+                    (st.ShuntFrom, st.ShuntRequested, st.Shunt, st.ShuntWait, st.ForceShunt, st.ShuntVia) = (null, false, GroupState.None, "", false, null);
+                    (st.ShuntThenPath, st.ShuntThenAt, st.ShuntThen, st.ShuntThenWait) = (null, null, GroupState.None, "");
+                    (st.Locked, st.ManualUsed, st.ShuntStoppedUtc) = (false, false, null);
+                    st.ShuntOverhangCircuit = inFully ? null : shTc;
+                    if (inFully) _log.Note($"入換終わり: {run.Train} {st.St.Name} {shTo}番線に入りました（ここから先は自動で進路を扱います）");
+                    else RunLog(now, run, $"{st.St.Name} の入換を終えました（{shTo}番線に入りきらずに止まった。ここから先は自動で進路を扱います）");
+                }
             }
+            else st.ShuntStoppedUtc = null;
 
             if (!st.Locked) ChooseTrack(run, st);
             else if (CanRechoose(run, st))
@@ -3142,6 +3161,7 @@ public sealed partial class RouteEngine
     // =========================================================================================
 
     private static readonly TimeSpan CoupleStopCheck = TimeSpan.FromSeconds(3);  // 完全に止まったとみなすまで
+    private static readonly TimeSpan ShuntDoneStop = TimeSpan.FromSeconds(5);    // 番線に入りきらない列車が、入換先の番線で止まってから入換を終えるまで
     private static readonly TimeSpan CoupleDoneStop = TimeSpan.FromSeconds(30);  // ユーザーの列車: 番線の中でこれだけ止まっていたら連結した
     private readonly List<(string Partner, string Train)> _coupled = new();
 
@@ -3538,6 +3558,10 @@ public sealed partial class RouteEngine
         if (!st.DepartStop && !st.IsStart) return null;
         var pending = run.Requests.Where(r => r.Station == st && !r.Departure && !r.Released && r.CancelledUtc == null).ToList();
         if (pending.Count == 0) return null;
+
+        // 番線に入りきらない長い列車の始発の入換（江ノ原信号場13番線の6両）: 最後尾が入換の進路に残るのは仕様。
+        // 入換の進路は抜けるまで解除されないので、番線の回路にいれば出発を開ける（入換は終えている）
+        if (st.IsStart && st.ShuntOverhangCircuit is { } overhang && run.Player.TrackCircuits.Contains(overhang)) return null;
 
         // ゲームは鎖錠を見ない。場内が残っていても、番線に入りきっていれば進める
         return FullyInTrack(run, st, pending.SelectMany(r => r.Def.Circuits)) ? null : "出発停止（列車が番線に入るまで）";
