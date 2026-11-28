@@ -1,5 +1,7 @@
 using System.Net.Http.Json;
 using System.Text.Json;
+using Gokko.Common;
+using Microsoft.AspNetCore.SignalR.Client;
 
 namespace Gokko.Tests;
 
@@ -98,6 +100,32 @@ public sealed record Scenario(string Name, string Slice, int Minutes, string Abo
             })
         ]),
 
+        // 11/28 本番: ユーザーが 1325A（三郷から来る下り）を、ゲームで始められる赤山町3番線で 13:30 に始めた。三郷から来る 1341 が
+        // 赤山町3番線に入れず、単線区間の三郷〜赤山町・赤山町〜西赤山で待ち合って詰まった。
+        // 1325A は、自動運転の 1325A が三郷から走って赤山町に着くまで出現待ち（在線も出さない）にし、着いたら引き継ぐ
+        new("赤山町で先に始める", "13:30", 35, "三郷から来る 1325A を、ユーザーが赤山町3番線で先に始める（1341 が三郷から来る前）。自動運転の 1325A が三郷から着くまで出現待ちにし、着いたら引き継ぐ",
+        [
+            new(0.5, "ユーザーの 1325A を赤山町3番線で始める", async d =>
+            {
+                await d.JoinPlayerAsync("1325A", ["TH58_9LCT"]);
+                d.Log("1325A（ユーザーの代わり）が赤山町3番線で運転画面に入った");
+            }),
+            new(5, "1325A が出現待ちになっている", async d =>
+            {
+                var reason = await d.AppearReasonAsync("1325A");
+                if (reason?.StartsWith("三郷から来る自動運転の", StringComparison.Ordinal) != true)
+                    throw new InvalidOperationException($"1325A が赤山町で待っていません（出現待ちの理由: {reason ?? "なし"}）");
+                d.Log($"1325A は出現待ち: {reason}");
+            }),
+            new(24, "1325A を引き継いだ（自動運転の 1325A が三郷から着いた）", async d =>
+            {
+                if (await d.AppearReasonAsync("1325A") is { } reason) throw new InvalidOperationException($"1325A がまだ出現待ちです: {reason}");
+                if (await d.AiTrainsAsync() is var ai && ai.Contains("1325A")) throw new InvalidOperationException("自動運転の 1325A が残っています");
+                d.Log("1325A を引き継いだ。ユーザーの代わりは運転画面を出る（継続乗務の在線を残し、3分で自動運転の列車が引き継ぐ）");
+                d.LeavePlayer();
+            })
+        ]),
+
         new("自動運転の切り入れ", "12:00", 30, "自動運転列車をナシにして全部消し、1分後にアリに戻す",
         [
             new(5, "自動運転列車をナシにする", async d => { await d.PostAsync("ai-trains/mode", new { on = false }); d.Log("ナシにした"); }),
@@ -130,8 +158,44 @@ public sealed record Step(double At, string Text, Func<Driver, Task> Do);
 public sealed record StationInfo(string Id, string Name, string StopType, int? Track, List<int> Options, bool Locked);
 
 /// <summary>場面の操作から使う道具（司令用管理画面と同じ API を呼ぶ）。</summary>
-public sealed class Driver(HttpClient http, string url, Action<string> log, IReadOnlySet<string> doubleTrack)
+public sealed class Driver(HttpClient http, string url, Action<string> log, IReadOnlySet<string> doubleTrack) : IAsyncDisposable
 {
+    private FakePlayer? _player;
+
+    /// <summary>ゲームをつないだ列車の代わりを1本出す（乗務員を作ってログインし、クライアントと同じハブに、その回路に止まっていると報告し続ける）。</summary>
+    public async Task JoinPlayerAsync(string train, List<string> circuits)
+    {
+        var created = await (await http.PostAsJsonAsync($"{url}/api/admin/crew/users", new { name = "試験の運転士", joinYear = 2020, depot = "道列" }))
+            .EnsureSuccessStatusCode().Content.ReadFromJsonAsync<JsonElement>();
+        var login = await (await http.PostAsJsonAsync($"{url}/api/tid/login",
+                new { id = created.GetProperty("id").GetString(), password = created.GetProperty("password").GetString(), client = true }))
+            .EnsureSuccessStatusCode().Content.ReadFromJsonAsync<JsonElement>();
+        _player = await FakePlayer.StartAsync(url, login.GetProperty("token").GetString() ?? "", train, circuits);
+    }
+
+    /// <summary>ゲームをつないだ列車の代わりが、運転画面を出る（つながったまま）。</summary>
+    public void LeavePlayer() => _player?.Leave();
+
+    /// <summary>その列番の出現待ちの理由（出現待ちでなければ null）。</summary>
+    public async Task<string?> AppearReasonAsync(string train)
+    {
+        var dia = await http.GetFromJsonAsync<JsonElement>($"{url}/api/admin/diagram");
+        return dia.GetProperty("appear").EnumerateArray().Where(a => a.GetProperty("train").GetString() == train)
+            .Select(a => a.GetProperty("reason").GetString()).FirstOrDefault();
+    }
+
+    /// <summary>走っている自動運転の列車の列番。</summary>
+    public async Task<HashSet<string>> AiTrainsAsync()
+    {
+        var ai = await http.GetFromJsonAsync<JsonElement>($"{url}/api/admin/ai-trains");
+        return ai.GetProperty("trains").EnumerateArray().Select(t => t.GetProperty("train").GetString() ?? "").ToHashSet();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_player != null) await _player.DisposeAsync();
+    }
+
     /// <summary>複線の駅（Stations.json の track が「複線」）。</summary>
     public IReadOnlySet<string> DoubleTrack => doubleTrack;
 
@@ -165,5 +229,68 @@ public sealed class Driver(HttpClient http, string url, Action<string> log, IRea
             if (stations.Count >= minStations) list.Add((t.GetProperty("train").GetString() ?? "", stations));
         }
         return list;
+    }
+}
+
+/// <summary>
+/// ゲームをつないだ列車の代わり。クライアントと同じハブ（/hub）に参加して、0.5秒ごとに「この列番で、この回路に止まっている」と報告する。
+/// 走りはしない（止まったまま）。Leave で運転画面を出たことにする。
+/// </summary>
+public sealed class FakePlayer : IAsyncDisposable
+{
+    private readonly HubConnection _hub;
+    private readonly CancellationTokenSource _stop = new();
+    private readonly ClientReport _report;
+    private Task? _loop;
+
+    private FakePlayer(HubConnection hub, ClientReport report) => (_hub, _report) = (hub, report);
+
+    public static async Task<FakePlayer> StartAsync(string url, string crewToken, string train, List<string> circuits)
+    {
+        var hub = new HubConnectionBuilder().WithUrl(url + Protocol.HubPath).Build();
+        await hub.StartAsync();
+        var join = await hub.InvokeAsync<JoinResult>(Protocol.Join, new JoinRequest
+        {
+            ProtocolVersion = Protocol.Version, Mode = ShareMode.Shared, Role = CrewRole.Driver, CrewToken = crewToken
+        });
+        if (!join.Ok) throw new InvalidOperationException($"参加できませんでした: {join.Message}");
+        var p = new FakePlayer(hub, new ClientReport
+        {
+            TrainNumber = train, TrainNumberTyped = true, TrainCrewConnected = true, InGame = true, TrackCircuits = circuits, Speed = 0
+        });
+        p._loop = p.LoopAsync();
+        return p;
+    }
+
+    public void Leave()
+    {
+        lock (_report) (_report.InGame, _report.TrackCircuits) = (false, new List<string>());
+    }
+
+    private async Task LoopAsync()
+    {
+        while (!_stop.IsCancellationRequested)
+        {
+            try
+            {
+                ClientReport r;
+                lock (_report) r = new ClientReport
+                {
+                    TrainNumber = _report.TrainNumber, TrainNumberTyped = true, TrainCrewConnected = true, InGame = _report.InGame,
+                    TrackCircuits = _report.TrackCircuits.ToList(), Speed = 0
+                };
+                await _hub.InvokeAsync<bool>(Protocol.Report, r, _stop.Token);
+                await Task.Delay(500, _stop.Token);
+            }
+            catch (OperationCanceledException) { break; }
+            catch { await Task.Delay(500); }
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _stop.Cancel();
+        if (_loop != null) try { await _loop; } catch { }
+        try { await _hub.DisposeAsync(); } catch { }
     }
 }
