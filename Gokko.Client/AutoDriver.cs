@@ -151,6 +151,19 @@ public sealed class AutoDriver
             target = i;
             break;
         }
+        // ゲームの「次の駅」が停車駅で、まだ先にある（残り 5m より先）なら、それより先の駅は目指さない。
+        // 止まった駅の決め方（一覧の位置・入れた瞬間の判断）がずれても、ゲームが「次は新野崎」と言っている間は新野崎に止まる
+        // （1667: 引上線から4番線への入換で、新野崎に止まったことになっていて、新井川を目指して4番線の停目を通過した）
+        var gameNext = s.NextStationDistance > 5 ? stations.FindIndex(x => x.Name == s.NextStation && x.stopType != StopType.Passing) : -1;
+        if (gameNext >= 0 && target > gameNext)
+        {
+            target = gameNext;
+            if (_lastStopIndex >= gameNext)
+            {
+                if (!_departOk) _waitStart = true; // まだ発車の合図を受けていなければ、ブザーを待つ
+                _lastStopIndex = gameNext > 0 ? stations.FindLastIndex(gameNext - 1, x => x.stopType != StopType.Passing) : -1;
+            }
+        }
         // 発車の合図を待つのは、次が最初の停車駅のとき（引上線から出る始発）だけ。途中の信号待ちで入れたときは待たない
         if (_waitStart && target != stations.FindIndex(x => x.stopType != StopType.Passing)) _waitStart = false;
 
@@ -163,7 +176,8 @@ public sealed class AutoDriver
             targetName = st.Name ?? "";
             // 停目までの残りが、この駅のものならそれを使う（止まった直後は、まだ止まった駅の残りが来る）。なければゲームの値
             double meters = s.NextStation == targetName ? s.NextStationDistance : st.TotalLength - pos;
-            if (stop.Kind != StopDistanceKind.None && StopDistance.ParseStopPos(st.StopPosName ?? "", targetName).Station == stop.Station)
+            // 目指す駅（駅名と停止位置名が同じ停車駅）の残りのときだけ。ダイヤの駅名だけで比べると、引上線の停目の残りを新野崎のものと取り違える（1667）
+            if (stop.IsFor(GameStop.KeyOf(st.Name, st.StopPosName)))
             {
                 meters = stop.Remaining;
                 confirmed = stop.Kind == StopDistanceKind.Confirmed || stop.Track == stop.ScenarioTrack;
