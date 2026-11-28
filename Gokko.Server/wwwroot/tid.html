@@ -312,7 +312,8 @@
 
   // seq の回路をこの順に一筆で（急に向きを変えずに）通る線。いちばん曲がりの少ない道、同じなら長い道を選ぶ。
   // 結果は 回路名 → 線の並び。通れなければ null
-  function orderedPath(seq) {
+  // full: 最初の回路から描き始める（ふだんは、2つ目の回路から始まる道も選ぶ）
+  function orderedPath(seq, full = false) {
     if (seq.length === 0 || seq.some((c) => !graphs[c])) return null;
     const pos = (k) => { for (const c of seq) { const p = graphs[c].nodes.get(k); if (p) return p; } return null; };
     let best = null;
@@ -323,7 +324,7 @@
         if (!best || t < best.t || (t === best.t && len > best.len)) best = { t, len, segs: segs.slice() };
       }
       const here = pos(k);
-      for (const j of [i, i + 1]) {
+      for (const j of full && segs.length === 0 ? [i] : [i, i + 1]) {
         const c = seq[j];
         if (!c) continue;
         for (const to of graphs[c].adj.get(k) || []) {
@@ -472,6 +473,84 @@
       if (whole.size > 0 && on.length < live.length) return new Map(on.map((c) => [c, whole.get(c)]));
     }
     return routePath(r.circuits, known);
+  }
+
+  // ---- 転てつ器の向きで進路を引く（信号制御盤のラインライトと同じ考え方） ----
+  // 共通の表（point-links.json）: 回路 c の中を、隣の回路 a から b へ抜けるときの転てつ器の向き。
+  // 進路の転てつ器の向き（/api/tid/route-points。信号制御盤の駅データ）と合わせて、進路の回路をどの順に、どの枝で通るかを決める。
+  // 表で通れない回路（鎖錠のためだけの回路・側面防護）は引かない。盤のデータで抜けている回路（駒野の 1RD5 の 43ロT）は2つまで足す
+  let links = new Map(); // 回路 → [{ a, b, when }]
+  let routePoints = {};  // 駅 → 進路 → { 転てつ器: N/R }
+  let nearOf = null;     // 回路 → 線がつながる回路
+  function buildNear() {
+    const at = new Map();
+    for (const [c, g] of Object.entries(graphs)) for (const k of g.nodes.keys()) (at.get(k) || at.set(k, new Set()).get(k)).add(c);
+    nearOf = new Map();
+    for (const cs of at.values()) for (const c of cs) for (const d of cs) if (c !== d) (nearOf.get(c) || nearOf.set(c, new Set()).get(c)).add(d);
+  }
+  const passOk = (c, x, y, pts) => {
+    const rows = links.get(c);
+    if (!rows) return true; // 分かれ目のない回路
+    return rows.some((l) => ((l.a === x && l.b === y) || (l.a === y && l.b === x)) && Object.entries(l.when).every(([p, v]) => pts[p] === v));
+  };
+  const pointCache = new Map();
+  function pointRoutePath(station, r, ext) {
+    const pts = (routePoints[station] || {})[r.route];
+    const cs = [...new Set(r.all && r.all.length ? r.all : r.circuits)].filter((c) => graphs[c]);
+    if (!pts || cs.length === 0 || !nearOf) return null;
+    const outs = [...new Set(ext)].filter((c) => graphs[c] && !cs.includes(c));
+    const key = station + "|" + r.route + "|" + cs.join(" ") + "|" + outs.join(" ");
+    if (pointCache.has(key)) return pointCache.get(key);
+    const inCs = new Set(cs), inOut = new Set(outs), pre = cs[0].split("_")[0] + "_";
+    let best = null;
+    const better = (a, b) => { for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] > b[i]; return false; };
+    const path = [];
+    const visit = (added) => {
+      const cov = path.filter((c) => inCs.has(c)).length;
+      // 列車のいる番線・行き先の番線（進路の外）から始まる・で終わる道を先に。進路の回路を多く通る道を選ぶと、
+      // 列車が通らない回路（水越の 12L の 21ロT）の側を選んでしまう
+      const ends = path.length < 2 ? 0 : (inOut.has(path[path.length - 1]) ? 1 : 0) + (inOut.has(path[0]) ? 1 : 0);
+      const score = [cov > 0 ? 1 : 0, ends, cov, -added, -path.length];
+      if (!best || better(score, best.score)) best = { score, path: path.slice() };
+      const cur = path[path.length - 1];
+      if (path.length >= 2 && inOut.has(cur)) return; // 進路の外（出る番線・行き先の番線）に出たら終わり
+      for (const n of nearOf.get(cur) || []) {
+        if (path.includes(n)) continue;
+        const add = inCs.has(n) || inOut.has(n) ? 0 : 1;
+        if (add && (added >= 2 || !n.startsWith(pre))) continue;
+        if (path.length >= 2 && !passOk(cur, path[path.length - 2], n, pts)) continue;
+        path.push(n); visit(added + add); path.pop();
+      }
+    };
+    for (const c of [...cs, ...outs]) { path.push(c); visit(0); path.pop(); }
+    let result = null;
+    if (best && best.path.some((c) => inCs.has(c))) {
+      // 道の端が進路の回路で終わるとき（行き先が分からない）: 転てつ器の向きで通れる隣が1つだけなら、その枝へ引く
+      // （新野崎の 10LC は 34T の 4番側、水越の 12L は 21イT の館浜方）。線を引く向きを決めるだけで、隣の回路は描かない
+      const seq = best.path.slice();
+      const tip = (end, prev) => {
+        if (!links.has(end) || !prev) return null;
+        const ns = [...(nearOf.get(end) || [])].filter((n) => !seq.includes(n) && passOk(end, prev, n, pts));
+        return ns.length === 1 ? ns[0] : null;
+      };
+      const tail = !inOut.has(seq[seq.length - 1]) && tip(seq[seq.length - 1], seq[seq.length - 2]);
+      const head = !inOut.has(seq[0]) && tip(seq[0], seq[1]);
+      if (tail) seq.push(tail);
+      if (head) seq.unshift(head);
+      const lines = orderedPath(seq, true) || orderedPath(seq);
+      if (lines) result = new Map([...lines].filter(([c]) => inCs.has(c) || (!inOut.has(c) && best.path.includes(c) && c !== seq[0] && c !== seq[seq.length - 1])));
+    }
+    if (pointCache.size > 2000) pointCache.clear();
+    pointCache.set(key, result);
+    return result;
+  }
+  // 列車が入って、まだ鎖錠している回路（circuits）だけになった進路も、進路全部で引いた線から、その回路の分だけ使う
+  function pointLivePath(station, r, ext) {
+    const whole = pointRoutePath(station, r, ext);
+    if (!whole) return null;
+    // 道に足した回路（盤のデータで抜けている回路）は、前後の回路がまだ残っていれば引く
+    const all = new Set(r.all && r.all.length ? r.all : r.circuits), live = new Set(r.circuits), order = [...whole.keys()];
+    return new Map(order.filter((c, i) => live.has(c) || (!all.has(c) && live.has(order[i - 1]) && live.has(order[i + 1]))).map((c) => [c, whole.get(c)]));
   }
 
   // 列車の名札を置く位置: 列車を描いた線の、中ほどの点
@@ -665,14 +744,15 @@
       // 行き先の番線の回路（dest）も入れる。回路の並びが同じで行き先だけ違う進路（新野崎の 10LC・10LD）を、行き先の枝へ引くため
       const known = [...(s.tid.trains.find((t) => t.train === r.train)?.circuits || []), ...(r.approach || []), ...(r.dest ? [r.dest] : []),
         ...s.tid.routes.filter((x) => x.train === r.train && x !== r).flatMap((x) => x.circuits)];
-      return { r, map: liveRoutePath(r, known) };
+      return { r, map: pointLivePath(r.station, r, [...(r.approach || []), ...(r.dest ? [r.dest] : [])]) || liveRoutePath(r, known) };
     });
     // 信号制御盤で取った進路（駅扱い）も同じ色で出す。列車の名前はないので、接近区間と、進路の回路全部（all。行き先の番線も）で枝を選ぶ。
     // 列車が入ると circuits は鎖錠中の区分（6LT・24T など）だけになり、行き先が分からないと長いほうの渡り線を選んでしまう
     // 行き先の番線（dest）と、続けて取っている進路の回路（next）も入れる。新野崎の 10LC・10LD は回路が同じで行き先だけ違い、
     // 大道寺の 13LD（44T まで）は、続く 12L（4番線へ）の回路がないと 44T を 6番側の枝で引いてしまう
     for (const pn of s.panels || []) for (const r of pn.routes)
-      routeMaps.push({ r: { ...r, train: null }, map: liveRoutePath(r, [...(r.approach || []), ...(r.all || []), ...(r.dest ? [r.dest] : []), ...(r.next || [])]) });
+      routeMaps.push({ r: { ...r, train: null }, map: pointLivePath(pn.station, r, [...(r.approach || []), ...(r.dest ? [r.dest] : []), ...(r.next || [])])
+        || liveRoutePath(r, [...(r.approach || []), ...(r.all || []), ...(r.dest ? [r.dest] : []), ...(r.next || [])]) });
     for (const { r, map } of routeMaps) for (const lines of map.values()) p.push(poly(r.open ? "route" : "wait", lines));
 
     // 在線: その列車の進路が通る回路は、進路の枝で塗る。そうでない回路は、列車がいる回路どうしをつなぐ枝で塗る。
@@ -804,6 +884,9 @@
       if (!layout) {
         layout = expand(await (await fetch("tid-layout.json", { cache: "no-store" })).json()); buildGraphs(); buildCuts();
         try { paths = (await (await fetch("tid-paths.json", { cache: "no-store" })).json()).paths || []; } catch (e) { paths = []; }
+        try { links = new Map(); for (const l of (await (await fetch("point-links.json", { cache: "no-store" })).json()).links || []) (links.get(l.c) || links.set(l.c, []).get(l.c)).push(l); } catch (e) { links = new Map(); }
+        try { routePoints = await (await fetch("/api/tid/route-points", { cache: "no-store" })).json(); } catch (e) { routePoints = {}; }
+        buildNear();
       }
       if (NAMES && signals.length === 0) { try { signals = await (await fetch("/api/tid/signals", { cache: "no-store" })).json(); } catch (e) {} }
       const res = await fetch("/api/tid/state", { cache: "no-store" });
