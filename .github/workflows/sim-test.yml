@@ -24,8 +24,8 @@ jobs:
           dotnet-version: 8.0.x
       - name: データの突き合わせ
         run: dotnet run --project Gokko.Tests -c Release -- --data
-      - name: 走らせる（5つの時間帯・60分ずつ・8倍速）
-        run: dotnet run --project Gokko.Tests -c Release -- --minutes 60 --speed 8 --parallel 5
+      - name: 走らせる（ダイヤどおりの5つの時間帯と、司令員の操作を入れた場面。8倍速）
+        run: dotnet run --project Gokko.Tests -c Release -- --speed 8 --parallel 10
       - name: 記録を残す
         if: always()
         uses: actions/upload-artifact@v4

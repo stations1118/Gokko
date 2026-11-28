@@ -15,6 +15,8 @@ public sealed class Rules
     private const double AppearMinutes = 5;
     /// <summary>同じ軌道回路に2本いるのが、これだけ（ロープレ時刻の秒）続いたら破ったことにする（列番が変わる一瞬の重なりは見ない）。</summary>
     private const double OverlapSeconds = 40;
+    /// <summary>列車がいなくなったのに、その列車の進路が、これだけ（ロープレ時刻の秒）残っていたら破ったことにする。</summary>
+    private const double LeftoverSeconds = 120;
 
     public List<Violation> Violations { get; } = new();
     public int TrainsSeen => _seen.Count;
@@ -24,6 +26,7 @@ public sealed class Rules
     private readonly Dictionary<string, (double Since, string Where, string Status)> _waiting = new(); // 列番 → 待ち始めた時刻・場所・状態
     private readonly Dictionary<string, double> _appearing = new();                                   // 出現待ちの列番 → 始まった時刻
     private readonly Dictionary<(string A, string B, string Circuit), double> _overlap = new();       // 同じ回路の2本 → 始まった時刻
+    private readonly Dictionary<(string Train, string Station, string Route), double> _leftover = new(); // 列車のいない進路 → 始まった時刻
     private double _now;      // ロープレ時刻（走り始めからの通しの秒。日またぎで戻らない）
     private double _lastDay = -1, _dayOffset;
     private string _nowText = "";
@@ -32,7 +35,15 @@ public sealed class Rules
     {
         _nowText = tid.GetProperty("gameTime").GetString() ?? "";
         if (!TryParseTime(_nowText, out var daySec)) return;
-        if (_lastDay >= 0 && daySec < _lastDay - 3600) _dayOffset += 86400; // 0時をまたいだ
+        if (_lastDay >= 0 && daySec < _lastDay - 12 * 3600) _dayOffset += 86400; // 0時をまたいだ
+        // ロープレ時刻を飛ばした（設定し直した）: 待ち始めの時刻が合わなくなるので、数え直す
+        if (_lastDay >= 0 && Math.Abs(daySec + _dayOffset - _now) > 600)
+        {
+            _waiting.Clear();
+            _appearing.Clear();
+            _overlap.Clear();
+            _leftover.Clear();
+        }
         _lastDay = daySec;
         _now = daySec + _dayOffset;
 
@@ -43,6 +54,7 @@ public sealed class Rules
 
         CheckNames(trains.Select(t => t.Train).ToList());
         CheckOverlap(trains);
+        CheckLeftoverRoutes(tid, trains.Select(t => t.Train).ToHashSet());
         CheckStuck(ai);
         CheckAppear(dia);
     }
@@ -81,6 +93,23 @@ public sealed class Rules
             }
         }
         foreach (var k in _overlap.Keys.Where(k => !live.Contains(k)).ToList()) _overlap.Remove(k);
+    }
+
+    /// <summary>決まり「残った進路」: 列車がいなくなった（消えた・列番が変わった）のに、その列車の進路が在線位置に残り続けない。</summary>
+    private void CheckLeftoverRoutes(JsonElement tid, HashSet<string> trains)
+    {
+        var live = new HashSet<(string, string, string)>();
+        foreach (var r in tid.GetProperty("tid").GetProperty("routes").EnumerateArray())
+        {
+            var train = r.TryGetProperty("train", out var t) && t.ValueKind == JsonValueKind.String ? t.GetString() ?? "" : "";
+            if (train.Length == 0 || trains.Contains(train)) continue; // 列車のない進路（信号制御盤で取ったもの）は見ない
+            var key = (train, r.GetProperty("station").GetString() ?? "", r.GetProperty("route").GetString() ?? "");
+            live.Add(key);
+            if (!_leftover.TryGetValue(key, out var since)) _leftover[key] = _now;
+            else if (_now - since >= LeftoverSeconds)
+                Report("残った進路", train, $"列車はもういないのに、{key.Item2} の進路 {key.Item3} が {(int)(_now - since)}秒 残っています");
+        }
+        foreach (var k in _leftover.Keys.Where(k => !live.Contains(k)).ToList()) _leftover.Remove(k);
     }
 
     private static bool Paired(string a, string b)
