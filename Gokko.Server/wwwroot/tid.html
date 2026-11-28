@@ -343,6 +343,31 @@
     };
     for (const k of graphs[seq[0]].adj.keys()) { visited.add(k); visit(k, null, 0, 0, 0); visited.delete(k); }
     if (!best) return null;
+    // 両端の回路は、まっすぐ続く先が1本だけなら、回路の端まで延ばす。曲がりの少ない道を選ぶので、終わりの番線で曲がった先
+    // （日野森の 2RAT は、渡り線を上ってから 1番線のホームの横へ曲がる）を引かずに止まってしまうため。分かれ目では延ばさない
+    const segs2 = best.segs.slice();
+    const used = new Set(segs2.flatMap((x) => [K(x.a), K(x.b)]));
+    const extend = (c, from, dir, push) => {
+      for (;;) {
+        const g = graphs[c];
+        const next = (g.adj.get(K(from)) || []).filter((t) => !used.has(t)).map((t) => g.nodes.get(t)).filter((b) => {
+          const dx = b[0] - from[0], dy = b[1] - from[1], l = Math.hypot(dx, dy);
+          return l && (dx / l) * dir[0] + (dy / l) * dir[1] >= 0.6;
+        });
+        if (next.length !== 1) return;
+        const b = next[0], l = Math.hypot(b[0] - from[0], b[1] - from[1]);
+        used.add(K(b));
+        push(from, b);
+        dir = [(b[0] - from[0]) / l, (b[1] - from[1]) / l];
+        from = b;
+      }
+    };
+    const unit = (a, b) => { const l = Math.hypot(b[0] - a[0], b[1] - a[1]); return [(b[0] - a[0]) / l, (b[1] - a[1]) / l]; };
+    const last = segs2[segs2.length - 1], first = segs2[0];
+    extend(last.c, last.b, unit(last.a, last.b), (a, b) => segs2.push({ a, b, c: last.c }));
+    // 始まりは、最初の回路から始まっているときだけ（2つ目の回路から始まる道もある。その回路を後ろへ延ばすと、通っていない側に入る）
+    if (first.c === seq[0]) extend(first.c, first.a, unit(first.b, first.a), (a, b) => segs2.unshift({ a: b, b: a, c: first.c }));
+    best.segs = segs2;
     const result = new Map();
     let cur = null;
     for (const s of best.segs) {
@@ -441,6 +466,10 @@
     if (all.length > live.length && live.every((c) => all.includes(c))) {
       const whole = routePath(all, known);
       if (live.every((c) => whole.has(c))) return new Map(live.map((c) => [c, whole.get(c)]));
+      // 進路全部で引いた線にない回路は、列車が通らない回路（鎖錠のためだけ。日野森の 4L の 22T）。それは引かない。
+      // 残りだけで引くと、通らない回路のほうへ線を延ばしてしまう（3番線から出た列車が進むと、2番・1番側に線が入った）
+      const on = live.filter((c) => whole.has(c));
+      if (whole.size > 0 && on.length < live.length) return new Map(on.map((c) => [c, whole.get(c)]));
     }
     return routePath(r.circuits, known);
   }
