@@ -31,6 +31,7 @@ public sealed class AiTrains : BackgroundService
     private const double Accel = 0.65;          // m/s²（約 2.3km/h/s）
     private const double Decel = 0.70;          // m/s²（約 2.5km/h/s）
     private const double ProtectionDecel = 1.1; // m/s²（防護受信時、約4 km/h/s）
+    private const double OvershootMax = 30;     // 停止位置をこれだけ過ぎて止まっても、その駅に着いたとする
     private const double SignalMargin = 8;      // R の信号機の何 m 手前で止まるか
     private const double CarLength = 20;
     private const double DefaultStationCircuit = 150;
@@ -450,7 +451,20 @@ public sealed class AiTrains : BackgroundService
             if (!_trains.TryGetValue(id, out var t)) return;
             t.Received = true;
             t.RedSignals = state.Signals.Where(s => s.Phase == "R").Select(s => s.Name).ToHashSet();
-            foreach (var r in state.Routes) t.Info.GameRoutes.Add((r.Interlocking, r.RouteName));
+            // 自分の今の列番の進路だけを受け取る。終着で折り返して列番を変えた直後は、進路の判断（RouteEngine）がまだ前の列番の列車として
+            // 作った配信が1回届くことがあり、その進路（着いたときの場内など）を受け取ると、もう誰も消さないまま手元に残る。
+            // 残った進路は、前の信号が赤で進めないときに「開いている自分の進路」として拾われ、来た道を引き返してしまう
+            // （日野森で 1250 → 1251 に折り返した列車が、出発したあと上り場内 2RA で1番線へ戻り、単線区間が詰まった）。
+            // 途中駅で列番が変わる列車（592C → 592）は、列番は元のまま、進路の判断が次の列番に読み替える（進路には次の列番が付く）。
+            // 読み替える前（次の列番はダイヤの Next）と、読み替えたあと（ダイヤはもう次の列番のもの）の、どちらの進路も受け取る
+            var mine = new HashSet<string> { RailData.NormalizeTrain(t.Number), RailData.NormalizeTrain(t.Dia.Number) };
+            if (t.Dia.Next?.Number is { } nextNumber) mine.Add(RailData.NormalizeTrain(nextNumber));
+            foreach (var r in state.Routes)
+            {
+                var forTrain = RailData.NormalizeTrain(r.TrainNumber);
+                if (forTrain.Length > 0 && !mine.Contains(forTrain)) continue;
+                t.Info.GameRoutes.Add((r.Interlocking, r.RouteName));
+            }
             SyncPanelRoutes(t, panel);
             foreach (var r in state.DeleteRoutes)
             {
@@ -945,7 +959,10 @@ public sealed class AiTrains : BackgroundService
         // 駅に着いた（停止位置の表がなく、線路の終わり（先に信号機がない）で止まったときも、次の停車駅に着いたとする）
         // 停止位置が線路の終わりより先にある（回路の長さの見込みが短い行き止まりなど）ときも、線路の終わりで止まったら着いたとする
         var atEnd = next != null && (stopX == null || stopX > t.PathEnd - 2) && !t.Blocked && t.Speed == 0 && t.PathEnd - t.Head < 5 && !(t.FromShunt && !t.ShuntMoved); // 引上線で折り返した直後（まだ番線へ動いていない）は除く
-        if (next != null && (stopX is { } at && t.Speed == 0 && Math.Abs(t.Head - at) < 0.5 || atEnd))
+        // 停止位置を少し過ぎて止まったときも、着いたとする
+        // （大道寺の引上線から番線へ入った 1881C: 入換が遅れ、止まりかけた所で出発の 6L が開いて道筋が延び、停止位置を 1.3m 過ぎて止まった。
+        //  先へは進めず、着いたことにもならず、出発の進路を開けたまま止まり続けて、後ろの列車が詰まった）
+        if (next != null && (stopX is { } at && t.Speed == 0 && (Math.Abs(t.Head - at) < 0.5 || t.Head > at && t.Head - at < OvershootMax) || atEnd))
         {
             // 番線への入換で番線に入って止まり、出発の進路が入換で来た道を戻る（江ノ原信号場の 13番線 → 12番線 → 4L）:
             // 着いたことにする前に向きを変える（停止位置の表がない駅は、番線の回路の終わりで着いたことになり、向きを変えないまま出発の進路を待ち続ける）
@@ -2098,6 +2115,7 @@ public sealed class AiTrains : BackgroundService
     {
         var now = _clock.Now;
         List<(string Number, string Station, int? Track)> todo = new();
+        var jumpRemoved = 0;
 
         // ユーザーが運転している列車（継続乗務で残した在線も）の運行番号と、その列車の最初の時刻。
         // 同じ運行番号で、それより後に走る列車は出さない（ユーザーの列車が遅れていても、その後の列番はユーザーが続けて走る。回1750 が遅れているのに 1751 が出た）
@@ -2114,7 +2132,19 @@ public sealed class AiTrains : BackgroundService
             // ロープレ時刻を戻したら、出した記録を消す（もう一度出せるように）
             if (_lastGame is { } lg && n < lg - TimeSpan.FromMinutes(2)) { _spawned.Clear(); _heldSeen.Clear(); }
             // アリにした直後と、ロープレ時刻を飛ばした（2分より大きく進めた・戻した）ときだけ、途中を走っているはずの列車を途中の駅から出す
-            if (_catchUpNext || _lastGame is { } lg2 && (n < lg2 - TimeSpan.FromMinutes(2) || n > lg2 + TimeSpan.FromMinutes(2)))
+            // 日付をまたいだだけ（23:59 → 0:00）は、飛ばしたことにしない
+            var jumped = _lastGame is { } lg2 && Math.Abs(Wrap(n - lg2).TotalMinutes) > 2;
+            if (jumped)
+            {
+                // 飛ばす前から走っていた列車は消して、新しい時刻で出し直す（ナシ → アリにしたときと同じ）。
+                // 残すと、前の時刻のダイヤのまま大きく遅れた列車として走り続け、新しい時刻の列車と重なって詰まる
+                // （17:35 から 19:00 へ飛ばしたら、17時台の 13本が残り、大道寺・江ノ原信号場のまわりで 11本が動けなくなった）
+                if (_trains.Count > 0) jumpRemoved = _trains.Count;
+                _trains.Clear();
+                _spawned.Clear();
+                _heldSeen.Clear();
+            }
+            if (_catchUpNext || jumped)
             {
                 _catchUpAt = n;
                 _catchUpNext = false;
@@ -2146,7 +2176,9 @@ public sealed class AiTrains : BackgroundService
                 // ほかの列車との順番が崩れて詰まる。
                 // アリにした・ロープレ時刻を飛ばした時刻（_catchUpAt）に、もう始発駅を出ているはずの列車だけは、そのとき走っているはずの所の次の駅を始発駅とみなす
                 // （始発駅の候補と最初の発車時刻は、ダイヤが変わるまで変わらないので SpawnPlans で作り置く）
-                var start = _catchUpAt is { } cu && firstDep < cu - TimeSpan.FromSeconds(30)
+                // 赤山町でユーザーが待っている列車は、いつも線区に入る最初の駅（三郷）から出す。途中の駅から出すと、赤山町を通らず、
+                // ユーザーが待ちっぱなしになる（待っている間にロープレ時刻を飛ばして、走ってきていた列車が消えたとき）
+                var start = !standing && _catchUpAt is { } cu && firstDep < cu - TimeSpan.FromSeconds(30)
                     ? cands.FirstOrDefault(s => Time(s.Dep ?? s.Arr) is { } t && t >= cu - TimeSpan.FromSeconds(30))
                     : cands[0];
                 if (start?.StationId is not { } startId || Time(start.Dep ?? start.Arr) is not { } dep) continue;
@@ -2188,6 +2220,7 @@ public sealed class AiTrains : BackgroundService
             _pending = pending;
         }
 
+        if (jumpRemoved > 0) _log.Note($"にぎやかし: ロープレ時刻が飛んだので、走っていた自動運転列車 {jumpRemoved}本を消して、新しい時刻で出し直します");
         foreach (var (number, station, track) in todo) Add(number, CarsOf(number), station, true, track, standIn: _rail.DiaOf(number) is { } sd && IsStandInDia(sd, number));
     }
 

@@ -63,6 +63,13 @@ public sealed record Scenario(string Name, string Slice, int Minutes, string Abo
             new(8, "2本の番線を変える", d => ChangeTracksAsync(d, 2)),
             new(14, "2本の番線を変える", d => ChangeTracksAsync(d, 2))
         ]),
+        // 司令員がいないので、対向列車のいる番線に変えて両方が動けなくなったら、サーバーが番線の指示を取り消す
+        new("対向列車の番線に変える", "12:00", 40, "単線の駅で、これから着く駅の番線を、そこで行き違う対向列車と同じ番線に変える（3回、1本ずつ）",
+        [
+            new(2, "対向列車と同じ番線に変える", ChangeToOpposingTrackAsync),
+            new(8, "対向列車と同じ番線に変える", ChangeToOpposingTrackAsync),
+            new(14, "対向列車と同じ番線に変える", ChangeToOpposingTrackAsync)
+        ]),
 
         new("臨時停車と打ち切り", "07:30", 40, "通過する駅に臨時停車を入れ、1本を途中の駅で打ち切る",
         [
@@ -98,7 +105,7 @@ public sealed record Scenario(string Name, string Slice, int Minutes, string Abo
                 await d.PostAsync("clock", new { time = "19:00:00", running = true });
                 d.Log("ロープレ時刻を 19:00 に設定");
             })
-        ], KnownIssue: "時刻を飛ばしても、前から走っていた自動運転列車は残る。新しい時刻の列車が途中の駅から出てくるので、列車が倍になって大道寺・新野崎のまわりで詰まる"),
+        ]),
 
         // 11/28 本番: ユーザーが 1325A（三郷から来る下り）を、ゲームで始められる赤山町3番線で 13:30 に始めた。三郷から来る 1341 が
         // 赤山町3番線に入れず、単線区間の三郷〜赤山町・赤山町〜西赤山で待ち合って詰まった。
@@ -153,6 +160,30 @@ public sealed record Scenario(string Name, string Slice, int Minutes, string Abo
             })
         ]),
 
+        // 赤山町で待っている間にロープレ時刻を飛ばすと、三郷から走ってくる自動運転の列車も消える。飛ばした先の時刻で 1325A がもう赤山町を
+        // 過ぎているはずでも、待っているユーザーのために、もう一度三郷から走らせて引き継ぐ（待ちっぱなしにしない）
+        // 引き継いだあとは見ない（ユーザーの代わりは運転しないので、長く走らせると赤山町に止まったままになり、後ろが詰まる）
+        new("赤山町で待つ間に時刻を飛ばす", "13:30", 13, "ユーザーが赤山町3番線で 1325A を待っている間に、ロープレ時刻を 14:20 に飛ばす。自動運転の 1325A をもう一度三郷から走らせて引き継ぐ",
+        [
+            new(0.5, "ユーザーの 1325A を赤山町3番線で始める", async d =>
+            {
+                await d.JoinPlayerAsync("1325A", ["TH58_9LCT"]);
+                d.Log("1325A（ユーザーの代わり）が赤山町3番線で運転画面に入った");
+            }),
+            new(5, "ロープレ時刻を 14:20 にする", async d =>
+            {
+                await d.PostAsync("clock", new { time = "14:20:00", running = true });
+                d.Log("ロープレ時刻を 14:20 に設定");
+            }),
+            new(9, "1325A を引き継いだ（自動運転の 1325A がもう一度三郷から着いた）", async d =>
+            {
+                if (await d.AppearReasonAsync("1325A") is { } reason) throw new InvalidOperationException($"1325A がまだ出現待ちです: {reason}");
+                if (await d.AiTrainsAsync() is var ai && ai.Contains("1325A")) throw new InvalidOperationException("自動運転の 1325A が残っています");
+                d.Log("1325A を引き継いだ。ユーザーの代わりは運転画面を出る");
+                d.LeavePlayer();
+            })
+        ]),
+
         new("赤山町で確定したまま来ない", "13:30", 35, "1325A の列番を確定したまま、運転画面に入らない。自動運転の 1325A は赤山町で発車時刻から3分待ち、そのあと自動運転のまま先へ行く（3番線をふさぎ続けない）",
         [
             new(0.5, "1325A の列番を確定する（運転画面には入らない）", async d =>
@@ -182,6 +213,34 @@ public sealed record Scenario(string Name, string Slice, int Minutes, string Abo
     ];
 
     /// <summary>これから着く駅（まだ進路を取っていない・番線を2つ以上選べる）の番線を、ほかの番線に変える。</summary>
+    // 単線の駅で、対向列車（同じ2駅を逆の順に通る列車）が使う番線に変える
+    private static async Task ChangeToOpposingTrackAsync(Driver d)
+    {
+        var all = await d.UpcomingAsync(minStations: 2);
+        foreach (var (train, st) in all)
+        {
+            if (d.Recall("tracked").Any(x => x.Train == train)) continue;
+            for (var i = 1; i < st.Count; i++)
+            {
+                var s = st[i];
+                if (d.DoubleTrack.Contains(s.Id) || s.Locked || s.Track == null) continue;
+                foreach (var (other, ost) in all)
+                {
+                    var oi = ost.FindIndex(x => x.Id == s.Id);
+                    var prev = ost.FindIndex(x => x.Id == st[i - 1].Id);
+                    // 対向列車: この駅のあとに、こちらの1つ手前の駅を通る。この駅までに着く駅が少ない（先に着きそうな）列車
+                    if (other == train || oi < 0 || prev <= oi || oi > i) continue;
+                    if (ost[oi].Track is not { } to || to == s.Track || !s.Options.Contains(to)) continue;
+                    await d.PostAsync("route/track", new { train, station = s.Id, track = to });
+                    d.Remember("tracked", train, s.Id);
+                    d.Log($"{train} の {s.Name} を {s.Track}番線 → {to}番線（対向の {other} と同じ番線）");
+                    return;
+                }
+            }
+        }
+        d.Log("対向列車と同じ番線に変えられる列車がありません");
+    }
+
     private static async Task ChangeTracksAsync(Driver d, int count)
     {
         var n = 0;

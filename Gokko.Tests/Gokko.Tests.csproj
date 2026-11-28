@@ -9,10 +9,15 @@
     <AssemblyName>Gokko.Tests</AssemblyName>
   </PropertyGroup>
 
-  <!-- クライアントの StopDistance.cs を、そのまま取り込んで確かめる（ClientCheck.cs）。
-       クライアントは Windows 用なので参照せず、ファイルだけ取り込む -->
+  <!-- クライアントの自動運転（AutoDriver.cs・StopDistance.cs）を、そのまま取り込んで確かめる（ClientCheck.cs）。
+       クライアントは Windows 用なので参照せず、ファイルだけ取り込む。TrainCrewInput.dll は列車の状態の型として使うだけ（ゲームは呼ばない） -->
   <ItemGroup>
     <Compile Include="..\Gokko.Client\StopDistance.cs" Link="Client\StopDistance.cs" />
+    <Compile Include="..\Gokko.Client\AutoDriver.cs" Link="Client\AutoDriver.cs" />
+    <Compile Include="..\Gokko.Client\TciState.cs" Link="Client\TciState.cs" />
+    <Reference Include="TrainCrewInput">
+      <HintPath>..\Gokko.Client\lib\TrainCrewInput.dll</HintPath>
+    </Reference>
   </ItemGroup>
 
   <ItemGroup>
