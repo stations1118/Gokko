@@ -52,6 +52,9 @@ public sealed class AiTrains : BackgroundService
     private const string StandInStation = "TH58";
     private readonly ConcurrentDictionary<(string Conn, string Number), byte> _handedOver = new(); // 引き継ぎ済み（もう待たせない）
     private volatile HashSet<string> _standInPassed = new(); // 自動運転の列車がもう赤山町を過ぎた列番（ユーザーを待たせても着かない）
+    private HashSet<string> _standInExpected = new(); // 赤山町でユーザーが始めるはずの列番（確定した列番・出勤した行路で赤山町から乗る列車）。自動運転の列車は赤山町で待つ
+    /// <summary>赤山町でユーザーを待つのは、ダイヤの発車時刻からこれだけまで。過ぎたら自動運転のまま先へ行く（3番線をふさぎ続けない）。</summary>
+    private static readonly TimeSpan StandInWait = TimeSpan.FromMinutes(3);
     private const double EntryLeadSeconds = 20;
     private static readonly TimeSpan TerminalLinger = TimeSpan.FromSeconds(60);
     /// <summary>ダイヤ運転中、継続乗務の在線がこれだけ残ったら、自動運転の列車として引き継ぐ。</summary>
@@ -534,6 +537,7 @@ public sealed class AiTrains : BackgroundService
                 var standIn = new Dictionary<string, string>();
                 foreach (var p in snapshot.Where(p => !PlayerRegistry.IsVirtual(p.ConnectionId) && p.InGame && PlayerRegistry.IsStandInWaiting(p)))
                     standIn.TryAdd(RailData.NormalizeTrain(p.TrainNumber), p.ConnectionId);
+                var expected = StandInExpected(snapshot);
                 List<(string Conn, string FromId)> handOvers = new();
                 var passedEdge = new HashSet<string>();
 
@@ -552,6 +556,7 @@ public sealed class AiTrains : BackgroundService
                 {
                     _userTrains = users;
                     _userInGame = inGame;
+                    _standInExpected = expected;
                     _couplePartners = couplePartners;
                     // ユーザーの列車が連結を終えたら、番線で待っていた増結車（自動運転）を消す
                     foreach (var (partner, train) in coupled)
@@ -868,6 +873,13 @@ public sealed class AiTrains : BackgroundService
                 return;
             }
 
+            // 赤山町で始めるはずのユーザーがまだ来ていない（三郷から来る下り）: 発車時刻から StandInWait まで待つ。来たら Tick で引き継ぐ
+            if (ready && stopNow.StationId == StandInStation && _standInExpected.Contains(t.Number) && nowGame is { } ngw && depAt is { } dw && !IsLater(ngw, dw + StandInWait))
+            {
+                t.Status = $"{stopNow.Name} でユーザーの列車（{t.Number}）を待っています（{(dw + StandInWait).ToString(@"hh\:mm")} まで。来なければ自動運転のまま先へ）";
+                UpdateInfo(t);
+                return;
+            }
             if (ready && !t.DepartureAsked && !_central.DiaMode) { t.WantDeparture = true; t.DepartureAsked = true; }
             // 出発の進路が開いて、道筋が延びたら発車
             // 信号をまだ受け取っていなければ待つ（道筋が出した番線だけのまま、出発信号機の先まで出てしまう）
@@ -2151,9 +2163,12 @@ public sealed class AiTrains : BackgroundService
             var runningNumbers = _trains.Values.Select(t => t.Number).ToHashSet();
             foreach (var (dia, number, startDir, cands, firstDep) in SpawnPlans())
             {
-                // ユーザーの列車は出さない。ただし赤山町で待っているユーザーの列車（三郷から来る下り）は、代わりに三郷から走らせる
+                // ユーザーの列車は出さない。ただし三郷から来る下り（ユーザーは赤山町からしか始められない）は、ユーザーの列番でも三郷から時刻どおり走らせ、
+                // 赤山町でユーザーに引き継ぐ。ほかの駅でもう運転画面に出ているときだけは出さない
                 var standing = standIn.ContainsKey(number);
-                if (_spawned.Contains(number) || users.Contains(number) && !standing || covered.Contains(number) || runningNumbers.Contains(number)) continue;
+                var standInDia = IsStandInDia(dia, number);
+                if (standInDia && !standing && users.Contains(number) && snapshot.Any(p => p.InGame && !PlayerRegistry.IsVirtual(p.ConnectionId) && RailData.NormalizeTrain(p.CountedTrainNumber) == number)) continue;
+                if (_spawned.Contains(number) || users.Contains(number) && !standInDia || covered.Contains(number) || runningNumbers.Contains(number)) continue;
                 if (Rinji?.IsConversion(number) == true) continue; // 特発臨は出さない（元の列車が発駅で列番を変えて走る。出庫の特発臨は、ふつうの出庫と同じく出す）
                 if (_rail.IsIdleTrial(dia)) continue; // 選ばれていない運行番号の試運転は走らない
                 // 出す駅は始発駅（線区の外から来る列車は、線区に入る最初の駅）だけ。終着と、番線を使わずに通過する駅には出さない。
@@ -2167,7 +2182,7 @@ public sealed class AiTrains : BackgroundService
                     ? cands.FirstOrDefault(s => Time(s.Dep ?? s.Arr) is { } t && t >= cu - TimeSpan.FromSeconds(30))
                     : cands[0];
                 if (start?.StationId is not { } startId || Time(start.Dep ?? start.Arr) is not { } dep) continue;
-                if (!standing && dia.Unyo is { } du && userUnyo.TryGetValue(du, out var userFirst) && IsLater(dep, userFirst)) continue; // ユーザーの運行番号のこの先の列車（赤山町で待っている列車そのものは除く）
+                if (!standInDia && dia.Unyo is { } du && userUnyo.TryGetValue(du, out var userFirst) && IsLater(dep, userFirst)) continue; // ユーザーの運行番号のこの先の列車（赤山町で待っている列車そのものは除く）
 
                 // 司令員の指示（ダイヤグラムの◆）は、出現前でも列番で入れておける: 発車時刻（その時刻に合わせて出す）・抑止（外すまで出さない）・番線
                 var due = dep;
@@ -2206,7 +2221,7 @@ public sealed class AiTrains : BackgroundService
         }
 
         if (jumpRemoved > 0) _log.Note($"にぎやかし: ロープレ時刻が飛んだので、走っていた自動運転列車 {jumpRemoved}本を消して、新しい時刻で出し直します");
-        foreach (var (number, station, track) in todo) Add(number, CarsOf(number), station, true, track, standIn: standIn.ContainsKey(number));
+        foreach (var (number, station, track) in todo) Add(number, CarsOf(number), station, true, track, standIn: _rail.DiaOf(number) is { } sd && IsStandInDia(sd, number));
     }
 
     /// <summary>
@@ -2220,11 +2235,45 @@ public sealed class AiTrains : BackgroundService
         if (!_enabled || !_central.DiaMode || number.Length == 0) return null;
         if (!circuits.Any(c => c.StartsWith(StandInStation + "_", StringComparison.Ordinal))) return null;
         if (_handedOver.ContainsKey((conn, number)) || _standInPassed.Contains(number)) return null;
-        if (_rail.DiaOf(number) is not { } dia || RouteEngine.TrainInfo(number)?.Dir != Dir.Down) return null;
+        if (_rail.DiaOf(number) is not { } dia || !IsStandInDia(dia, number)) return null;
+        return $"{PlayerRegistry.StandInPrefix}{number} が赤山町に着くまで待っています（三郷から走ってきて止まったら、この列車に引き継ぎます）";
+    }
+
+    /// <summary>三郷から来る下り（ダイヤで三郷のあと赤山町に入る）か。ユーザーはこの列車を赤山町からしか始められない。</summary>
+    private static bool IsStandInDia(DiaTrain dia, string number)
+    {
+        if (RouteEngine.TrainInfo(number)?.Dir != Dir.Down) return false;
         var misato = dia.Stops.FindIndex(s => s.StationId == EntryStation);
         var akayama = dia.Stops.FindIndex(s => s.StationId == StandInStation);
-        if (misato < 0 || akayama < misato) return null;
-        return $"{PlayerRegistry.StandInPrefix}{number} が赤山町に着くまで待っています（三郷から走ってきて止まったら、この列車に引き継ぎます）";
+        return misato >= 0 && akayama > misato;
+    }
+
+    /// <summary>
+    /// 赤山町でユーザーが始めるはずの、三郷から来る下りの列番: 列番を確定して、まだ運転画面に入っていない人の列番と、
+    /// 出勤した行路で赤山町から（乗る駅が書かれていなければ、それも）乗務する列車。ロックの外で呼ぶ
+    /// </summary>
+    private HashSet<string> StandInExpected(List<PlayerInfo> snapshot)
+    {
+        var set = new HashSet<string>();
+        void Try(string raw)
+        {
+            var number = RailData.NormalizeTrain(raw);
+            if (number.Length > 0 && _rail.DiaOf(number) is { } dia && IsStandInDia(dia, number)) set.Add(number);
+        }
+        foreach (var p in snapshot)
+            if (!PlayerRegistry.IsVirtual(p.ConnectionId) && !p.InGame && p.TrainNumber.Length > 0) Try(p.TrainNumber);
+        var akayamaName = _rail.Stations.TryGetValue(StandInStation, out var st) ? st.Name : "赤山町";
+        var roster = _duties.Current;
+        foreach (var duty in _crew.AttendedDuties())
+        {
+            if (roster.DutyById(duty) is not { } d) continue;
+            foreach (var item in d.Items)
+                if (item.Kind == "乗務" && (string.IsNullOrEmpty(item.From) || item.From == akayamaName)) Try(item.Train);
+        }
+        // もう運転画面に出ている（ほかの駅で始めた）列番は待たない
+        foreach (var p in snapshot)
+            if (!PlayerRegistry.IsVirtual(p.ConnectionId) && p.InGame && !PlayerRegistry.IsStandInWaiting(p)) set.Remove(RailData.NormalizeTrain(p.CountedTrainNumber));
+        return set;
     }
 
     // ダイヤの列車ごとの、出す駅の候補（進路を扱う駅のうち、終着と、番線を使わずに通過する駅を除いたもの）と、最初の候補の発車時刻。
