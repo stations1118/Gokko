@@ -1,0 +1,35 @@
+# 走らせて確かめる試験（Gokko.Tests）。PR と main への push のたびに、サーバーを早回しで走らせて決まりを見張る。
+name: 走らせて確かめる試験
+
+on:
+  pull_request:
+    paths: ['Gokko.Server/**', 'Gokko.Common/**', 'Gokko.Tests/**', '.github/workflows/sim-test.yml']
+  push:
+    branches: [main]
+    paths: ['Gokko.Server/**', 'Gokko.Common/**', 'Gokko.Tests/**', '.github/workflows/sim-test.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: sim-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sim:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: データの突き合わせ
+        run: dotnet run --project Gokko.Tests -c Release -- --data
+      - name: 走らせる（ダイヤどおりの5つの時間帯と、司令員の操作を入れた場面。8倍速）
+        run: dotnet run --project Gokko.Tests -c Release -- --speed 8 --parallel 10
+      - name: 記録を残す
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sim-test-records
+          path: Gokko.Tests/out
+          retention-days: 7
