@@ -218,7 +218,9 @@ public sealed class PlayerRegistry(GameData data, CentralControl central)
             c.ShuntTrain = ShuntGhostIn(parked, c)?.Info.TrainNumber;
             // 連結された増結車は在線を出さない（親の列車の在線だけにする）
             // 入換で動かしている列車（ゲームの中だけで X線へ走っている）も出さない。サーバーでは X線に残した在線のまま
-            if (c.CoupledInto != null || c.ShuntMove == ShuntMoveState.Moving) (c.TrackCircuits, c.Zones) = (new List<string>(), new List<int>());
+            // 赤山町で、三郷から来る自動運転の列車を待っている列車（StandInPrefix）も出さない。その間は自動運転の列車がその列車として走り、
+            // ほかの列車（三郷から来る先の列車）がこの番線に入ってくる。在線を出すと、その列車の信号が R になって詰まる
+            if (c.CoupledInto != null || c.ShuntMove == ShuntMoveState.Moving || IsStandInWaiting(c)) (c.TrackCircuits, c.Zones) = (new List<string>(), new List<int>());
             list.Add(c);
         }
 
@@ -273,6 +275,35 @@ public sealed class PlayerRegistry(GameData data, CentralControl central)
     private readonly Dictionary<string, Ghost> _ghosts = new();
 
     public event Action<string>? Changed;
+
+    /// <summary>
+    /// 出現待ちの理由の頭: 三郷から来る下りの列車を、ユーザーが赤山町で始めた（ゲームは三郷から始められない）。
+    /// 自動運転の同じ列番の列車が三郷から走って赤山町に着くまで、出現待ちにして在線も出さない。着いたら AiTrains が引き継がせる（HandOver）
+    /// </summary>
+    public const string StandInPrefix = "三郷から来る自動運転の ";
+
+    public static bool IsStandInWaiting(PlayerInfo p) => p.AppearReason?.StartsWith(StandInPrefix, StringComparison.Ordinal) == true;
+
+    /// <summary>
+    /// 運転画面に入った列車を、赤山町で自動運転の列車を待たせるか（AiTrains が入れる。接続ID・列番・踏んでいる回路 → 出現待ちの理由。待たせないなら null）。
+    /// 参加者のロックの中から呼ぶので、ロックを取らずに答えること
+    /// </summary>
+    public Func<string, string, IReadOnlyList<string>, string?>? StandInHold { get; set; }
+
+    /// <summary>赤山町で待っていた列車に、着いた自動運転の列車（fromId）を引き継がせる（出現待ちを解き、進路・駅の状態を移す）。</summary>
+    public void HandOver(string connectionId, string fromId)
+    {
+        if (!_players.TryGetValue(connectionId, out var p)) return;
+        string number;
+        lock (p)
+        {
+            if (!IsStandInWaiting(p)) return;
+            p.AppearReason = null;
+            p.TakesOver = fromId;
+            number = p.TrainNumber;
+        }
+        Changed?.Invoke($"赤山町: 三郷から来た自動運転の {number} を、ユーザーの列車が引き継ぎました");
+    }
 
     public List<Ghost> Ghosts()
     {
@@ -642,6 +673,7 @@ public sealed class PlayerRegistry(GameData data, CentralControl central)
             {
                 p.TrackCircuits = circuits;
                 MatchGhost(p, number);
+                if (p.AppearReason == null && StandInHold?.Invoke(p.ConnectionId, number, circuits) is { } standIn) p.AppearReason = standIn;
             }
 
             p.TrainNumber = number;

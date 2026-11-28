@@ -994,6 +994,14 @@ public sealed partial class RouteEngine
                 // サーバーで使う列番: 読み替えていれば、読み替えた先（ゲームから届く列番は元のまま）。
                 // 同じ列番の列車がほかにいれば、2本目以降に接尾辞 X・Y・Z を付けて呼び分ける
                 var requested = _renumber.TryGetValue(p.ConnectionId, out var rn) ? rn.To : p.TrainNumber;
+                // まだサーバーの列車になっていない出現待ちの列車は、列番を取らない（呼び分けの接尾辞を決めない）。
+                // 赤山町で待つ列車は、同じ列番の自動運転の列車が三郷から走ってくる。先に列番を取ると、その列車が 1325AX になる
+                if (p.AppearReason != null && !_runs.ContainsKey(p.ConnectionId))
+                {
+                    _assigned.Remove(p.ConnectionId);
+                    _appear[p.ConnectionId] = (requested, p.AppearReason);
+                    continue;
+                }
                 var number = UniqueNumber(p.ConnectionId, requested);
                 if (_runs.TryGetValue(p.ConnectionId, out var existing) && existing.Train == number)
                 {
