@@ -96,7 +96,7 @@ public sealed record Scenario(string Name, string Slice, int Minutes, string Abo
                 await d.PostAsync("clock", new { time = "19:00:00", running = true });
                 d.Log("ロープレ時刻を 19:00 に設定");
             })
-        ], KnownIssue: "時刻を飛ばしても、前から走っていた自動運転列車は残る。新しい時刻の列車が途中の駅から出てくるので、列車が倍になって大道寺・新野崎のまわりで詰まる"),
+        ]),
 
         new("自動運転の切り入れ", "12:00", 30, "自動運転列車をナシにして全部消し、1分後にアリに戻す",
         [
