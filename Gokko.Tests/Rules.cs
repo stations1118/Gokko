@@ -150,6 +150,8 @@ public sealed class Rules
         foreach (var a in dia.GetProperty("appear").EnumerateArray())
         {
             var train = a.GetProperty("train").GetString() ?? "";
+            // 赤山町で、三郷から来る自動運転の列車を待っている列車は、着くまで長く待つのが決まり（PlayerRegistry.StandInPrefix）
+            if (a.GetProperty("reason").GetString()?.StartsWith("三郷から来る自動運転の", StringComparison.Ordinal) == true) continue;
             live.Add(train);
             if (!_appearing.TryGetValue(train, out var since)) _appearing[train] = _now;
             else if (_now - since >= AppearMinutes * 60)
