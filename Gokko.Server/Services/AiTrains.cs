@@ -2103,6 +2103,7 @@ public sealed class AiTrains : BackgroundService
     {
         var now = _clock.Now;
         List<(string Number, string Station, int? Track)> todo = new();
+        var jumpRemoved = 0;
 
         // ユーザーが運転している列車（継続乗務で残した在線も）の運行番号と、その列車の最初の時刻。
         // 同じ運行番号で、それより後に走る列車は出さない（ユーザーの列車が遅れていても、その後の列番はユーザーが続けて走る。回1750 が遅れているのに 1751 が出た）
@@ -2119,7 +2120,19 @@ public sealed class AiTrains : BackgroundService
             // ロープレ時刻を戻したら、出した記録を消す（もう一度出せるように）
             if (_lastGame is { } lg && n < lg - TimeSpan.FromMinutes(2)) { _spawned.Clear(); _heldSeen.Clear(); }
             // アリにした直後と、ロープレ時刻を飛ばした（2分より大きく進めた・戻した）ときだけ、途中を走っているはずの列車を途中の駅から出す
-            if (_catchUpNext || _lastGame is { } lg2 && (n < lg2 - TimeSpan.FromMinutes(2) || n > lg2 + TimeSpan.FromMinutes(2)))
+            // 日付をまたいだだけ（23:59 → 0:00）は、飛ばしたことにしない
+            var jumped = _lastGame is { } lg2 && Math.Abs(Wrap(n - lg2).TotalMinutes) > 2;
+            if (jumped)
+            {
+                // 飛ばす前から走っていた列車は消して、新しい時刻で出し直す（ナシ → アリにしたときと同じ）。
+                // 残すと、前の時刻のダイヤのまま大きく遅れた列車として走り続け、新しい時刻の列車と重なって詰まる
+                // （17:35 から 19:00 へ飛ばしたら、17時台の 13本が残り、大道寺・江ノ原信号場のまわりで 11本が動けなくなった）
+                if (_trains.Count > 0) jumpRemoved = _trains.Count;
+                _trains.Clear();
+                _spawned.Clear();
+                _heldSeen.Clear();
+            }
+            if (_catchUpNext || jumped)
             {
                 _catchUpAt = n;
                 _catchUpNext = false;
@@ -2148,7 +2161,9 @@ public sealed class AiTrains : BackgroundService
                 // ほかの列車との順番が崩れて詰まる。
                 // アリにした・ロープレ時刻を飛ばした時刻（_catchUpAt）に、もう始発駅を出ているはずの列車だけは、そのとき走っているはずの所の次の駅を始発駅とみなす
                 // （始発駅の候補と最初の発車時刻は、ダイヤが変わるまで変わらないので SpawnPlans で作り置く）
-                var start = _catchUpAt is { } cu && firstDep < cu - TimeSpan.FromSeconds(30)
+                // 赤山町でユーザーが待っている列車は、いつも線区に入る最初の駅（三郷）から出す。途中の駅から出すと、赤山町を通らず、
+                // ユーザーが待ちっぱなしになる（待っている間にロープレ時刻を飛ばして、走ってきていた列車が消えたとき）
+                var start = !standing && _catchUpAt is { } cu && firstDep < cu - TimeSpan.FromSeconds(30)
                     ? cands.FirstOrDefault(s => Time(s.Dep ?? s.Arr) is { } t && t >= cu - TimeSpan.FromSeconds(30))
                     : cands[0];
                 if (start?.StationId is not { } startId || Time(start.Dep ?? start.Arr) is not { } dep) continue;
@@ -2190,6 +2205,7 @@ public sealed class AiTrains : BackgroundService
             _pending = pending;
         }
 
+        if (jumpRemoved > 0) _log.Note($"にぎやかし: ロープレ時刻が飛んだので、走っていた自動運転列車 {jumpRemoved}本を消して、新しい時刻で出し直します");
         foreach (var (number, station, track) in todo) Add(number, CarsOf(number), station, true, track, standIn: standIn.ContainsKey(number));
     }
 

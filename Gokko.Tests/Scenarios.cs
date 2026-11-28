@@ -98,7 +98,7 @@ public sealed record Scenario(string Name, string Slice, int Minutes, string Abo
                 await d.PostAsync("clock", new { time = "19:00:00", running = true });
                 d.Log("ロープレ時刻を 19:00 に設定");
             })
-        ], KnownIssue: "時刻を飛ばしても、前から走っていた自動運転列車は残る。新しい時刻の列車が途中の駅から出てくるので、列車が倍になって大道寺・新野崎のまわりで詰まる"),
+        ]),
 
         // 11/28 本番: ユーザーが 1325A（三郷から来る下り）を、ゲームで始められる赤山町3番線で 13:30 に始めた。三郷から来る 1341 が
         // 赤山町3番線に入れず、単線区間の三郷〜赤山町・赤山町〜西赤山で待ち合って詰まった。
@@ -122,6 +122,30 @@ public sealed record Scenario(string Name, string Slice, int Minutes, string Abo
                 if (await d.AppearReasonAsync("1325A") is { } reason) throw new InvalidOperationException($"1325A がまだ出現待ちです: {reason}");
                 if (await d.AiTrainsAsync() is var ai && ai.Contains("1325A")) throw new InvalidOperationException("自動運転の 1325A が残っています");
                 d.Log("1325A を引き継いだ。ユーザーの代わりは運転画面を出る（継続乗務の在線を残し、3分で自動運転の列車が引き継ぐ）");
+                d.LeavePlayer();
+            })
+        ]),
+
+        // 赤山町で待っている間にロープレ時刻を飛ばすと、三郷から走ってくる自動運転の列車も消える。飛ばした先の時刻で 1325A がもう赤山町を
+        // 過ぎているはずでも、待っているユーザーのために、もう一度三郷から走らせて引き継ぐ（待ちっぱなしにしない）
+        // 引き継いだあとは見ない（ユーザーの代わりは運転しないので、長く走らせると赤山町に止まったままになり、後ろが詰まる）
+        new("赤山町で待つ間に時刻を飛ばす", "13:30", 13, "ユーザーが赤山町3番線で 1325A を待っている間に、ロープレ時刻を 14:20 に飛ばす。自動運転の 1325A をもう一度三郷から走らせて引き継ぐ",
+        [
+            new(0.5, "ユーザーの 1325A を赤山町3番線で始める", async d =>
+            {
+                await d.JoinPlayerAsync("1325A", ["TH58_9LCT"]);
+                d.Log("1325A（ユーザーの代わり）が赤山町3番線で運転画面に入った");
+            }),
+            new(5, "ロープレ時刻を 14:20 にする", async d =>
+            {
+                await d.PostAsync("clock", new { time = "14:20:00", running = true });
+                d.Log("ロープレ時刻を 14:20 に設定");
+            }),
+            new(9, "1325A を引き継いだ（自動運転の 1325A がもう一度三郷から着いた）", async d =>
+            {
+                if (await d.AppearReasonAsync("1325A") is { } reason) throw new InvalidOperationException($"1325A がまだ出現待ちです: {reason}");
+                if (await d.AiTrainsAsync() is var ai && ai.Contains("1325A")) throw new InvalidOperationException("自動運転の 1325A が残っています");
+                d.Log("1325A を引き継いだ。ユーザーの代わりは運転画面を出る");
                 d.LeavePlayer();
             })
         ]),
